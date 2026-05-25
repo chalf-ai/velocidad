@@ -1,0 +1,40 @@
+# Netlify deployment config — Stock Command Center
+#
+# La app es 100% client-side: parsing Excel con SheetJS + estado con Zustand +
+# persistencia en localStorage. No hay backend ni API routes. Por eso usamos el
+# static export de Next.js (`next build` con `output: "export"` produce `out/`).
+#
+# Después de un `npm run build` queda todo el sitio en `out/`. Netlify levanta
+# eso como CDN estática. Cargar > 30 hojas de Excel y filtrar 2.900 vehículos
+# pasa en el navegador.
+
+[build]
+  command = "npm run build"
+  publish = "out"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
+
+# Cache de assets estáticos generados por Next (immutable hashed filenames).
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Headers de seguridad básicos. La app no hace fetch a backends externos.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+# SPA-style fallback no es necesario porque Next exporta una página HTML por ruta
+# (gracias a `trailingSlash: true`). Pero por si acaso, redirigimos 404 al
+# index. (Comentar si quieres ver la 404 nativa de Next.)
+# [[redirects]]
+#   from = "/*"
+#   to = "/index.html"
+#   status = 200
