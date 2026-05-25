@@ -1,0 +1,129 @@
+// Velocidad — Pompeyo Carrasco
+// Stack: PostgreSQL (Railway) + Prisma + NextAuth v5 (JWT strategy)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// USUARIOS
+// ─────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String?
+  rol          Rol      @default(OPERACIONES)
+  activo       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  snapshots  Snapshot[]
+  gestiones  GestionVIN[]
+}
+
+enum Rol {
+  ADMIN       // puede crear usuarios, activar snapshots, ver todo
+  JEFE_STOCK  // puede subir Excel y gestionar casos
+  OPERACIONES // puede gestionar casos, ver dashboards
+  READONLY    // solo lectura
+}
+
+// ─────────────────────────────────────────────
+// SNAPSHOTS — Excel parseado y guardado en DB
+// Así todos ven los mismos datos sin re-subir el archivo.
+// Solo un snapshot por fuente puede estar activo a la vez.
+// ─────────────────────────────────────────────
+
+model Snapshot {
+  id         String    @id @default(cuid())
+  nombre     String    // nombre del archivo original
+  tamano     Int       // bytes del archivo original
+  fechaCorte DateTime? // fecha de corte declarada en el Excel
+  fuente     Fuente    // qué tipo de dato contiene
+  payload    Json      // datos parseados (ParsedExcel, ParsedFNE, etc.)
+  registros  Int       @default(0) // cantidad de registros (vehículos, filas, etc.)
+  activo     Boolean   @default(false) // solo uno activo por fuente
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  createdAt  DateTime  @default(now())
+
+  @@index([fuente, activo])
+}
+
+enum Fuente {
+  BASE_STOCK      // Excel maestro de stock semanal
+  FNE             // Autos no entregados
+  SALDOS          // Reportes Saldos 2.0
+  PROVISIONES     // Provisiones
+  LOGISTICA_ROMA  // Agenda proveedor ROMA
+  LOGISTICA_STLI  // Ejecución bodega STLI
+}
+
+// ─────────────────────────────────────────────
+// GESTIÓN DE CASOS POR VIN
+// Migración de localStorage → DB multiusuario.
+// Un registro por VIN. El historial se guarda aparte.
+// ─────────────────────────────────────────────
+
+model GestionVIN {
+  id               String          @id @default(cuid())
+  vin              String          @unique
+  comentario       String?         // contexto / blocker actual
+  proximaAccion    String?         // acción concreta a ejecutar
+  responsable      String?         // nombre del responsable
+  responsableEmail String?         // email para notificaciones futuras
+  ownership        String?         // quién creó/posee el caso
+  fechaCompromiso  DateTime?       // deadline comprometido
+  estadoGestion    EstadoGestion   @default(ABIERTO)
+  prioridadManual  PrioridadManual?
+  userId           String?         // último usuario que editó
+  user             User?           @relation(fields: [userId], references: [id])
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  historial HistorialGestion[]
+
+  @@index([estadoGestion])
+  @@index([prioridadManual])
+}
+
+enum EstadoGestion {
+  ABIERTO
+  EN_CURSO
+  ESPERANDO
+  RESUELTO
+  CANCELADO
+}
+
+enum PrioridadManual {
+  BAJA
+  MEDIA
+  ALTA
+  CRITICA
+}
+
+// ─────────────────────────────────────────────
+// HISTORIAL DE GESTIÓN — auditoría append-only
+// Cap de 50 entradas por VIN (se purgan al guardar).
+// ─────────────────────────────────────────────
+
+model HistorialGestion {
+  id            String     @id @default(cuid())
+  gestionId     String
+  gestion       GestionVIN @relation(fields: [gestionId], references: [id], onDelete: Cascade)
+  campo         String     // campo que cambió
+  valorAnterior String?
+  valorNuevo    String?
+  usuario       String?    // nombre del usuario que hizo el cambio
+  userEmail     String?
+  createdAt     DateTime   @default(now())
+
+  @@index([gestionId])
+}
