@@ -1,11 +1,14 @@
 /**
- * Middleware de autenticación.
- * Redirige a /login si no hay JWT de NextAuth activo.
+ * Middleware de autenticación — NextAuth v5.
+ *
+ * IMPORTANTE: usar `auth` de @/lib/auth (v5 API), NO `getToken` de next-auth/jwt.
+ * NextAuth v5 escribe la cookie `authjs.session-token` (o `__Secure-authjs.session-token`
+ * en producción HTTPS). getToken/next-auth/jwt busca `next-auth.session-token` (v4),
+ * por eso siempre fallaba aunque el login fuera correcto.
  */
 
-import type { NextRequest } from "next/server";
+import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
 
 const PUBLIC_PATHS = [
   "/login",
@@ -14,29 +17,23 @@ const PUBLIC_PATHS = [
   "/api/health",
 ];
 
-export default async function middleware(req: NextRequest) {
+export default auth(function middleware(req) {
   const { pathname } = req.nextUrl;
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
   if (isPublic) return NextResponse.next();
 
-  const token = await getToken({
-    req,
-    secret: process.env.AUTH_SECRET,
-  });
-
-  if (!token) {
+  if (!req.auth) {
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("callbackUrl", `${pathname}${req.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();
-}
+});
 
 export const config = {
   matcher: [
-    // Excluir archivos estáticos y _next internals
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };
