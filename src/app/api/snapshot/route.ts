@@ -11,6 +11,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Fuente } from "@prisma/client";
 
+// El Stock master puede pesar varios MB y tomar tiempo en serializarse a JSONB.
+// Subimos el timeout y forzamos Node runtime (DecompressionStream necesita Node).
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 // ─── GET — listar snapshots ───────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -64,10 +69,25 @@ export async function POST(req: NextRequest) {
     registros?: number;
   };
 
+  // Acepta payload comprimido con gzip (header Content-Encoding: gzip).
+  // El cliente comprime el JSON con CompressionStream para que el Stock master
+  // (~10 MB sin comprimir) baje a ~1.5 MB y no choque con el body size limit.
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
+    const enc = req.headers.get("content-encoding");
+    if (enc === "gzip" && req.body) {
+      const decompressed = req.body.pipeThrough(new DecompressionStream("gzip"));
+      const text = await new Response(decompressed).text();
+      console.log(`[snapshot] POST gzip recibido, ${text.length} bytes descomprimidos`);
+      body = JSON.parse(text);
+    } else {
+      const text = await req.text();
+      console.log(`[snapshot] POST plain recibido, ${text.length} bytes`);
+      body = JSON.parse(text);
+    }
+  } catch (err) {
+    const detalle = err instanceof Error ? err.message : String(err);
+    console.error("[snapshot] error al parsear body:", detalle);
+    return NextResponse.json({ error: `Body inválido: ${detalle}` }, { status: 400 });
   }
 
   const { nombre, tamano, fechaCorte, fuente, payload, registros } = body;

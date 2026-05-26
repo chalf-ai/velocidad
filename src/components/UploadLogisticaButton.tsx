@@ -55,7 +55,11 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
               registros: parsed.roma.length,
             });
           } catch (snapErr) {
-            console.warn("[snapshot] LOGISTICA_ROMA persistencia falló:", snapErr);
+            const detalle = snapErr instanceof Error ? snapErr.message : String(snapErr);
+            console.error("[snapshot] LOGISTICA_ROMA persistencia falló:", detalle);
+            setLogisticaError(
+              `⚠ Logística ROMA cargada localmente, pero NO se persistió al servidor. Otros usuarios NO verán este corte. Detalle: ${detalle}`,
+            );
           }
         } else if (parsed.kind === "STLI" && parsed.stli) {
           setLogisticaSTLI(parsed.stli);
@@ -69,7 +73,11 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
               registros: parsed.stli.length,
             });
           } catch (snapErr) {
-            console.warn("[snapshot] LOGISTICA_STLI persistencia falló:", snapErr);
+            const detalle = snapErr instanceof Error ? snapErr.message : String(snapErr);
+            console.error("[snapshot] LOGISTICA_STLI persistencia falló:", detalle);
+            setLogisticaError(
+              `⚠ Logística STLI cargada localmente, pero NO se persistió al servidor. Otros usuarios NO verán este corte. Detalle: ${detalle}`,
+            );
           }
         }
       }

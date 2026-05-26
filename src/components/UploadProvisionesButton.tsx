@@ -46,7 +46,11 @@ export function UploadProvisionesButton({ compact = false }: { compact?: boolean
           registros: parsed.report.filasProcesadas,
         });
       } catch (snapErr) {
-        console.warn("[snapshot] PROVISIONES persistencia falló:", snapErr);
+        const detalle = snapErr instanceof Error ? snapErr.message : String(snapErr);
+        console.error("[snapshot] PROVISIONES persistencia falló:", detalle);
+        setProvisionesError(
+          `⚠ Provisiones cargadas localmente, pero NO se persistieron al servidor. Otros usuarios NO verán este corte. Detalle: ${detalle}`,
+        );
       }
     } catch (err) {
       console.error(err);

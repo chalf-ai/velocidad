@@ -32,8 +32,8 @@ export function UploadButton({ variant = "primary" }: { variant?: Variant }) {
     try {
       const data = await parseExcelFile(file);
       setData(data);
-      // Persistir snapshot oficial. Falla silenciosa: si rompe, el usuario
-      // sigue con los datos en su sesión (sólo no se propagan a los demás).
+      // Persistir snapshot oficial. Si falla, el admin VE un error visible
+      // (en sesión los datos siguen, pero los demás usuarios no los verán).
       try {
         await postSnapshot({
           nombre: file.name,
@@ -44,7 +44,11 @@ export function UploadButton({ variant = "primary" }: { variant?: Variant }) {
           registros: data.report.totalVehiculos,
         });
       } catch (snapErr) {
-        console.warn("[snapshot] BASE_STOCK persistencia falló:", snapErr);
+        const detalle = snapErr instanceof Error ? snapErr.message : String(snapErr);
+        console.error("[snapshot] BASE_STOCK persistencia falló:", detalle);
+        setError(
+          `⚠ Stock cargado localmente, pero NO se persistió al servidor. Otros usuarios NO verán este corte. Detalle: ${detalle}`,
+        );
       }
     } catch (err) {
       console.error(err);

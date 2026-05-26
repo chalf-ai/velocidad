@@ -17,6 +17,10 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Fuente } from "@prisma/client";
 
+// Stock master puede devolver varios MB de payload; subimos timeout.
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session) {

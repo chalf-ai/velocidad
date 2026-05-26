@@ -93,9 +93,23 @@ export interface SnapshotMeta {
 }
 
 /**
+ * Comprime un string con gzip usando la CompressionStream API nativa del
+ * navegador (disponible en todos los browsers modernos desde 2023). Reduce
+ * ~85% el tamaño de JSON repetitivo — clave para el Stock master que sin
+ * comprimir suele pasar el límite de body de Next.js / Railway.
+ */
+async function gzipString(text: string): Promise<Blob> {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Response(stream).blob();
+}
+
+/**
  * Sube un snapshot a la DB. Marca activo y desactiva los anteriores de la misma
- * fuente (lo hace la API). Si falla (401, 403, 5xx), lanza Error con el mensaje.
- * El llamador decide si avisar al usuario o silenciar.
+ * fuente (lo hace la API). Si falla (401, 403, 413, 5xx), lanza Error con el
+ * mensaje legible. El llamador decide si avisar al usuario.
+ *
+ * Comprime el payload con gzip cuando el navegador lo soporta (todos los
+ * modernos). Fallback a JSON plano si no — útil en testing o navegadores viejos.
  */
 export async function postSnapshot(args: PostSnapshotArgs): Promise<SnapshotMeta> {
   const body = {
@@ -107,11 +121,22 @@ export async function postSnapshot(args: PostSnapshotArgs): Promise<SnapshotMeta
     payload: args.payload,
     registros: args.registros ?? 0,
   };
+  const json = JSON.stringify(body);
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  let payload: BodyInit;
+  if (typeof CompressionStream !== "undefined") {
+    payload = await gzipString(json);
+    headers["Content-Encoding"] = "gzip";
+  } else {
+    payload = json;
+  }
+
   const res = await fetch("/api/snapshot", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     credentials: "include",
-    body: JSON.stringify(body),
+    body: payload,
   });
   if (!res.ok) {
     const text = await res.text();
