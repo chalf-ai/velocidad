@@ -7,8 +7,8 @@ export const metadata: Metadata = {
   description:
     "Cockpit ejecutivo de stock, líneas de crédito, capital de trabajo y operación comercial",
   icons: {
-    icon: "/pompeyo-menu-icon.png",
-    shortcut: "/pompeyo-menu-icon.png",
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
     apple: "/pompeyo-menu-icon.png",
   },
 };
