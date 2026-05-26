@@ -2,10 +2,14 @@
 
 import { useRef } from "react";
 import { CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
 import { useExcelStore } from "@/lib/store";
 import { parseProvisionesFile } from "@/lib/parser/provisiones";
+import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
+
+const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
 
 export function UploadProvisionesButton({ compact = false }: { compact?: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -18,6 +22,9 @@ export function UploadProvisionesButton({ compact = false }: { compact?: boolean
     setProvisionesError,
     resetProvisiones,
   } = useExcelStore();
+  const { data: session } = useSession();
+  const rol = session?.user.rol;
+  if (!rol || !PUEDE_SUBIR.has(rol)) return null;
 
   const onPick = () => inputRef.current?.click();
 
@@ -29,6 +36,18 @@ export function UploadProvisionesButton({ compact = false }: { compact?: boolean
     try {
       const parsed = await parseProvisionesFile(file);
       setProvisiones(parsed);
+      try {
+        await postSnapshot({
+          nombre: file.name,
+          tamano: file.size,
+          fechaCorte: null,
+          fuente: "PROVISIONES",
+          payload: parsed,
+          registros: parsed.report.filasProcesadas,
+        });
+      } catch (snapErr) {
+        console.warn("[snapshot] PROVISIONES persistencia falló:", snapErr);
+      }
     } catch (err) {
       console.error(err);
       setProvisionesError(err instanceof Error ? err.message : "Error al leer Provisiones");

@@ -2,10 +2,14 @@
 
 import { useRef } from "react";
 import { CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
 import { useExcelStore } from "@/lib/store";
 import { parseFNEFile } from "@/lib/parser/autos-no-entregados";
+import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
+
+const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
 
 /** Uploader del archivo "Autos no entregados.xlsx" — fuente oficial del módulo FNE.
  *  Se carga aparte del Excel maestro (Base_Stock). */
@@ -13,6 +17,9 @@ export function UploadFNEButton({ compact = false }: { compact?: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const { fne, fneLoading, fneError, setFNE, setFNELoading, setFNEError, resetFNE } =
     useExcelStore();
+  const { data: session } = useSession();
+  const rol = session?.user.rol;
+  if (!rol || !PUEDE_SUBIR.has(rol)) return null;
 
   const onPick = () => inputRef.current?.click();
 
@@ -24,6 +31,18 @@ export function UploadFNEButton({ compact = false }: { compact?: boolean }) {
     try {
       const parsed = await parseFNEFile(file);
       setFNE(parsed);
+      try {
+        await postSnapshot({
+          nombre: file.name,
+          tamano: file.size,
+          fechaCorte: null,
+          fuente: "FNE",
+          payload: parsed,
+          registros: parsed.report.filasProcesadas,
+        });
+      } catch (snapErr) {
+        console.warn("[snapshot] FNE persistencia falló:", snapErr);
+      }
     } catch (err) {
       console.error(err);
       setFNEError(

@@ -2,15 +2,22 @@
 
 import { useRef } from "react";
 import { CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
 import { useExcelStore } from "@/lib/store";
 import { parseSaldosFile } from "@/lib/parser/saldos";
+import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
+
+const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
 
 export function UploadSaldosButton({ compact = false }: { compact?: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const { saldos, saldosLoading, saldosError, setSaldos, setSaldosLoading, setSaldosError, resetSaldos } =
     useExcelStore();
+  const { data: session } = useSession();
+  const rol = session?.user.rol;
+  if (!rol || !PUEDE_SUBIR.has(rol)) return null;
 
   const onPick = () => inputRef.current?.click();
 
@@ -22,6 +29,18 @@ export function UploadSaldosButton({ compact = false }: { compact?: boolean }) {
     try {
       const parsed = await parseSaldosFile(file);
       setSaldos(parsed);
+      try {
+        await postSnapshot({
+          nombre: file.name,
+          tamano: file.size,
+          fechaCorte: null,
+          fuente: "SALDOS",
+          payload: parsed,
+          registros: parsed.report.filasProcesadas,
+        });
+      } catch (snapErr) {
+        console.warn("[snapshot] SALDOS persistencia falló:", snapErr);
+      }
     } catch (err) {
       console.error(err);
       setSaldosError(err instanceof Error ? err.message : "Error al leer Reportes Saldos");
