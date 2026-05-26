@@ -985,25 +985,42 @@ export interface ParsedProvisiones {
 }
 
 export interface ProvisionesStats {
-  /** Solo cuenta NO facturadas — universo activo. */
-  noFacturadas: { unidades: number; monto: number };
-  /** Aging solo sobre NO facturadas. */
-  agingNoFacturadas: Record<AgingProvision, { unidades: number; monto: number }>;
-  /** Por marca, solo NO facturadas. */
-  porMarcaNoFacturadas: { marca: string; unidades: number; monto: number }[];
-  /** Por concepto, solo NO facturadas. */
-  porConceptoNoFacturadas: { concepto: string; unidades: number; monto: number }[];
-  /** Por motivo, solo NO facturadas. */
-  porMotivoNoFacturadas: { motivo: string; unidades: number; monto: number }[];
-  /** Por área (ventas vs postventa), solo NO facturadas. */
-  porArea: Record<AreaProvision, { unidades: number; monto: number }>;
-  /** Aging máximo y promedio (días) sobre NO facturadas. */
+  /** Registros del área "ventas" (universo principal del módulo). */
+  total: number;
+  /** SUM(saldo) sobre ventas — NETO oficial. Métrica principal del módulo. */
+  saldoPendiente: number;
+  /** SUM(saldo) solo positivos — capital realmente comprometido. */
+  saldoPositivo: number;
+  /** SUM(saldo) solo negativos — sobrefacturación / ajustes (no se ocultan). */
+  saldoNegativo: number;
+  /** SUM(montoProvision) sobre ventas — provisión original generada. */
+  montoProvisionTotal: number;
+  /** SUM(montoFactura) sobre ventas — ya facturado. */
+  montoFacturaTotal: number;
+  /** Cantidad con saldo != 0 (abiertas). */
+  abiertas: number;
+  /** Cantidad con saldo == 0 (cerradas, no entran al pendiente). */
+  cerradas: number;
+  porMarca: {
+    marca: string;
+    unidades: number;
+    montoProvision: number;
+    montoFactura: number;
+    saldo: number;
+    saldoPositivo: number;
+    saldoNegativo: number;
+    cerradas: number;
+  }[];
+  porConcepto: { concepto: string; unidades: number; saldo: number }[];
+  porMotivo: { motivo: string; unidades: number; saldo: number }[];
+  /** Aging SOLO sobre abiertas (saldo != 0). */
+  agingAbiertas: Record<AgingProvision, { unidades: number; saldo: number }>;
   agingPromedioDias: number;
   agingMaxDias: number;
-  /** Cuenta de cómo se distribuyen — métricas secundarias. */
-  facturadasReferencia: { unidades: number; monto: number };
-  revisionManual: { unidades: number; monto: number };
-  total: number;
+  /** Postventa excluida del panel principal, queda como referencia. */
+  postventaReferencia: { unidades: number; saldo: number; montoProvision: number };
+  /** Por área (ventas/postventa) en saldo. */
+  porArea: Record<AreaProvision, { unidades: number; saldo: number }>;
 }
 
 export interface SaldosStats {
