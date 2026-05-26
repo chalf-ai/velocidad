@@ -115,8 +115,12 @@ export default function UsadosPage() {
         cp: salReg.reduce((s, r) => s + (r.cPompeyoColCLP || 0), 0),
       },
       provisiones: {
-        u: provReg.length,
-        monto: provReg.reduce((s, r) => s + (r.montoProvision || 0), 0),
+        // Métrica oficial: SUM(saldo). Solo área "ventas" con saldo > 0:
+        // negativos son ajustes contables (visibles en /provisiones, no caja viva).
+        u: provReg.filter((r) => r.area === "ventas" && r.saldo > 0).length,
+        monto: provReg
+          .filter((r) => r.area === "ventas" && r.saldo > 0)
+          .reduce((s, r) => s + (r.saldo || 0), 0),
       },
       lineas: { n: linReg.length },
     };

@@ -229,13 +229,16 @@ function KiaInner() {
     return out;
   }, [saldos]);
 
-  // ── PROVISIONES KIA · desde registros (origen = marca) ──
+  // ── PROVISIONES KIA · desde registros (origen = marca, saldo pendiente) ──
+  // Misma regla que el módulo Provisiones: solo área "ventas" con saldo > 0.
+  // Excluye postventa y ajustes contables negativos.
   const provKia = useMemo(() => {
     const prov = store.provisiones;
     if (!prov) return { saldo: 0, n: 0 };
     let saldo = 0;
     let n = 0;
     for (const r of prov.registros) {
+      if (r.area !== "ventas" || r.saldo <= 0) continue;
       if (!marcaGlosaEsOwner(r.origen, OWNER_KIA)) continue;
       saldo += r.saldo;
       n++;

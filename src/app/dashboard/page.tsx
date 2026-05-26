@@ -171,7 +171,10 @@ function DashboardInner() {
     }
     const saldosVehReg = saldos?.registros.filter((r) => r.categoria === "vehiculo") ?? [];
     const bonosReg = saldos?.registros.filter((r) => r.categoria === "bono_comision") ?? [];
-    const provReg = provisiones?.registros.filter((r) => r.estado === "no_facturada") ?? [];
+    // Provisiones que consumen capital de trabajo HOY: área "ventas" con saldo > 0.
+    // Postventa va aparte (otro scope operacional). Saldo negativo es ajuste contable,
+    // no caja viva — no entra al total comprometido.
+    const provReg = provisiones?.registros.filter((r) => r.area === "ventas" && r.saldo > 0) ?? [];
     const sum = <T,>(arr: T[], f: (x: T) => number) => arr.reduce((s, x) => s + (f(x) || 0), 0);
     const mStock = sum(stockPagadoV, (v) => v.costoNeto);
     const mPuente = sum(puenteV, (v) => v.costoNeto);
