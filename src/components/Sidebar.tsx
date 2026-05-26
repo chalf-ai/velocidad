@@ -133,16 +133,26 @@ export function Sidebar() {
       {/* Brand */}
       <Link
         href="/"
-        className="px-4 pt-5 pb-4 flex items-center hover:opacity-90 transition"
+        className="px-5 pt-5 pb-4 flex items-center gap-3 hover:opacity-90 transition"
       >
-        <Image
-          src="/pompeyo-carrasco-logo.png"
-          alt="Pompeyo Carrasco"
-          width={210}
-          height={80}
-          priority
-          className="h-auto w-full max-w-[190px]"
-        />
+        <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-white shadow-[0_4px_14px_-6px_rgba(255,255,255,0.45)]">
+          <Image
+            src="/pompeyo-menu-icon.png"
+            alt="Pompeyo Carrasco"
+            width={40}
+            height={40}
+            priority
+            className="size-8"
+          />
+        </div>
+        <div className="leading-tight">
+          <div className="text-[13px] font-semibold tracking-tight text-white">
+            Stock Command
+          </div>
+          <div className="text-[10px] uppercase tracking-[0.12em] text-[--color-sidebar-fg-dim]">
+            Pompeyo Carrasco
+          </div>
+        </div>
       </Link>
 
       <div className="mx-3 h-px bg-[--color-sidebar-border] mb-3" />
