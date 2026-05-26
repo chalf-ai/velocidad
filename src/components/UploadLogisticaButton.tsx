@@ -2,10 +2,14 @@
 
 import { useRef } from "react";
 import { CheckCircle2, Loader2, Truck, Upload, X } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
 import { useExcelStore } from "@/lib/store";
 import { parseLogisticaFile } from "@/lib/parser/logistica";
+import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
+
+const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
 
 /**
  * Uploader de los 2 archivos logísticos (Logistica.xlsx + Diciembre-Mayo ROMA).
@@ -25,6 +29,9 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
     setLogisticaError,
     clearLogistica,
   } = useExcelStore();
+  const { data: session } = useSession();
+  const rol = session?.user.rol;
+  if (!rol || !PUEDE_SUBIR.has(rol)) return null;
 
   const onPick = () => inputRef.current?.click();
 
@@ -36,8 +43,35 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
     try {
       for (const file of files) {
         const parsed = await parseLogisticaFile(file);
-        if (parsed.kind === "ROMA" && parsed.roma) setLogisticaRoma(parsed.roma);
-        else if (parsed.kind === "STLI" && parsed.stli) setLogisticaSTLI(parsed.stli);
+        if (parsed.kind === "ROMA" && parsed.roma) {
+          setLogisticaRoma(parsed.roma);
+          try {
+            await postSnapshot({
+              nombre: file.name,
+              tamano: file.size,
+              fechaCorte: null,
+              fuente: "LOGISTICA_ROMA",
+              payload: parsed.roma,
+              registros: parsed.roma.length,
+            });
+          } catch (snapErr) {
+            console.warn("[snapshot] LOGISTICA_ROMA persistencia falló:", snapErr);
+          }
+        } else if (parsed.kind === "STLI" && parsed.stli) {
+          setLogisticaSTLI(parsed.stli);
+          try {
+            await postSnapshot({
+              nombre: file.name,
+              tamano: file.size,
+              fechaCorte: null,
+              fuente: "LOGISTICA_STLI",
+              payload: parsed.stli,
+              registros: parsed.stli.length,
+            });
+          } catch (snapErr) {
+            console.warn("[snapshot] LOGISTICA_STLI persistencia falló:", snapErr);
+          }
+        }
       }
     } catch (err) {
       console.error(err);
