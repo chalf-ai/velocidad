@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -132,19 +133,16 @@ export function Sidebar() {
       {/* Brand */}
       <Link
         href="/"
-        className="px-5 pt-5 pb-4 flex items-center gap-2.5 hover:opacity-90 transition"
+        className="px-4 pt-5 pb-4 flex items-center hover:opacity-90 transition"
       >
-        <div className="size-8 rounded-lg bg-gradient-to-br from-[--color-accent] via-[--color-accent-hi] to-[#818cf8] grid place-items-center shadow-[0_4px_12px_-4px_rgba(88,120,255,0.5)]">
-          <Warehouse className="size-4 text-white" strokeWidth={2.25} />
-        </div>
-        <div className="leading-tight">
-          <div className="text-[13px] font-semibold tracking-tight text-white">
-            Stock Command
-          </div>
-          <div className="text-[10px] uppercase tracking-[0.12em] text-[--color-sidebar-fg-dim]">
-            Pompeyo Carrasco
-          </div>
-        </div>
+        <Image
+          src="/pompeyo-carrasco-logo.png"
+          alt="Pompeyo Carrasco"
+          width={210}
+          height={80}
+          priority
+          className="h-auto w-full max-w-[190px]"
+        />
       </Link>
 
       <div className="mx-3 h-px bg-[--color-sidebar-border] mb-3" />

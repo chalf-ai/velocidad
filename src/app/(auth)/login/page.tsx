@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 
 // ─── Formulario interno (usa useSearchParams → necesita Suspense) ─────────────
@@ -196,24 +197,23 @@ export default function LoginPage() {
       <div className="w-full max-w-[400px]">
 
         {/* Branding sobre la card */}
-        <div className="mb-6 flex flex-col items-center gap-1.5">
-          {/* Logotipo */}
-          <div className="flex items-center gap-2.5 mb-1">
-            {/* Ícono cuadrado con gradiente */}
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-xl text-white text-base font-bold shadow-sm"
-              style={{
-                background:
-                  "linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hi) 100%)",
-              }}
-            >
-              V
-            </div>
-            <span
-              className="text-xl font-bold tracking-tight display gradient-text"
-            >
-              Velocidad
-            </span>
+        <div className="mb-6 flex flex-col items-center gap-2">
+          <div
+            className="flex w-full justify-center rounded-2xl px-6 py-5 shadow-sm"
+            style={{
+              background:
+                "linear-gradient(135deg, #0e1729 0%, #182238 55%, #1f2c47 100%)",
+              border: "1px solid var(--color-sidebar-border)",
+            }}
+          >
+            <Image
+              src="/pompeyo-carrasco-logo.png"
+              alt="Pompeyo Carrasco"
+              width={300}
+              height={114}
+              priority
+              className="h-auto w-[260px]"
+            />
           </div>
           <p
             className="text-xs tracking-wide uppercase font-medium"
