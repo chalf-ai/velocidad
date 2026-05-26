@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   title: "Velocidad · Pompeyo Carrasco",
   description:
     "Cockpit ejecutivo de stock, líneas de crédito, capital de trabajo y operación comercial",
+  icons: {
+    icon: "/pompeyo-menu-icon.png",
+    shortcut: "/pompeyo-menu-icon.png",
+    apple: "/pompeyo-menu-icon.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
