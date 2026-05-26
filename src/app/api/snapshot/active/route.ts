@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
     select: {
       id: true,
       nombre: true,
+      tamano: true,
       fechaCorte: true,
       fuente: true,
       payload: true,

@@ -155,6 +155,7 @@ export async function postSnapshot(args: PostSnapshotArgs): Promise<SnapshotMeta
 export interface ActiveSnapshotResult<T = unknown> {
   id: string;
   nombre: string;
+  tamano: number;
   fechaCorte: string | null;
   fuente: FuenteSnapshot;
   registros: number;
