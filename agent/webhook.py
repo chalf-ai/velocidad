@@ -111,14 +111,29 @@ async def health():
 
 @app.get("/debug/user/{telefono}")
 async def debug_user(telefono: str):
-    """Diagnóstico: busca usuario por teléfono y muestra resultado."""
+    """Diagnóstico: busca usuario por teléfono — muestra query raw y resultado."""
+    pool = await db.get_pool()
+    numero = telefono.lstrip("+").strip()
     try:
-        user = await db.get_user_by_phone(telefono)
-        if user:
-            return {"found": True, "name": user["name"], "email": user["email"], "marcas": user.get("marcas"), "rol": user.get("rol")}
-        return {"found": False, "telefono_buscado": telefono, "mensaje": "Usuario no encontrado — registra el número en /usuarios"}
+        # Query exacta que usa el agente
+        row = await pool.fetchrow(
+            "SELECT id, email, name, \"marcas\", rol, telefono FROM \"User\" "
+            "WHERE TRIM(REPLACE(telefono, '+', '')) = $1 AND activo = true",
+            numero,
+        )
+        # Query directa sin normalización (para comparar)
+        row_exact = await pool.fetchrow(
+            "SELECT id, telefono FROM \"User\" WHERE telefono = $1",
+            "+" + numero,
+        )
+        return {
+            "numero_buscado": numero,
+            "found_normalizado": row is not None,
+            "found_exacto": row_exact is not None,
+            "usuario": dict(row) if row else None,
+        }
     except Exception as e:
-        return {"found": False, "error": str(e), "mensaje": "Error de BD — posiblemente schema no aplicado"}
+        return {"error": str(e)}
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
