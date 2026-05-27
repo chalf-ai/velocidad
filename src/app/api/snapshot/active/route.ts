@@ -41,8 +41,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const id = searchParams.get("id");
+
   const snapshot = await prisma.snapshot.findFirst({
-    where: { fuente: fuenteRaw as Fuente, activo: true },
+    where: id
+      ? { id, fuente: fuenteRaw as Fuente }
+      : { fuente: fuenteRaw as Fuente, activo: true },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
