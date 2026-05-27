@@ -27,9 +27,7 @@ export function MarcaFilterSelect({ onHeader = false }: { onHeader?: boolean }) 
       <Tag
         className={
           onHeader
-            ? marca
-              ? "size-3.5 text-white"
-              : "size-3.5 text-[--color-header-fg-dim]"
+            ? "size-3.5 text-white/70"
             : marca
               ? "size-3.5 text-[--color-accent]"
               : "size-3.5 text-[--color-fg-dim]"
@@ -43,7 +41,7 @@ export function MarcaFilterSelect({ onHeader = false }: { onHeader?: boolean }) 
           onHeader
             ? marca
               ? "rounded-md border border-white/50 bg-white/15 px-2 py-1 text-[12px] font-medium text-white outline-none focus:border-white"
-              : "rounded-md border border-white/30 bg-white/10 px-2 py-1 text-[12px] text-[--color-header-fg-muted] outline-none focus:border-white"
+              : "rounded-md border border-white/30 bg-transparent px-2 py-1 text-[12px] text-white/80 outline-none focus:border-white"
             : marca
               ? "rounded-md border border-[--color-accent]/40 bg-[--color-accent]/[0.06] px-2 py-1 text-[12px] font-medium text-[--color-fg] outline-none focus:border-[--color-accent]"
               : "rounded-md border border-[--color-border] bg-white px-2 py-1 text-[12px] text-[--color-fg-muted] outline-none focus:border-[--color-accent]"
