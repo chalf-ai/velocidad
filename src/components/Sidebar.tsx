@@ -25,6 +25,7 @@ import {
   Truck,
   LogOut,
   UserCircle2,
+  Users,
   Warehouse,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -128,7 +129,15 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
 export function Sidebar() {
   const { data: session } = useSession();
   const email = session?.user?.email ?? "usuario@pompeyo.cl";
+  const isAdmin = session?.user?.rol === "ADMIN";
   const [logoutModalOpen, setLogoutModalOpen] = useState(false);
+
+  const navTec: NavItem[] = [
+    ...NAV_TEC,
+    ...(isAdmin
+      ? [{ href: "/usuarios", label: "Gestión de usuarios", icon: Users }]
+      : []),
+  ];
 
   return (
     <aside className="sticky top-0 flex h-full w-60 shrink-0 flex-col border-r border-[--color-border] bg-white">
@@ -136,7 +145,7 @@ export function Sidebar() {
         <NavSection title="Ejecutivo" items={NAV_EXEC} />
         <NavSection title="Marcas" items={NAV_MARCAS} />
         <NavSection title="Operacional" items={NAV_OPS} />
-        <NavSection title="Técnico" items={NAV_TEC} />
+        <NavSection title="Técnico" items={navTec} />
       </nav>
 
       <div className="border-t border-[--color-border] px-2.5 pt-3 pb-4">
