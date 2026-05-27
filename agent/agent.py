@@ -168,7 +168,7 @@ async def get_agent():
         model=model,
         tools=LANGCHAIN_TOOLS,
         checkpointer=checkpointer,
-        state_modifier=_prepare_messages,
+        prompt=_prepare_messages,
     )
     return _agent
 
