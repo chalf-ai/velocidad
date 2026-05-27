@@ -49,6 +49,146 @@ async def get_user_by_phone(telefono: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def get_capital_breakdown(marcas: Optional[list[str]] = None) -> dict:
+    """Capital desglosado por tipo desde el snapshot BASE_STOCK activo."""
+    pool = await get_pool()
+    marca_filter = "AND elem->>'marcaPompeyo' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    def _safe_sum(condition: str) -> str:
+        return (
+            f"ROUND(COALESCE(SUM(CASE WHEN {condition} "
+            f"AND (elem->'costoNeto') IS NOT NULL "
+            f"AND (elem->>'costoNeto') NOT IN ('null','0','') "
+            f"THEN (elem->>'costoNeto')::numeric ELSE 0 END), 0) / 1000000, 1)::float"
+        )
+
+    row = await pool.fetchrow(
+        f"""
+        SELECT
+            COUNT(*)::int AS total_unidades,
+            {_safe_sum("elem->>'tipoStock' IN ('Propio','FinPropio')")} AS capital_propio_mm,
+            {_safe_sum("elem->>'tipoStock' = 'FloorPlan'")} AS capital_floorplan_mm,
+            {_safe_sum("elem->>'tipoStock' = 'Financiado'")} AS capital_financiado_mm,
+            {_safe_sum("(elem->>'esVPPComprometido') = 'true'")} AS capital_vpp_mm,
+            {_safe_sum("(elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null' AND (elem->>'diasStock')::int >= 180")} AS capital_mas_180_mm,
+            COUNT(CASE WHEN (elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null'
+                        AND (elem->>'diasStock')::int >= 180 THEN 1 END)::int AS unidades_mas_180,
+            COUNT(CASE WHEN (elem->>'pagado') = 'true'
+                        AND (elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null'
+                        AND (elem->>'diasStock')::int >= 60 THEN 1 END)::int AS pagados_sin_rotacion,
+            COUNT(CASE WHEN (elem->>'esJudicial') = 'true' THEN 1 END)::int AS unidades_judicial,
+            COUNT(CASE WHEN (elem->>'esStockB') = 'true' THEN 1 END)::int AS unidades_stock_b,
+            COUNT(CASE WHEN (elem->>'esVPPComprometido') = 'true' THEN 1 END)::int AS unidades_vpp
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'vehiculos') AS elem
+        WHERE fuente = 'BASE_STOCK' AND activo = true
+          {marca_filter}
+        """,
+        *params,
+    )
+    return dict(row) if row else {}
+
+
+async def get_alertas_stock(marcas: Optional[list[str]] = None) -> list[dict]:
+    """VINs con alertas operacionales: >180d, pagados >60d, judicial, StockB."""
+    pool = await get_pool()
+    marca_filter = "AND elem->>'marcaPompeyo' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            elem->>'vin'            AS vin,
+            elem->>'marcaPompeyo'   AS marca,
+            elem->>'modelo'         AS modelo,
+            CASE WHEN (elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null'
+                 THEN (elem->>'diasStock')::int ELSE 0 END AS dias_stock,
+            elem->>'tipoStock'      AS tipo_stock,
+            CASE WHEN (elem->'costoNeto') IS NOT NULL AND (elem->>'costoNeto') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'costoNeto')::numeric / 1000000, 1)::float ELSE 0 END AS costo_mm,
+            (elem->>'esJudicial') = 'true'         AS judicial,
+            (elem->>'esStockB') = 'true'           AS stock_b,
+            (elem->>'esVPPComprometido') = 'true'  AS vpp,
+            (elem->>'pagado') = 'true'             AS pagado
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'vehiculos') AS elem
+        WHERE fuente = 'BASE_STOCK' AND activo = true
+          {marca_filter}
+          AND (
+            ((elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null' AND (elem->>'diasStock')::int >= 180)
+            OR ((elem->>'pagado') = 'true' AND (elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null' AND (elem->>'diasStock')::int >= 60)
+            OR (elem->>'esJudicial') = 'true'
+            OR (elem->>'esStockB') = 'true'
+          )
+        ORDER BY dias_stock DESC
+        LIMIT 100
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_fne_resumen() -> dict:
+    """Resumen FNE: total, detenidos >15d, aging buckets."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT
+            COUNT(*)::int AS total_fne,
+            COUNT(CASE WHEN (elem->>'agingBucket') = '0-3'  THEN 1 END)::int AS bucket_0_3,
+            COUNT(CASE WHEN (elem->>'agingBucket') = '4-7'  THEN 1 END)::int AS bucket_4_7,
+            COUNT(CASE WHEN (elem->>'agingBucket') = '8-15' THEN 1 END)::int AS bucket_8_15,
+            COUNT(CASE WHEN (elem->>'agingBucket') = '16+'  THEN 1 END)::int AS bucket_16_mas,
+            COUNT(CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL
+                        AND (elem->>'diasDesdeVenta') != 'null'
+                        AND (elem->>'diasDesdeVenta')::int > 15 THEN 1 END)::int AS detenidos_mas_15,
+            ROUND(COALESCE(SUM(
+                CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL
+                          AND (elem->>'diasDesdeVenta') != 'null'
+                          AND (elem->>'diasDesdeVenta')::int > 15
+                          AND (elem->>'valorFactura') IS NOT NULL
+                          AND (elem->>'valorFactura') NOT IN ('null','0','')
+                THEN (elem->>'valorFactura')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float AS capital_detenido_mm
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'FNE' AND activo = true
+        """,
+    )
+    return dict(row) if row else {}
+
+
+async def get_lineas_credito_resumen(marcas: Optional[list[str]] = None) -> list[dict]:
+    """Líneas de crédito por marca desde el snapshot BASE_STOCK activo."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT
+            elem->>'marca' AS marca,
+            CASE WHEN (elem->>'autorizado') IS NOT NULL AND (elem->>'autorizado') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'autorizado')::numeric / 1000000, 1)::float ELSE 0 END AS autorizado_mm,
+            CASE WHEN (elem->>'ocupado') IS NOT NULL AND (elem->>'ocupado') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'ocupado')::numeric / 1000000, 1)::float ELSE 0 END AS ocupado_mm,
+            CASE WHEN (elem->>'libre') IS NOT NULL AND (elem->>'libre') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'libre')::numeric / 1000000, 1)::float ELSE 0 END AS libre_mm,
+            CASE WHEN (elem->>'porcentajeOcupacion') IS NOT NULL AND (elem->>'porcentajeOcupacion') != 'null'
+                 THEN ROUND((elem->>'porcentajeOcupacion')::numeric, 1)::float ELSE 0 END AS pct_ocupacion,
+            COALESCE(elem->>'semaforo', 'desconocido') AS semaforo
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'lineas') AS elem
+        WHERE fuente = 'BASE_STOCK' AND activo = true
+          AND (elem->>'autorizado') IS NOT NULL
+          AND (elem->>'autorizado') NOT IN ('null','0','')
+        ORDER BY pct_ocupacion DESC
+        """,
+    )
+    result = [dict(r) for r in rows]
+    if marcas:
+        result = [r for r in result if r.get("marca") in marcas]
+    return result
+
+
 async def get_all_stock_vins() -> list[dict]:
     """Todos los VINs del snapshot BASE_STOCK activo (sin filtro de marca — para ADMIN)."""
     pool = await get_pool()

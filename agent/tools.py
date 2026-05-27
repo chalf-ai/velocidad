@@ -447,3 +447,163 @@ async def get_alarmas(telefono: str) -> str:
         lines.append(f"{emoji} *{vin}* — {motivo}")
 
     return "\n".join(lines)
+
+
+async def resumen_capital(telefono: str) -> str:
+    """Capital de trabajo desglosado por tipo, con alertas de inmovilizados."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") == "ADMIN"
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    kpis = await db.get_capital_breakdown(marcas)
+    if not kpis or not kpis.get("total_unidades"):
+        return "No hay datos de stock disponibles."
+
+    propio = kpis.get("capital_propio_mm") or 0
+    floorplan = kpis.get("capital_floorplan_mm") or 0
+    financiado = kpis.get("capital_financiado_mm") or 0
+    total = propio + floorplan + financiado
+
+    scope = "Grupo completo" if es_admin else f"Marcas: {', '.join(marcas or [])}"
+    lines = [f"*Capital de Trabajo* 💰\n_{scope}_\n"]
+    lines.append(f"*Total: ${total:.1f}M* ({kpis.get('total_unidades', 0)} unidades)\n")
+    lines.append("*Origen:*")
+    lines.append(f"• Propio / FinPropio: ${propio:.1f}M")
+    lines.append(f"• FloorPlan: ${floorplan:.1f}M")
+    lines.append(f"• Financiado: ${financiado:.1f}M")
+    vpp = kpis.get("capital_vpp_mm") or 0
+    if vpp:
+        lines.append(f"• VPP comprometido: ${vpp:.1f}M ({kpis.get('unidades_vpp', 0)} VINs)")
+
+    alertas = []
+    if kpis.get("unidades_mas_180", 0) > 0:
+        alertas.append(
+            f"🔴 {kpis['unidades_mas_180']} VINs >180d en stock — "
+            f"${kpis.get('capital_mas_180_mm', 0):.1f}M inmovilizados"
+        )
+    if kpis.get("pagados_sin_rotacion", 0) > 0:
+        alertas.append(f"⏱ {kpis['pagados_sin_rotacion']} pagados sin rotación >60d")
+    if kpis.get("unidades_judicial", 0) > 0:
+        alertas.append(f"⚖️ {kpis['unidades_judicial']} judiciales")
+    if kpis.get("unidades_stock_b", 0) > 0:
+        alertas.append(f"📦 {kpis['unidades_stock_b']} Stock B")
+
+    if alertas:
+        lines.append("\n*⚠️ Alertas de capital:*")
+        lines.extend(alertas)
+
+    return "\n".join(lines)
+
+
+async def detalle_fne(telefono: str) -> str:
+    """Estado de Facturados No Entregados: total, aging, detenidos >15d."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    fne = await db.get_fne_resumen()
+    if not fne or not fne.get("total_fne"):
+        return "No hay datos FNE disponibles o no hay FNE activos."
+
+    lines = ["*Facturados No Entregados (FNE)* 🚗\n"]
+    lines.append(f"*Total: {fne['total_fne']} unidades*\n")
+    lines.append("*Por antigüedad:*")
+    lines.append(f"• 0-3 días:  {fne.get('bucket_0_3', 0)} ✅")
+    lines.append(f"• 4-7 días:  {fne.get('bucket_4_7', 0)}")
+    lines.append(f"• 8-15 días: {fne.get('bucket_8_15', 0)}")
+    detenidos = fne.get("bucket_16_mas", 0)
+    lines.append(f"• +16 días:  {detenidos} {'⚠️' if detenidos else ''}")
+
+    if fne.get("detenidos_mas_15", 0) > 0:
+        lines.append(
+            f"\n⚠️ *{fne['detenidos_mas_15']} VINs detenidos >15d* — "
+            f"${fne.get('capital_detenido_mm', 0):.1f}M retenidos"
+        )
+        lines.append("_Acción: acelerar entrega o cobrar diferencia._")
+
+    return "\n".join(lines)
+
+
+async def lineas_credito(telefono: str) -> str:
+    """Estado de líneas de crédito por marca."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") == "ADMIN"
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    lineas = await db.get_lineas_credito_resumen(marcas)
+    if not lineas:
+        return "No hay datos de líneas de crédito disponibles."
+
+    SEMAFORO = {"verde": "🟢", "amarillo": "🟡", "rojo": "🔴", "sobregirada": "🔴🔴"}
+
+    lines = ["*Líneas de Crédito* 💳\n"]
+    for l in lineas:
+        emoji = SEMAFORO.get(l.get("semaforo", ""), "⚪")
+        sufijo = " ⚠️ SOBREGIRADA" if l.get("semaforo") == "sobregirada" else ""
+        lines.append(
+            f"{emoji} *{l['marca']}*: ${l.get('ocupado_mm', 0):.1f}M / "
+            f"${l.get('autorizado_mm', 0):.1f}M "
+            f"({l.get('pct_ocupacion', 0):.0f}%){sufijo}"
+        )
+
+    criticas = [l for l in lineas if l.get("semaforo") in ("sobregirada", "rojo")]
+    if criticas:
+        lines.append(f"\n🔴 *{len(criticas)} línea(s) en zona roja* — requieren atención")
+
+    return "\n".join(lines)
+
+
+async def alertas_stock(telefono: str) -> str:
+    """Alertas de stock: inmovilizados >180d, pagados sin rotación, judiciales, Stock B."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") == "ADMIN"
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    alertas = await db.get_alertas_stock(marcas)
+    if not alertas:
+        return "✅ Sin alertas de stock activas."
+
+    mas_180 = [a for a in alertas if (a.get("dias_stock") or 0) >= 180]
+    pagados_60 = [
+        a for a in alertas
+        if a.get("pagado") and 60 <= (a.get("dias_stock") or 0) < 180
+    ]
+    judicial = [a for a in alertas if a.get("judicial")]
+    stock_b_list = [a for a in alertas if a.get("stock_b")]
+
+    lines = ["*⚠️ Alertas Operacionales de Stock*\n"]
+
+    if mas_180:
+        lines.append(f"*🔴 Inmovilizados >180d — {len(mas_180)} VINs:*")
+        for a in mas_180[:10]:
+            lines.append(f"• {a['vin']} {a.get('modelo', '')} ({a.get('marca', '')}) — {a.get('dias_stock', 0)}d / ${a.get('costo_mm', 0):.1f}M")
+        if len(mas_180) > 10:
+            lines.append(f"  _...y {len(mas_180) - 10} más_")
+
+    if pagados_60:
+        lines.append(f"\n*⏱ Pagados sin rotación >60d — {len(pagados_60)} VINs:*")
+        for a in pagados_60[:8]:
+            lines.append(f"• {a['vin']} {a.get('modelo', '')} — {a.get('dias_stock', 0)}d")
+        if len(pagados_60) > 8:
+            lines.append(f"  _...y {len(pagados_60) - 8} más_")
+
+    if judicial:
+        lines.append(f"\n*⚖️ Judiciales — {len(judicial)} VINs:*")
+        for a in judicial[:5]:
+            lines.append(f"• {a['vin']} {a.get('modelo', '')} ({a.get('marca', '')})")
+
+    if stock_b_list:
+        lines.append(f"\n*📦 Stock B — {len(stock_b_list)} VINs:*")
+        for a in stock_b_list[:5]:
+            lines.append(f"• {a['vin']} {a.get('modelo', '')} ({a.get('marca', '')})")
+
+    return "\n".join(lines)

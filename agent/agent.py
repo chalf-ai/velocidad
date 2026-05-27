@@ -85,6 +85,52 @@ async def analisis_capital(telefono: str) -> str:
     return await t.analisis_capital(telefono)
 
 
+@tool
+async def ver_capital(telefono: str) -> str:
+    """
+    Capital de trabajo actual: total, desglose por Propio/FloorPlan/Financiado/VPP,
+    unidades en stock, y alertas de capital inmovilizado (>180d, pagados >60d,
+    judiciales, Stock B).
+    Llamar cuando el usuario pregunta por capital, inversión, dinero en stock,
+    caja comprometida, o quiere el resumen financiero del inventario.
+    """
+    return await t.resumen_capital(telefono)
+
+
+@tool
+async def ver_fne(telefono: str) -> str:
+    """
+    Facturados No Entregados (FNE): total de vehículos vendidos pendientes de
+    entrega, distribución por aging (0-3d, 4-7d, 8-15d, +16d) y monto
+    retenido en FNE detenidos >15 días.
+    Llamar cuando el usuario pregunta por FNE, facturados, entregas pendientes,
+    vehículos vendidos no entregados.
+    """
+    return await t.detalle_fne(telefono)
+
+
+@tool
+async def ver_lineas_credito(telefono: str) -> str:
+    """
+    Líneas de crédito por marca: monto autorizado, ocupado, libre y semáforo
+    (verde <80%, amarillo <90%, rojo <100%, sobregirada >100%).
+    Llamar cuando el usuario pregunta por líneas, crédito, FloorPlan disponible,
+    cuánto queda de línea, o si alguna marca está sobregirada.
+    """
+    return await t.lineas_credito(telefono)
+
+
+@tool
+async def ver_alertas_stock(telefono: str) -> str:
+    """
+    Alertas operacionales del inventario físico: VINs inmovilizados >180 días,
+    pagados sin rotación >60 días, vehículos judiciales y Stock B.
+    Llamar cuando el usuario pregunta por stock parado, inmovilizados, judiciales,
+    o quiere saber qué vehículos requieren acción urgente.
+    """
+    return await t.alertas_stock(telefono)
+
+
 LANGCHAIN_TOOLS = [
     get_briefing,
     get_detalle_vin,
@@ -95,6 +141,10 @@ LANGCHAIN_TOOLS = [
     guardar_proxima_accion,
     ver_alarmas,
     analisis_capital,
+    ver_capital,
+    ver_fne,
+    ver_lineas_credito,
+    ver_alertas_stock,
 ]
 
 # ── Prompt del sistema ────────────────────────────────────────────────────────
