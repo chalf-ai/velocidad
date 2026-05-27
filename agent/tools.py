@@ -128,6 +128,105 @@ async def briefing_diario(telefono: str) -> str:
     return "\n".join(lines)
 
 
+async def analisis_capital(telefono: str) -> str:
+    """Tendencia del capital de trabajo comparando los últimos snapshots históricos."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No encontré tu usuario en el sistema."
+
+    es_admin = user.get("rol") == "ADMIN"
+    marcas = None if es_admin else (user.get("marcas") or [])
+    nombre = user.get("name", "Usuario")
+
+    snapshots = await db.get_snapshots_historicos(limit=5)
+    if not snapshots:
+        return "No hay snapshots históricos disponibles para analizar."
+
+    if len(snapshots) < 2:
+        return "Se necesitan al menos 2 cargues de stock para analizar tendencias. Sube más datos históricos."
+
+    # Obtener KPIs de cada snapshot
+    kpis_list = []
+    for snap in snapshots:
+        kpis = await db.get_kpis_snapshot(snap["id"], marcas)
+        kpis["fecha"] = snap.get("fechaCorte") or snap.get("createdAt")
+        kpis["snapshot_id"] = snap["id"]
+        kpis_list.append(kpis)
+
+    # Ordenar de más antiguo a más reciente para mostrar evolución
+    kpis_list.sort(key=lambda x: x["fecha"])
+
+    ultimo = kpis_list[-1]
+    penultimo = kpis_list[-2]
+
+    def delta(nuevo, viejo) -> str:
+        if viejo == 0:
+            return ""
+        diff = nuevo - viejo
+        if diff > 0:
+            return f" (+{diff:.1f} ⬆️)"
+        elif diff < 0:
+            return f" ({diff:.1f} ⬇️)"
+        return " (=)"
+
+    def tendencia_capital(nuevo, viejo) -> str:
+        if viejo == 0:
+            return ""
+        diff = nuevo - viejo
+        # Para capital: bajar es bueno (menos capital inmovilizado)
+        if diff < -1:
+            return " ✅"
+        elif diff > 1:
+            return " ⚠️"
+        return " ➡️"
+
+    scope = "Grupo completo" if es_admin else f"Marcas: {', '.join(marcas or [])}"
+    today_str = date.today().strftime("%d/%m/%Y")
+
+    lines = [f"*Análisis de Capital de Trabajo* 📈\n"]
+    lines.append(f"_{scope} · Generado {today_str}_\n")
+
+    # Tabla de evolución
+    lines.append("*Evolución histórica:*")
+    for k in kpis_list:
+        fecha_str = k["fecha"].strftime("%d/%m") if hasattr(k["fecha"], "strftime") else str(k["fecha"])[:10]
+        lines.append(
+            f"• {fecha_str}: {k['total']} VINs · FloorPlan: {k['floor_plan']} · "
+            f"Capital: ${k['capital_mm']:.1f}M"
+        )
+
+    # Comparación última semana
+    lines.append("\n*Última variación:*")
+    d_total = ultimo["total"] - penultimo["total"]
+    d_fp = ultimo["floor_plan"] - penultimo["floor_plan"]
+    d_cap = ultimo["capital_mm"] - penultimo["capital_mm"]
+
+    stock_icon = "✅" if d_total < 0 else ("⚠️" if d_total > 3 else "➡️")
+    fp_icon = "✅" if d_fp < 0 else ("⚠️" if d_fp > 2 else "➡️")
+    cap_icon = "✅" if d_cap < -0.5 else ("⚠️" if d_cap > 0.5 else "➡️")
+
+    def fmt_diff(v): return f"+{v}" if v > 0 else str(v)
+
+    lines.append(f"• Stock total: {ultimo['total']} VINs ({fmt_diff(d_total)}) {stock_icon}")
+    lines.append(f"• FloorPlan: {ultimo['floor_plan']} ({fmt_diff(d_fp)}) {fp_icon}")
+    lines.append(f"• Capital invertido: ${ultimo['capital_mm']:.1f}M ({fmt_diff(round(d_cap,1))}M) {cap_icon}")
+
+    # Diagnóstico
+    señales_positivas = sum([d_total < 0, d_fp < 0, d_cap < 0])
+    señales_negativas = sum([d_total > 3, d_fp > 2, d_cap > 0.5])
+
+    lines.append("\n*Diagnóstico:*")
+    if señales_positivas >= 2:
+        lines.append("✅ _Capital mejorando: stock reduciéndose y/o menos FloorPlan._")
+    elif señales_negativas >= 2:
+        lines.append("⚠️ _Capital bajo presión: stock creciendo y mayor exposición._")
+    else:
+        lines.append("➡️ _Capital estable sin variaciones significativas._")
+
+    lines.append("\n_Para detallar una marca específica o un VIN, escríbeme._")
+    return "\n".join(lines)
+
+
 async def _briefing_ejecutivo(user: dict) -> str:
     """Resumen ejecutivo para perfil ADMIN — visión global por marca."""
     today = date.today()

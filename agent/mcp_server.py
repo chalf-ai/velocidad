@@ -71,5 +71,14 @@ async def get_alarmas(telefono: str) -> str:
     return await t.get_alarmas(telefono)
 
 
+@mcp.tool()
+async def analisis_capital(telefono: str) -> str:
+    """
+    Analiza la tendencia del capital de trabajo comparando snapshots históricos.
+    Muestra evolución de stock, FloorPlan y capital invertido en el tiempo.
+    """
+    return await t.analisis_capital(telefono)
+
+
 if __name__ == "__main__":
     mcp.run()

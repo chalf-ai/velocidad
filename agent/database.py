@@ -268,6 +268,72 @@ async def create_alerta_log(
     return alerta_id
 
 
+async def get_snapshots_historicos(limit: int = 5) -> list[dict]:
+    """Últimos N snapshots de BASE_STOCK con metadata (id, fecha, registros)."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT id, "fechaCorte", registros, "createdAt"
+        FROM "Snapshot"
+        WHERE fuente = 'BASE_STOCK'
+        ORDER BY "createdAt" DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_kpis_snapshot(snapshot_id: str, marcas: Optional[list[str]] = None) -> dict:
+    """
+    Extrae KPIs de un snapshot: total VINs, FloorPlan, Propio/Financiado,
+    capital total (costoNeto en millones) y días promedio en stock.
+    marcas=None → todos (para ADMIN).
+    """
+    pool = await get_pool()
+
+    marca_filter = "AND elem->>'marcaPompeyo' = ANY($2::text[])" if marcas else ""
+    params = [snapshot_id] + ([marcas] if marcas else [])
+
+    row = await pool.fetchrow(
+        f"""
+        SELECT
+            COUNT(*)::int                                                   AS total,
+            COUNT(*) FILTER (WHERE elem->>'tipoStock' = 'FloorPlan')::int   AS floor_plan,
+            COUNT(*) FILTER (WHERE elem->>'tipoStock' IN ('Propio','Financiado','FinPropio'))::int AS propio_fin,
+            ROUND(COALESCE(SUM(
+                CASE WHEN (elem->'costoNeto') IS NOT NULL
+                          AND (elem->'costoNeto')::text NOT IN ('null','0','')
+                THEN (elem->>'costoNeto')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                     AS capital_mm
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'vehiculos') AS elem
+        WHERE id = $1
+          {marca_filter}
+        """,
+        *params,
+    )
+    return dict(row) if row else {"total": 0, "floor_plan": 0, "propio_fin": 0, "capital_mm": 0.0}
+
+
+async def get_fne_count_snapshot(snapshot_id_fne: str, marcas: Optional[list[str]] = None) -> int:
+    """Cuenta registros FNE (facturados no entregados) de un snapshot FNE."""
+    pool = await get_pool()
+    marca_filter = "AND elem->>'marcaPompeyo' = ANY($2::text[])" if marcas else ""
+    params = [snapshot_id_fne] + ([marcas] if marcas else [])
+    count = await pool.fetchval(
+        f"""
+        SELECT COUNT(*)::int
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE id = $1
+          {marca_filter}
+        """,
+        *params,
+    )
+    return count or 0
+
+
 async def mark_alerta_sent(
     alerta_id: str,
     wa_msg_id: Optional[str] = None,

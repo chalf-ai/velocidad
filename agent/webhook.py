@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 from .config import settings
 from .cron import build_scheduler
 from . import database as db
-from .agent import chat
+from .agent import chat, get_agent
 from .whatsapp import extract_messages, send_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -23,9 +23,10 @@ _processed: set[str] = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.get_pool()
+    await get_agent()          # inicializa checkpointer PostgreSQL y crea tablas si no existen
     scheduler = build_scheduler()
     scheduler.start()
-    logger.info("Cron de briefings iniciado")
+    logger.info("Agente y cron de briefings iniciados")
     yield
     scheduler.shutdown(wait=False)
     await db.close_pool()
