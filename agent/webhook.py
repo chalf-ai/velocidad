@@ -109,6 +109,18 @@ async def health():
     return {"status": "ok", "service": "velocidad-agent"}
 
 
+@app.get("/debug/user/{telefono}")
+async def debug_user(telefono: str):
+    """Diagnóstico: busca usuario por teléfono y muestra resultado."""
+    try:
+        user = await db.get_user_by_phone(telefono)
+        if user:
+            return {"found": True, "name": user["name"], "email": user["email"], "marcas": user.get("marcas"), "rol": user.get("rol")}
+        return {"found": False, "telefono_buscado": telefono, "mensaje": "Usuario no encontrado — registra el número en /usuarios"}
+    except Exception as e:
+        return {"found": False, "error": str(e), "mensaje": "Error de BD — posiblemente schema no aplicado"}
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
