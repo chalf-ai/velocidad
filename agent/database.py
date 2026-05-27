@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import asyncpg
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 _pool: Optional[asyncpg.Pool] = None
 
@@ -31,17 +34,18 @@ async def close_pool() -> None:
 async def get_user_by_phone(telefono: str) -> Optional[dict]:
     """Busca por teléfono normalizando el formato (con o sin +)."""
     pool = await get_pool()
-    # Normalizar: quitar + para comparar ambos formatos
-    numero = telefono.lstrip("+")
+    numero = telefono.lstrip("+").strip()
+    logger.info("get_user_by_phone: raw=%r normalizado=%r", telefono, numero)
     row = await pool.fetchrow(
         """
         SELECT id, email, name, "marcas", rol
         FROM "User"
-        WHERE REPLACE(telefono, '+', '') = $1
+        WHERE TRIM(REPLACE(telefono, '+', '')) = $1
           AND activo = true
         """,
         numero,
     )
+    logger.info("get_user_by_phone: resultado=%s", dict(row) if row else "NOT FOUND")
     return dict(row) if row else None
 
 
