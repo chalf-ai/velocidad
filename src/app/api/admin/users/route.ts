@@ -32,6 +32,8 @@ export async function GET() {
       name: true,
       rol: true,
       activo: true,
+      telefono: true,
+      marcas: true,
       createdAt: true,
       updatedAt: true,
     },

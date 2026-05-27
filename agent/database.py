@@ -37,6 +37,26 @@ async def get_user_by_phone(telefono: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def get_all_stock_vins() -> list[dict]:
+    """Todos los VINs del snapshot BASE_STOCK activo (sin filtro de marca — para ADMIN)."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT
+            elem->>'vin'          AS vin,
+            elem->>'marcaPompeyo' AS marca,
+            elem->>'modelo'       AS modelo
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'vehiculos') AS elem
+        WHERE fuente = 'BASE_STOCK'
+          AND activo  = true
+          AND elem->>'vin' IS NOT NULL
+          AND elem->>'vin' <> ''
+        """,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_all_active_users_with_phone() -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch(

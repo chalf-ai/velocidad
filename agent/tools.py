@@ -57,6 +57,9 @@ async def briefing_diario(telefono: str) -> str:
     if not user:
         return "No encontré tu usuario en el sistema. Pide al administrador que registre tu número."
 
+    if user.get("rol") == "ADMIN":
+        return await _briefing_ejecutivo(user)
+
     marcas = user.get("marcas") or []
     if not marcas:
         return f"Hola {user['name']}! Tu usuario no tiene marcas asignadas. Pide al admin que las configure."
@@ -67,7 +70,6 @@ async def briefing_diario(telefono: str) -> str:
 
     vins = [v["vin"] for v in stock_vins]
     vin_info = {v["vin"]: v for v in stock_vins}
-
     gestiones = await db.get_gestiones_for_vins(vins)
     activas = [g for g in gestiones if g["estadoGestion"] in ESTADOS_ACTIVOS]
 
@@ -81,11 +83,7 @@ async def briefing_diario(telefono: str) -> str:
             f"Marcas: {', '.join(marcas)}"
         )
 
-    # Clasificar
-    vencidos = []
-    criticos = []
-    sin_movimiento = []
-
+    vencidos, criticos, sin_movimiento = [], [], []
     for g in activas:
         fc = g.get("fechaCompromiso")
         if fc:
@@ -99,44 +97,97 @@ async def briefing_diario(telefono: str) -> str:
 
     por_estado: dict[str, list] = {}
     for g in activas:
-        e = g["estadoGestion"]
-        por_estado.setdefault(e, []).append(g)
+        por_estado.setdefault(g["estadoGestion"], []).append(g)
 
     lines = [f"*Briefing {hoy_str}* 📋\n"]
     lines.append(f"Hola *{user['name']}*! Tienes *{len(activas)} casos activos*.")
     lines.append(f"Marcas: {', '.join(marcas)}\n")
+    lines.append("📊 " + " | ".join(f"{ESTADO_LABEL[e]}: {len(c)}" for e, c in sorted(por_estado.items())))
 
-    # Resumen por estado
-    resumen_partes = []
-    for estado, casos in sorted(por_estado.items()):
-        resumen_partes.append(f"{ESTADO_LABEL[estado]}: {len(casos)}")
-    lines.append("📊 " + " | ".join(resumen_partes))
-
-    # Alertas urgentes
     if vencidos or criticos or sin_movimiento:
         lines.append("\n*⚠️ Requieren atención inmediata:*")
-        mostrados = set()
+        mostrados: set[str] = set()
         for g in vencidos:
             if g["vin"] not in mostrados:
-                info = vin_info.get(g["vin"], {})
-                modelo = info.get("modelo", "")
+                modelo = vin_info.get(g["vin"], {}).get("modelo", "")
                 lines.append(f"• {g['vin']} {modelo} — fecha compromiso vencida")
                 mostrados.add(g["vin"])
         for g in criticos:
             if g["vin"] not in mostrados:
-                info = vin_info.get(g["vin"], {})
-                modelo = info.get("modelo", "")
+                modelo = vin_info.get(g["vin"], {}).get("modelo", "")
                 lines.append(f"• 🔴 {g['vin']} {modelo} — prioridad CRÍTICA")
                 mostrados.add(g["vin"])
         for g in sin_movimiento:
             if g["vin"] not in mostrados:
-                info = vin_info.get(g["vin"], {})
-                modelo = info.get("modelo", "")
+                modelo = vin_info.get(g["vin"], {}).get("modelo", "")
                 dias = _dias_sin_movimiento(g)
                 lines.append(f"• {g['vin']} {modelo} — sin movimiento {dias} días")
                 mostrados.add(g["vin"])
 
     lines.append("\n_Escribe un VIN para ver el detalle, o 'ayuda' para ver qué puedo hacer._")
+    return "\n".join(lines)
+
+
+async def _briefing_ejecutivo(user: dict) -> str:
+    """Resumen ejecutivo para perfil ADMIN — visión global por marca."""
+    today = date.today()
+    hoy_str = today.strftime("%A %d de %B").capitalize()
+
+    stock_vins = await db.get_all_stock_vins()
+    if not stock_vins:
+        return f"*Resumen Ejecutivo {hoy_str}*\n\nNo hay stock activo en el sistema."
+
+    vins = [v["vin"] for v in stock_vins]
+    vin_marca = {v["vin"]: v.get("marca", "SIN MARCA") for v in stock_vins}
+
+    gestiones = await db.get_gestiones_for_vins(vins)
+    activas = [g for g in gestiones if g["estadoGestion"] in ESTADOS_ACTIVOS]
+
+    total_vencidos = sum(
+        1 for g in activas
+        if g.get("fechaCompromiso") and (
+            (g["fechaCompromiso"].date() if isinstance(g["fechaCompromiso"], datetime)
+             else datetime.fromisoformat(str(g["fechaCompromiso"])).date()) <= today
+        )
+    )
+    total_criticos = sum(1 for g in activas if g.get("prioridadManual") == "CRITICA")
+    total_sin_mov = sum(1 for g in activas if _dias_sin_movimiento(g) >= 7)
+
+    # Agrupar por marca
+    por_marca: dict[str, dict] = {}
+    for g in activas:
+        marca = vin_marca.get(g["vin"], "SIN MARCA")
+        if marca not in por_marca:
+            por_marca[marca] = {"total": 0, "criticos": 0, "vencidos": 0}
+        por_marca[marca]["total"] += 1
+        if g.get("prioridadManual") == "CRITICA":
+            por_marca[marca]["criticos"] += 1
+        fc = g.get("fechaCompromiso")
+        if fc:
+            fc_date = fc.date() if isinstance(fc, datetime) else datetime.fromisoformat(str(fc)).date()
+            if fc_date <= today:
+                por_marca[marca]["vencidos"] += 1
+
+    lines = [f"*Resumen Ejecutivo — {hoy_str}* 📊\n"]
+    lines.append(f"Hola *{user['name']}*. Visión global del grupo.\n")
+    lines.append(f"*Total casos activos: {len(activas)}*")
+
+    if total_vencidos or total_criticos or total_sin_mov:
+        alertas = []
+        if total_criticos:   alertas.append(f"🔴 {total_criticos} críticos")
+        if total_vencidos:   alertas.append(f"⚠️ {total_vencidos} vencidos")
+        if total_sin_mov:    alertas.append(f"⏱ {total_sin_mov} sin movimiento +7d")
+        lines.append("Alertas: " + " · ".join(alertas))
+
+    lines.append("\n*Por marca:*")
+    for marca, datos in sorted(por_marca.items(), key=lambda x: -x[1]["total"]):
+        sufijo = []
+        if datos["criticos"]: sufijo.append(f"🔴 {datos['criticos']} críticos")
+        if datos["vencidos"]:  sufijo.append(f"⚠️ {datos['vencidos']} vencidos")
+        detalle = f" ({', '.join(sufijo)})" if sufijo else ""
+        lines.append(f"• *{marca}*: {datos['total']} casos{detalle}")
+
+    lines.append("\n_Para detalle de una marca o VIN específico, escríbeme._")
     return "\n".join(lines)
 
 

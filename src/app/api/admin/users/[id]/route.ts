@@ -28,9 +28,10 @@ export async function PATCH(
     );
   }
 
-  const body: { activo?: boolean; rol?: string } = await req.json();
+  const body: { activo?: boolean; rol?: string; telefono?: string | null; marcas?: string[] } =
+    await req.json();
 
-  const data: { activo?: boolean; rol?: Rol } = {};
+  const data: { activo?: boolean; rol?: Rol; telefono?: string | null; marcas?: string[] } = {};
   if (typeof body.activo === "boolean") data.activo = body.activo;
   if (body.rol) {
     if (!Object.values(Rol).includes(body.rol as Rol)) {
@@ -38,6 +39,8 @@ export async function PATCH(
     }
     data.rol = body.rol as Rol;
   }
+  if ("telefono" in body) data.telefono = body.telefono ?? null;
+  if (Array.isArray(body.marcas)) data.marcas = body.marcas;
 
   if (!Object.keys(data).length) {
     return NextResponse.json({ error: "Sin campos para actualizar" }, { status: 400 });
@@ -52,6 +55,8 @@ export async function PATCH(
       name: true,
       rol: true,
       activo: true,
+      telefono: true,
+      marcas: true,
       updatedAt: true,
     },
   });
