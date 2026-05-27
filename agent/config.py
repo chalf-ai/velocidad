@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     openai_api_key: str
 
     # WhatsApp Cloud API (Meta)
-    whatsapp_access_token: str
-    whatsapp_phone_number_id: str
+    whatsapp_access_token: str = ""
+    whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = "pompeyo_velocidad_2025"
 
     # Agente
