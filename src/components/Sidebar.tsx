@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
@@ -153,33 +154,44 @@ export function Sidebar() {
         </div>
       </div>
 
-      {logoutModalOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-[#101828]/35 p-4">
-          <div className="w-full max-w-xs rounded-xl border border-[--color-border] bg-white p-4 shadow-xl">
-            <p className="text-[14px] font-medium text-[--color-fg]">¿Cerrar sesión?</p>
-            <p className="mt-1 text-[12px] text-[--color-fg-muted] truncate" title={email}>
-              {email}
-            </p>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setLogoutModalOpen(false)}
-                className="rounded-md border border-[--color-border] px-3 py-1.5 text-[13px] text-[--color-fg-muted] hover:bg-[--color-bg-elev-2]"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => signOut({ callbackUrl: "/login" })}
-                className="inline-flex items-center gap-1.5 rounded-md bg-[#3358e8] px-3 py-1.5 text-[13px] font-medium text-white hover:brightness-110"
-              >
-                <LogOut className="size-[14px]" strokeWidth={1.75} />
-                Cerrar sesión
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {logoutModalOpen && <LogoutModal email={email} onClose={() => setLogoutModalOpen(false)} />}
     </aside>
+  );
+}
+
+function LogoutModal({ email, onClose }: { email: string; onClose: () => void }) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] grid place-items-center bg-[#101828]/35 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xs rounded-xl border border-[--color-border] bg-white p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-[14px] font-medium text-[--color-fg]">¿Cerrar sesión?</p>
+        <p className="mt-1 text-[12px] text-[--color-fg-muted] truncate" title={email}>
+          {email}
+        </p>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-[--color-border] px-3 py-1.5 text-[13px] text-[--color-fg-muted] hover:bg-[--color-bg-elev-2]"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            className="inline-flex items-center gap-1.5 rounded-md bg-[#3358e8] px-3 py-1.5 text-[13px] font-medium text-white hover:brightness-110"
+          >
+            <LogOut className="size-[14px]" strokeWidth={1.75} />
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
