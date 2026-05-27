@@ -6,8 +6,8 @@ class Settings(BaseSettings):
     # Compartida con Next.js
     database_url: str
 
-    # Anthropic
-    anthropic_api_key: str
+    # OpenAI
+    openai_api_key: str
 
     # WhatsApp Cloud API (Meta)
     whatsapp_access_token: str

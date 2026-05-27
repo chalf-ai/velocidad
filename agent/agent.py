@@ -1,7 +1,7 @@
 """Agente LangGraph con Claude — gestión de stock Pompeyo Carrasco."""
 from __future__ import annotations
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
@@ -121,10 +121,9 @@ _checkpointer = MemorySaver()
 def get_agent():
     global _agent
     if _agent is None:
-        model = ChatAnthropic(
-            model="claude-sonnet-4-6",
-            api_key=settings.anthropic_api_key,
-            max_tokens=1024,
+        model = ChatOpenAI(
+            model="gpt-4o",
+            api_key=settings.openai_api_key,
         )
         _agent = create_react_agent(
             model=model,
