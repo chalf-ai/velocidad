@@ -34,6 +34,14 @@
   --color-accent-dim: rgba(51, 88, 232, 0.09);
   --color-accent-glow: rgba(51, 88, 232, 0.2);
 
+  /* ── Shell: header + nav active ── */
+  --color-header-bg: #3358e8;
+  --color-header-fg: #ffffff;
+  --color-header-fg-muted: rgba(255, 255, 255, 0.82);
+  --color-header-fg-dim: rgba(255, 255, 255, 0.62);
+  --color-nav-active-bg: #3358e8;
+  --color-nav-active-fg: #ffffff;
+
   /* ── Severity tones — sober premium ── */
   --color-success: #15a87b;
   --color-success-dim: rgba(21, 168, 123, 0.08);
