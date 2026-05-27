@@ -29,10 +29,18 @@ async def close_pool() -> None:
 # ── Usuarios ──────────────────────────────────────────────────────────────────
 
 async def get_user_by_phone(telefono: str) -> Optional[dict]:
+    """Busca por teléfono normalizando el formato (con o sin +)."""
     pool = await get_pool()
+    # Normalizar: quitar + para comparar ambos formatos
+    numero = telefono.lstrip("+")
     row = await pool.fetchrow(
-        'SELECT id, email, name, "marcas", rol FROM "User" WHERE telefono = $1 AND activo = true',
-        telefono,
+        """
+        SELECT id, email, name, "marcas", rol
+        FROM "User"
+        WHERE REPLACE(telefono, '+', '') = $1
+          AND activo = true
+        """,
+        numero,
     )
     return dict(row) if row else None
 
