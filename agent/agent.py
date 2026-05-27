@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from langchain_core.messages import SystemMessage, trim_messages
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
@@ -120,8 +121,9 @@ Ayudas a los ejecutivos de cuenta a gestionar sus casos de vehículos día a dí
 
 # ── Preparación de mensajes (trimming para contexto largo) ───────────────────
 
-def _prepare_messages(state: dict) -> list:
-    """Mantiene las últimas 50 entradas + system prompt. Evita contexto infinito."""
+def _prepare_messages(state: dict, config: RunnableConfig) -> list:
+    """Mantiene las últimas 50 entradas + system prompt con teléfono del usuario."""
+    telefono = config.get("configurable", {}).get("thread_id", "")
     trimmed = trim_messages(
         state["messages"],
         max_tokens=50,
@@ -131,7 +133,8 @@ def _prepare_messages(state: dict) -> list:
         allow_partial=False,
         start_on="human",
     )
-    return [SystemMessage(content=SYSTEM_PROMPT)] + trimmed
+    system = SYSTEM_PROMPT + f"\n\n*Teléfono del usuario en esta sesión: {telefono}* — úsalo en todas las tools."
+    return [SystemMessage(content=system)] + trimmed
 
 
 # ── Inicialización async del agente con checkpointer PostgreSQL ───────────────
