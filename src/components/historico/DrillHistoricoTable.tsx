@@ -12,6 +12,13 @@ import type { EntradaConsolidada } from "@/lib/historico/cruce-roma-actas";
 interface Props {
   titulo: string;
   filas: EntradaConsolidada[];
+  /**
+   * Texto opcional que se antepone a "Conflicto / Razón" en cada fila y al
+   * CSV exportado. Usado por drills donde la razón no viene de los
+   * conflictos materiales sino del contexto del foco (ej. cobertura por
+   * hito faltante: "Hito faltante: Sin patente recibida").
+   */
+  prefijoRazon?: string;
 }
 
 type SortKey =
@@ -79,7 +86,13 @@ function razonConflicto(f: EntradaConsolidada): string {
   return adv ? `(advertencia) ${adv.detalle}` : "";
 }
 
-export function DrillHistoricoTable({ titulo, filas }: Props) {
+function combinarRazon(prefijo: string | undefined, base: string): string {
+  if (!prefijo) return base;
+  if (!base) return prefijo;
+  return `${prefijo} · ${base}`;
+}
+
+export function DrillHistoricoTable({ titulo, filas, prefijoRazon }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("ventaId");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
@@ -128,7 +141,7 @@ export function DrillHistoricoTable({ titulo, filas }: Props) {
         f.cuelloPrincipal,
         f.nivelDocumental,
         f.ejeCalidadCierre ?? "no_evaluable",
-        `"${razonConflicto(f).replace(/"/g, '""')}"`,
+        `"${combinarRazon(prefijoRazon, razonConflicto(f)).replace(/"/g, '""')}"`,
       ].join(","),
     );
     const csv = [headers, ...rows].join("\n");
@@ -192,25 +205,28 @@ export function DrillHistoricoTable({ titulo, filas }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-[--color-border-soft]">
-              {slice.map((f, i) => (
-                <tr key={`${f.vin}-${f.ventaId ?? "x"}-${i}`} className="hover:bg-[--color-bg-elev-1]">
-                  <td className="px-2 py-1.5 mono whitespace-nowrap">{f.vin}</td>
-                  <td className="px-2 py-1.5 text-right mono">{f.ventaId ?? "—"}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{f.marca ?? "—"}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{f.sucursal ?? "—"}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{f.vendedor ?? "—"}</td>
-                  <td className="px-2 py-1.5 mono">{dayStr(f.fSolicitud) || "—"}</td>
-                  <td className="px-2 py-1.5 mono">{dayStr(f.fFactura) || "—"}</td>
-                  <td className="px-2 py-1.5 mono">{dayStr(f.fInscripcion) || "—"}</td>
-                  <td className="px-2 py-1.5 mono">{dayStr(f.fEntregaReal) || "—"}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{f.cuelloPrincipal}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{f.nivelDocumental}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{f.ejeCalidadCierre ?? "no_evaluable"}</td>
-                  <td className="px-2 py-1.5 text-[11px] text-[--color-fg-muted] max-w-[280px] truncate" title={razonConflicto(f)}>
-                    {razonConflicto(f) || "—"}
-                  </td>
-                </tr>
-              ))}
+              {slice.map((f, i) => {
+                const razon = combinarRazon(prefijoRazon, razonConflicto(f));
+                return (
+                  <tr key={`${f.vin}-${f.ventaId ?? "x"}-${i}`} className="hover:bg-[--color-bg-elev-1]">
+                    <td className="px-2 py-1.5 mono whitespace-nowrap">{f.vin}</td>
+                    <td className="px-2 py-1.5 text-right mono">{f.ventaId ?? "—"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{f.marca ?? "—"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{f.sucursal ?? "—"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{f.vendedor ?? "—"}</td>
+                    <td className="px-2 py-1.5 mono">{dayStr(f.fSolicitud) || "—"}</td>
+                    <td className="px-2 py-1.5 mono">{dayStr(f.fFactura) || "—"}</td>
+                    <td className="px-2 py-1.5 mono">{dayStr(f.fInscripcion) || "—"}</td>
+                    <td className="px-2 py-1.5 mono">{dayStr(f.fEntregaReal) || "—"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{f.cuelloPrincipal}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{f.nivelDocumental}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{f.ejeCalidadCierre ?? "no_evaluable"}</td>
+                    <td className="px-2 py-1.5 text-[11px] text-[--color-fg-muted] max-w-[280px] truncate" title={razon}>
+                      {razon || "—"}
+                    </td>
+                  </tr>
+                );
+              })}
               {slice.length === 0 && (
                 <tr>
                   <td colSpan={COLUMNAS.length + 1} className="text-center py-6 text-[--color-fg-dim] italic">

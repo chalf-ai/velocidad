@@ -23,6 +23,7 @@ import {
 } from "@/components/historico/AlertasAccionables";
 import { ProcesoSelector } from "@/components/historico/ProcesoSelector";
 import { ModoProcesoToggle } from "@/components/historico/ModoProcesoToggle";
+import { CoberturaProcesoCard } from "@/components/historico/CoberturaProcesoCard";
 import { EjeTabs } from "@/components/historico/EjeTabs";
 import { EjeVelocidadInline } from "@/components/historico/EjeVelocidadInline";
 import { EjeCumplimientoInline } from "@/components/historico/EjeCumplimientoInline";
@@ -34,16 +35,19 @@ import {
   agregadosEje1,
   agregadosEje2,
   agregadosEje3,
+  calcularCoberturaProceso,
   calcularTimelineProceso,
   extraerOpciones,
   filtrarFilas,
   filasDeTramo,
   filasCerrado,
   filasAbierto,
+  filasConHitoFaltante,
   fingerprintGlobal,
   inferirTipoHuerfano,
   procesoDeCuello,
   FILTROS_VACIOS,
+  HITOS_POR_PROCESO,
   type FiltrosVista,
   type TramoId,
   type ProcesoActivo,
@@ -81,6 +85,10 @@ export default function VelocidadOperacionalPage() {
   const [focoCalidad, setFocoCalidad] = useState<FocoCalidadCierre | null>(null);
   const [focoTramo, setFocoTramo] = useState<TramoId | null>(null);
   const [alertaActiva, setAlertaActiva] = useState<AlertaId | null>(null);
+
+  // Foco del drill de Cobertura — { id } del hito faltante seleccionado.
+  // Mutuamente excluyente con los focos legacy (vel/cum/cal).
+  const [focoHito, setFocoHito] = useState<{ id: string } | null>(null);
 
   const opciones = useMemo(
     () => (cruce ? extraerOpciones(cruce) : { marcas: [], sucursales: [], vendedores: [] }),
@@ -129,6 +137,38 @@ export default function VelocidadOperacionalPage() {
     };
   }, [procesoActivo, filasFiltradas]);
 
+  // ── Cobertura del proceso operacional activo (modo cerrado únicamente) ───
+  // Solo se calcula cuando proceso != cierre_y_cumplimiento && modo = cerrado.
+  // Reusa filasCerrado() ya derivado y `calcularCoberturaProceso`.
+  const NOMBRE_PROCESO: Record<ProcesoOperacional, string> = useMemo(
+    () => ({
+      control_negocio: "Control de Negocio",
+      logistica:       "Logística",
+      comercial:       "Comercial",
+      cliente:         "Cliente",
+    }),
+    [],
+  );
+
+  const procesoOpActual: ProcesoOperacional | null =
+    procesoActivo === "cierre_y_cumplimiento" ? null : (procesoActivo as ProcesoOperacional);
+
+  const coberturaVisible =
+    procesoOpActual !== null && modoProceso === "historico_cerrado";
+
+  const filasCerradoActual = useMemo(
+    () => (procesoOpActual ? filasCerrado(filasFiltradas, procesoOpActual) : []),
+    [procesoOpActual, filasFiltradas],
+  );
+
+  const coberturaActual = useMemo(
+    () =>
+      procesoOpActual && coberturaVisible
+        ? calcularCoberturaProceso(filasCerradoActual, procesoOpActual)
+        : null,
+    [procesoOpActual, coberturaVisible, filasCerradoActual],
+  );
+
   // Hero: "Principal foco operacional" — proceso operacional con mayor backlog
   // abierto dentro del universo filtrado. Solo considera los 4 operacionales
   // (Mixto / Sin información / Cierre quedan fuera).
@@ -174,8 +214,19 @@ export default function VelocidadOperacionalPage() {
     [procesoLegacy, filasFiltradas],
   );
 
+  // Definición del hito activo (lookup por id en el catálogo del proceso).
+  // null si focoHito está vacío, el proceso es Cierre, o el id no existe.
+  const hitoActivoDef = useMemo(() => {
+    if (!focoHito || !procesoOpActual) return null;
+    return HITOS_POR_PROCESO[procesoOpActual].find((h) => h.id === focoHito.id) ?? null;
+  }, [focoHito, procesoOpActual]);
+
   // Drill — el drill activo depende del eje activo.
+  // Excepción: si hay foco de hito (Cobertura), pre-empts al drill legacy.
   const filasDrill = useMemo<EntradaConsolidada[]>(() => {
+    if (focoHito && procesoOpActual && coberturaVisible && hitoActivoDef) {
+      return filasConHitoFaltante(filasCerradoActual, procesoOpActual, focoHito.id);
+    }
     if (ejeActivo === "velocidad" && focoVelocidad) {
       if (focoVelocidad.tipo === "cuello") {
         const base = filasFiltradas.filter(
@@ -221,9 +272,17 @@ export default function VelocidadOperacionalPage() {
     focoTramo,
     procesoLegacy,
     filasFiltradas,
+    focoHito,
+    procesoOpActual,
+    coberturaVisible,
+    hitoActivoDef,
+    filasCerradoActual,
   ]);
 
   const tituloDrill = useMemo(() => {
+    if (focoHito && procesoOpActual && hitoActivoDef) {
+      return `Cobertura · ${NOMBRE_PROCESO[procesoOpActual]} · ${hitoActivoDef.label}`;
+    }
     if (ejeActivo === "velocidad" && focoVelocidad) {
       if (focoVelocidad.tipo === "cuello") {
         const base = `Cuello: ${focoVelocidad.valor}`;
@@ -254,17 +313,31 @@ export default function VelocidadOperacionalPage() {
     procesoLegacy,
     focoTramo,
     timelineData,
+    focoHito,
+    procesoOpActual,
+    hitoActivoDef,
+    NOMBRE_PROCESO,
   ]);
+
+  // Prefijo de razón cuando el drill es de Cobertura.
+  const prefijoRazonDrill =
+    focoHito && hitoActivoDef ? `Hito faltante: ${hitoActivoDef.label}` : undefined;
 
   const fingerprint = useMemo(() => (cruce ? fingerprintGlobal(cruce) : null), [cruce]);
 
-  const drillVisible = filasDrill.length > 0 || (
+  const drillVisible =
+    !!focoHito ||
+    filasDrill.length > 0 ||
     (ejeActivo === "velocidad" && !!focoVelocidad) ||
     (ejeActivo === "cumplimiento" && !!focoCumplimiento) ||
-    (ejeActivo === "calidad" && !!focoCalidad)
-  );
+    (ejeActivo === "calidad" && !!focoCalidad);
 
   const cerrarDrillActivo = () => {
+    if (focoHito) {
+      // Cerrar drill de Cobertura no afecta los focos legacy.
+      setFocoHito(null);
+      return;
+    }
     if (ejeActivo === "velocidad") {
       setFocoVelocidad(null);
       setFocoTramo(null);
@@ -279,6 +352,7 @@ export default function VelocidadOperacionalPage() {
   // Navegación desde KPIs del Hero.
   const navegarKpi = (target: KpiNav) => {
     setAlertaActiva(null);
+    setFocoHito(null); // navegar cambia contexto → cerrar drill de cobertura
     if (target.tipo === "proceso") {
       // KPI "Principal foco operacional" → cambia proceso + modo, no eje.
       setProcesoActivo(target.proceso);
@@ -299,6 +373,7 @@ export default function VelocidadOperacionalPage() {
 
   // Navegación desde Alertas.
   const navegarAlerta = (t: AlertaTarget) => {
+    setFocoHito(null); // navegar cambia contexto → cerrar drill de cobertura
     setEjeActivo(t.eje);
     setAlertaActiva(t.id);
     if (t.eje === "velocidad" && t.focoCuello) {
@@ -358,13 +433,17 @@ export default function VelocidadOperacionalPage() {
             onChange={(p) => {
               setProcesoActivo(p);
               setModoProceso("historico_cerrado"); // reset modo al cambiar proceso
+              setFocoHito(null); // cambiar de proceso invalida el hito activo
             }}
             counts={procesoCounts}
           />
           {procesoActivo !== "cierre_y_cumplimiento" && (
             <ModoProcesoToggle
               activo={modoProceso}
-              onChange={setModoProceso}
+              onChange={(m) => {
+                setModoProceso(m);
+                if (m !== "historico_cerrado") setFocoHito(null);
+              }}
               countCerrado={modoCounts.cerrado}
               countAbierto={modoCounts.abierto}
             />
@@ -414,6 +493,19 @@ export default function VelocidadOperacionalPage() {
             </Card>
           )}
 
+          {/* ─ Cobertura del proceso operacional activo ──────────────────────
+              Solo en modo Histórico Cerrado y para procesos != Cierre.
+              Cuando se elimine el legacy esto subirá al bloque definitivo del
+              proceso activo (entre selector y métricas del eje). */}
+          {coberturaVisible && coberturaActual && procesoOpActual && (
+            <CoberturaProcesoCard
+              cobertura={coberturaActual}
+              nombreProceso={NOMBRE_PROCESO[procesoOpActual]}
+              focoHitoId={focoHito?.id ?? null}
+              onSelectHito={(id) => setFocoHito(id ? { id } : null)}
+            />
+          )}
+
           {/* ─ Capa LEGACY (Fase 2 v2) — convive hasta Tanda E ──────────────── */}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <EjeTabs
@@ -460,7 +552,12 @@ export default function VelocidadOperacionalPage() {
           )}
 
           {drillVisible && (
-            <DrillPanel titulo={tituloDrill} filas={filasDrill} onClose={cerrarDrillActivo} />
+            <DrillPanel
+              titulo={tituloDrill}
+              filas={filasDrill}
+              onClose={cerrarDrillActivo}
+              prefijoRazon={prefijoRazonDrill}
+            />
           )}
         </>
       )}
