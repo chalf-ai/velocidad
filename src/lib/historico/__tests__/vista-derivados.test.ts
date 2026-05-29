@@ -25,6 +25,15 @@ import {
   calcularTimelineProceso,
   filasDeTramo,
   procesoDeCuello,
+  rankingPeoresVelocidad,
+  rankingPeoresCumplimiento,
+  rankingPeoresCierre,
+  filasCerrado,
+  filasAbierto,
+  calcularCoberturaProceso,
+  filasConHitoFaltante,
+  HITOS_POR_PROCESO,
+  UMBRAL_DIAS_CLIENTE_DEMORADO,
   FILTROS_VACIOS,
 } from "../vista-derivados.js";
 import type { EntradaConsolidada, ResultadoCruce } from "../cruce-roma-actas.js";
@@ -644,5 +653,490 @@ describe("8. calcularTimelineProceso", () => {
     assert.equal(tramo.p90Dias, null);
     assert.equal(tramo.topSucursal, null);
     assert.equal(tramo.topMarca, null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. Ranking peores — métricas de problema con piso de muestra
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("9. rankingPeoresVelocidad/Cumplimiento/Cierre", () => {
+  /** Helper: genera N filas idénticas excepto en sucursal/marca/vendedor y diasTotales. */
+  function mkN(
+    n: number,
+    overrides: Partial<EntradaConsolidada>,
+  ): EntradaConsolidada[] {
+    return Array.from({ length: n }, (_, i) =>
+      mkFila({ ventaId: 1000 + i, vin: `V${String(i).padStart(16, "0")}`, ...overrides }),
+    );
+  }
+
+  test("Velocidad: ordena por mediana descendente, respeta piso de muestra n≥20", () => {
+    const filas = [
+      // Sucursal A: 25 casos con diasTotales=10 → mediana 10
+      ...mkN(25, { sucursal: "A", diasTotales: 10 }),
+      // Sucursal B: 30 casos con diasTotales=50 → mediana 50 (peor)
+      ...mkN(30, { sucursal: "B", diasTotales: 50 }),
+      // Sucursal C: 10 casos (debajo del piso) — no debería aparecer
+      ...mkN(10, { sucursal: "C", diasTotales: 100 }),
+    ];
+    const top = rankingPeoresVelocidad(filas, "sucursal");
+    assert.equal(top.length, 2);
+    assert.equal(top[0].key, "B", "Mediana 50 = peor");
+    assert.equal(top[0].metrica, 50);
+    assert.equal(top[0].n, 30);
+    assert.equal(top[1].key, "A");
+    assert.equal(top[1].metrica, 10);
+  });
+
+  test("Velocidad: minN configurable", () => {
+    const filas = [
+      ...mkN(5, { sucursal: "A", diasTotales: 100 }),
+      ...mkN(5, { sucursal: "B", diasTotales: 50 }),
+    ];
+    const top = rankingPeoresVelocidad(filas, "sucursal", { minN: 3 });
+    assert.equal(top.length, 2);
+    assert.equal(top[0].key, "A");
+  });
+
+  test("Cumplimiento: ordena por % completo ASCENDENTE (peor = menor %)", () => {
+    const filas = [
+      // A: 20 filas, 18 completo (90%)
+      ...mkN(18, { sucursal: "A", nivelDocumental: "completo" }),
+      ...mkN(2, { sucursal: "A", nivelDocumental: "parcial" }),
+      // B: 30 filas, 6 completo (20%) — peor
+      ...mkN(6, { sucursal: "B", nivelDocumental: "completo" }),
+      ...mkN(24, { sucursal: "B", nivelDocumental: "minimo" }),
+      // C: 10 filas (debajo del piso)
+      ...mkN(10, { sucursal: "C", nivelDocumental: "minimo" }),
+    ];
+    const top = rankingPeoresCumplimiento(filas, "sucursal");
+    assert.equal(top.length, 2);
+    assert.equal(top[0].key, "B", "20% es peor que 90%");
+    assert.equal(top[0].metrica, 20);
+    assert.equal(top[1].key, "A");
+    assert.equal(top[1].metrica, 90);
+  });
+
+  test("Cierre: solo entregados cuentan; ordena por % problemático descendente", () => {
+    const filas = [
+      // A: 20 entregados, 10 problemáticos (50%)
+      ...mkN(10, { sucursal: "A", entregado: true, ejeCalidadCierre: "correcto" }),
+      ...mkN(6, { sucursal: "A", entregado: true, ejeCalidadCierre: "huerfano" }),
+      ...mkN(4, { sucursal: "A", entregado: true, ejeCalidadCierre: "inconsistente" }),
+      // B: 25 entregados, 5 problemáticos (20%)
+      ...mkN(20, { sucursal: "B", entregado: true, ejeCalidadCierre: "correcto" }),
+      ...mkN(5, { sucursal: "B", entregado: true, ejeCalidadCierre: "huerfano" }),
+      // C: solo no entregados (no debe aparecer)
+      ...mkN(30, { sucursal: "C", entregado: false, ejeCalidadCierre: undefined }),
+    ];
+    const top = rankingPeoresCierre(filas, "sucursal");
+    assert.equal(top.length, 2);
+    assert.equal(top[0].key, "A", "50% peor");
+    assert.equal(top[0].metrica, 50);
+    assert.equal(top[0].n, 20);
+    // Detalle: A tiene 6 huérfanos vs 4 inconsistentes → top razón huérfano
+    assert.ok(top[0].detalle?.includes("huérfano"));
+    assert.equal(top[1].key, "B");
+  });
+
+  test("Ranking por marca y por vendedor funciona igual", () => {
+    const filas = [
+      ...mkN(25, { marca: "KIA", vendedor: "JUAN", diasTotales: 20 }),
+      ...mkN(25, { marca: "PEUGEOT", vendedor: "ANA", diasTotales: 60 }),
+    ];
+    const porMarca = rankingPeoresVelocidad(filas, "marca");
+    assert.equal(porMarca[0].key, "PEUGEOT");
+    const porVend = rankingPeoresVelocidad(filas, "vendedor");
+    assert.equal(porVend[0].key, "ANA");
+  });
+
+  test("Limit cap funciona", () => {
+    const filas = [
+      ...mkN(20, { sucursal: "A", diasTotales: 10 }),
+      ...mkN(20, { sucursal: "B", diasTotales: 20 }),
+      ...mkN(20, { sucursal: "C", diasTotales: 30 }),
+    ];
+    const top = rankingPeoresVelocidad(filas, "sucursal", { limit: 2 });
+    assert.equal(top.length, 2);
+    assert.equal(top[0].key, "C");
+    assert.equal(top[1].key, "B");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10. Fase 3 — filasCerrado / filasAbierto
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("10. filasCerrado (universo cerrado por proceso)", () => {
+  test("Control de Negocio: cuello CN && entregado", () => {
+    const cruce = mkCruce([
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Control de Negocio", entregado: false }),
+      mkFila({ ventaId: 3, vin: "V0000000000000003", cuelloPrincipal: "Logística",          entregado: true }),
+      mkFila({ ventaId: 4, vin: "V0000000000000004", cuelloPrincipal: "Mixto",               entregado: true }),
+    ]);
+    const c = filasCerrado(cruce.filas, "control_negocio");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].ventaId, 1);
+  });
+
+  test("Logística: cuello Log && entregado", () => {
+    const cruce = mkCruce([
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Logística",          entregado: true }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Logística",          entregado: false }),
+      mkFila({ ventaId: 3, vin: "V0000000000000003", cuelloPrincipal: "Control de Negocio", entregado: true }),
+    ]);
+    const c = filasCerrado(cruce.filas, "logistica");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].ventaId, 1);
+  });
+
+  test("Comercial: fSolicitud && fFactura — NO exige entregado", () => {
+    const cruce = mkCruce([
+      // Tiene los 2 hitos, NO entregado → entra al cerrado Comercial
+      mkFila({ ventaId: 1, vin: "V0000000000000001", entregado: false, fSolicitud: new Date(2026, 0, 1), fFactura: new Date(2026, 0, 5) }),
+      // Tiene los 2 hitos, entregado → también entra
+      mkFila({ ventaId: 2, vin: "V0000000000000002", entregado: true,  fSolicitud: new Date(2026, 0, 1), fFactura: new Date(2026, 0, 5) }),
+      // Le falta fFactura → no entra
+      mkFila({ ventaId: 3, vin: "V0000000000000003", entregado: false, fSolicitud: new Date(2026, 0, 1), fFactura: null }),
+    ]);
+    const c = filasCerrado(cruce.filas, "comercial");
+    assert.equal(c.length, 2);
+  });
+
+  test("Cliente: fListoParaEntrega && fEntregaReal", () => {
+    const cruce = mkCruce([
+      mkFila({ ventaId: 1, vin: "V0000000000000001", fListoParaEntrega: new Date(2026, 0, 5), fEntregaReal: new Date(2026, 0, 10) }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", fListoParaEntrega: new Date(2026, 0, 5), fEntregaReal: null }),
+      mkFila({ ventaId: 3, vin: "V0000000000000003", fListoParaEntrega: null,                 fEntregaReal: new Date(2026, 0, 10) }),
+    ]);
+    const c = filasCerrado(cruce.filas, "cliente");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].ventaId, 1);
+  });
+
+  test("Cerrado NO contamina con casos del backlog abierto", () => {
+    const cruce = mkCruce([
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true,  fPatenteRecibida: new Date(2026, 0, 5) }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Control de Negocio", entregado: false, fPatenteRecibida: null, fFactura: new Date(2026, 0, 1) }),
+    ]);
+    const c = filasCerrado(cruce.filas, "control_negocio");
+    assert.equal(c.length, 1, "El backlog no entra al universo cerrado");
+    assert.equal(c[0].entregado, true);
+  });
+});
+
+describe("11. filasAbierto (backlog operacional por proceso)", () => {
+  test("Control de Negocio: !entregado && fFactura presente", () => {
+    const cruce = mkCruce([
+      // Facturado sin entrega → entra
+      mkFila({ ventaId: 1, vin: "V0000000000000001", entregado: false, fFactura: new Date(2026, 0, 1) }),
+      // Entregado → no entra
+      mkFila({ ventaId: 2, vin: "V0000000000000002", entregado: true,  fFactura: new Date(2026, 0, 1) }),
+      // Sin factura → no entra
+      mkFila({ ventaId: 3, vin: "V0000000000000003", entregado: false, fFactura: null }),
+    ]);
+    const a = filasAbierto(cruce.filas, "control_negocio");
+    assert.equal(a.length, 1);
+    assert.equal(a[0].ventaId, 1);
+  });
+
+  test("Logística: incluye tieneSinSalida aunque cuello no sea Logística", () => {
+    const cruce = mkCruce([
+      // Cuello Mixto pero con SIN SALIDA → entra
+      mkFila({ ventaId: 1, vin: "V0000000000000001", entregado: false, cuelloPrincipal: "Mixto", tieneSinSalida: true }),
+      // Cuello Logística sin SIN SALIDA y sin ingreso bodega → entra (cuello)
+      mkFila({ ventaId: 2, vin: "V0000000000000002", entregado: false, cuelloPrincipal: "Logística", tieneSinSalida: false }),
+      // Ingreso bodega sin salida → entra
+      mkFila({ ventaId: 3, vin: "V0000000000000003", entregado: false, cuelloPrincipal: "Mixto", fIngresoBodega: new Date(2026, 0, 5), fSalidaFisica: null }),
+      // Entregado → no entra
+      mkFila({ ventaId: 4, vin: "V0000000000000004", entregado: true,  cuelloPrincipal: "Logística" }),
+    ]);
+    const a = filasAbierto(cruce.filas, "logistica");
+    assert.equal(a.length, 3);
+    const ids = a.map((f) => f.ventaId).sort();
+    assert.deepEqual(ids, [1, 2, 3]);
+  });
+
+  test("Comercial: solicitud sin factura O listo sin Si en aut/sol", () => {
+    const cruce = mkCruce([
+      // Solicitud sin factura → entra
+      mkFila({ ventaId: 1, vin: "V0000000000000001", fSolicitud: new Date(2026, 0, 1), fFactura: null }),
+      // Listo + autorización=No → entra
+      mkFila({ ventaId: 2, vin: "V0000000000000002", fListoParaEntrega: new Date(2026, 0, 5), autorizacionEntrega: "No", solEntrega: "Si" }),
+      // Listo + ambas Si → no entra
+      mkFila({ ventaId: 3, vin: "V0000000000000003", fListoParaEntrega: new Date(2026, 0, 5), autorizacionEntrega: "Si", solEntrega: "Si" }),
+    ]);
+    const a = filasAbierto(cruce.filas, "comercial");
+    assert.equal(a.length, 2);
+    const ids = a.map((f) => f.ventaId).sort();
+    assert.deepEqual(ids, [1, 2]);
+  });
+
+  test("Cliente: fListoParaEntrega && !fEntregaReal", () => {
+    const cruce = mkCruce([
+      // Esperando retiro → entra
+      mkFila({ ventaId: 1, vin: "V0000000000000001", fListoParaEntrega: new Date(2026, 0, 5), fEntregaReal: null }),
+      // Ya entregado → no entra
+      mkFila({ ventaId: 2, vin: "V0000000000000002", fListoParaEntrega: new Date(2026, 0, 5), fEntregaReal: new Date(2026, 0, 10) }),
+      // Sin listo → no entra
+      mkFila({ ventaId: 3, vin: "V0000000000000003", fListoParaEntrega: null }),
+    ]);
+    const a = filasAbierto(cruce.filas, "cliente");
+    assert.equal(a.length, 1);
+    assert.equal(a[0].ventaId, 1);
+  });
+
+  test("Abierto NO contamina con casos cerrados (entregados)", () => {
+    const cruce = mkCruce([
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Logística", entregado: true,  tieneSinSalida: true }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Logística", entregado: false, tieneSinSalida: true }),
+    ]);
+    const a = filasAbierto(cruce.filas, "logistica");
+    assert.equal(a.length, 1, "Entregado no entra al backlog");
+    assert.equal(a[0].entregado, false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. calcularCoberturaProceso
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("12. calcularCoberturaProceso", () => {
+  test("Control de Negocio: timelineCompleto cuenta solo filas con los 4 hitos", () => {
+    const cerrados = [
+      // Completo (los 4 hitos)
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: new Date(2026, 0, 1),
+        fInscripcion: new Date(2026, 0, 2),
+        fPatenteEnviada: new Date(2026, 0, 3),
+        fPatenteRecibida: new Date(2026, 0, 4) }),
+      // Le falta solicitud inscripción
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: null,
+        fInscripcion: new Date(2026, 0, 2),
+        fPatenteEnviada: new Date(2026, 0, 3),
+        fPatenteRecibida: new Date(2026, 0, 4) }),
+      // Le faltan 2 hitos (cuenta en ambos faltantes)
+      mkFila({ ventaId: 3, vin: "V0000000000000003", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: new Date(2026, 0, 1),
+        fInscripcion: null,
+        fPatenteEnviada: null,
+        fPatenteRecibida: new Date(2026, 0, 4) }),
+    ];
+    const cob = calcularCoberturaProceso(cerrados, "control_negocio");
+    assert.equal(cob.universoCerrado, 3);
+    assert.equal(cob.timelineCompleto, 1);
+    assert.equal(cob.pctTimelineCompleto, 33.33);
+    // 3 hitos con faltantes=1 (orden entre ellos no garantizado por sort estable
+    // cuando hay empate — verificamos por set).
+    assert.equal(cob.hitosFaltantes.length, 3);
+    for (const h of cob.hitosFaltantes) assert.equal(h.faltantes, 1);
+    const ids = cob.hitosFaltantes.map((h) => h.id).sort();
+    assert.deepEqual(ids, ["cn_inscripcion", "cn_pat_enviada", "cn_sol_ins"]);
+  });
+
+  test("Ranking de hitos faltantes ordenado desc por cantidad", () => {
+    const cerrados = [
+      // 3 filas sin fPatenteRecibida, 1 sin fInscripcion
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: new Date(2026, 0, 1), fInscripcion: new Date(2026, 0, 2),
+        fPatenteEnviada: new Date(2026, 0, 3), fPatenteRecibida: null }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: new Date(2026, 0, 1), fInscripcion: new Date(2026, 0, 2),
+        fPatenteEnviada: new Date(2026, 0, 3), fPatenteRecibida: null }),
+      mkFila({ ventaId: 3, vin: "V0000000000000003", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: new Date(2026, 0, 1), fInscripcion: null,
+        fPatenteEnviada: new Date(2026, 0, 3), fPatenteRecibida: null }),
+    ];
+    const cob = calcularCoberturaProceso(cerrados, "control_negocio");
+    assert.equal(cob.hitosFaltantes[0].id, "cn_pat_recibida");
+    assert.equal(cob.hitosFaltantes[0].faltantes, 3);
+    assert.equal(cob.hitosFaltantes[0].pctUniverso, 100);
+    assert.equal(cob.hitosFaltantes[1].id, "cn_inscripcion");
+    assert.equal(cob.hitosFaltantes[1].faltantes, 1);
+  });
+
+  test("Un caso con varios hitos faltantes cuenta en TODAS las filas", () => {
+    const cerrados = [
+      // Le faltan TODOS los 4 hitos
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: null, fInscripcion: null,
+        fPatenteEnviada: null, fPatenteRecibida: null }),
+    ];
+    const cob = calcularCoberturaProceso(cerrados, "control_negocio");
+    // 1 caso → todos los 4 hitos faltantes deben tener faltantes=1
+    assert.equal(cob.hitosFaltantes.length, 4);
+    for (const h of cob.hitosFaltantes) assert.equal(h.faltantes, 1);
+    // La SUMA es 4, pero el universo es 1 — el texto explicativo lo aclara
+    const suma = cob.hitosFaltantes.reduce((a, b) => a + b.faltantes, 0);
+    assert.equal(suma, 4);
+    assert.equal(cob.universoCerrado, 1);
+  });
+
+  test("Comercial: hitosFaltantes vacío porque el universo ya exige ambos hitos", () => {
+    const cerrados = [
+      mkFila({ ventaId: 1, vin: "V0000000000000001", fSolicitud: new Date(2026, 0, 1), fFactura: new Date(2026, 0, 5) }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", fSolicitud: new Date(2026, 0, 2), fFactura: new Date(2026, 0, 6) }),
+    ];
+    const cob = calcularCoberturaProceso(cerrados, "comercial");
+    assert.equal(cob.universoCerrado, 2);
+    assert.equal(cob.timelineCompleto, 2);
+    assert.equal(cob.pctTimelineCompleto, 100);
+    assert.deepEqual(cob.hitosFaltantes, []);
+  });
+
+  test("Cliente: hitosFaltantes vacío (mismo caso que Comercial)", () => {
+    const cerrados = [
+      mkFila({ ventaId: 1, vin: "V0000000000000001", fListoParaEntrega: new Date(2026, 0, 5), fEntregaReal: new Date(2026, 0, 10) }),
+    ];
+    const cob = calcularCoberturaProceso(cerrados, "cliente");
+    assert.equal(cob.pctTimelineCompleto, 100);
+    assert.equal(cob.hitosFaltantes.length, 0);
+  });
+
+  test("Universo cerrado vacío → cobertura coherente con ceros", () => {
+    const cob = calcularCoberturaProceso([], "control_negocio");
+    assert.equal(cob.universoCerrado, 0);
+    assert.equal(cob.timelineCompleto, 0);
+    assert.equal(cob.pctTimelineCompleto, 0);
+    assert.deepEqual(cob.hitosFaltantes, []);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13. filasConHitoFaltante
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("13. filasConHitoFaltante (drill por hito)", () => {
+  test("Retorna solo cerrados a los que les falta el hito específico", () => {
+    const cerrados = [
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true, fPatenteRecibida: null }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Control de Negocio", entregado: true, fPatenteRecibida: new Date(2026, 0, 5) }),
+      mkFila({ ventaId: 3, vin: "V0000000000000003", cuelloPrincipal: "Control de Negocio", entregado: true, fPatenteRecibida: null }),
+    ];
+    const r = filasConHitoFaltante(cerrados, "control_negocio", "cn_pat_recibida");
+    assert.equal(r.length, 2);
+    const ids = r.map((f) => f.ventaId).sort();
+    assert.deepEqual(ids, [1, 3]);
+  });
+
+  test("Hito ID inexistente → []", () => {
+    const cerrados = [
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true }),
+    ];
+    const r = filasConHitoFaltante(cerrados, "control_negocio", "inventado");
+    assert.deepEqual(r, []);
+  });
+
+  test("Drill solo opera sobre cerrados: si caller pasa universo abierto, no se filtra por modo", () => {
+    // La función NO discrimina cerrado/abierto — su contrato es "el caller
+    // ya pasó cerrados". Confirmamos que opera sobre lo que recibe.
+    const filas = [
+      mkFila({ ventaId: 1, vin: "V0000000000000001", entregado: false, fPatenteRecibida: null }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", entregado: true,  fPatenteRecibida: null }),
+    ];
+    const r = filasConHitoFaltante(filas, "control_negocio", "cn_pat_recibida");
+    assert.equal(r.length, 2, "La función no discrimina — confía en el caller");
+  });
+
+  test("Drill Logística por hito Sin salida física", () => {
+    const cerrados = [
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Logística", entregado: true, fSalidaFisica: null }),
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Logística", entregado: true, fSalidaFisica: new Date(2026, 0, 5) }),
+    ];
+    const r = filasConHitoFaltante(cerrados, "logistica", "lo_salida");
+    assert.equal(r.length, 1);
+    assert.equal(r[0].ventaId, 1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. Anti-regresión Fase 3
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("14. Anti-regresión Fase 3", () => {
+  test("HITOS_POR_PROCESO: CN tiene 4 hitos (sin factura ni entrega real)", () => {
+    const hitos = HITOS_POR_PROCESO.control_negocio;
+    assert.equal(hitos.length, 4);
+    const ids = hitos.map((h) => h.id).sort();
+    assert.deepEqual(ids, ["cn_inscripcion", "cn_pat_enviada", "cn_pat_recibida", "cn_sol_ins"]);
+    // No debe estar el hito trivial de entrega
+    assert.ok(!ids.some((id) => id.includes("entrega")));
+  });
+
+  test("HITOS_POR_PROCESO: Logística tiene 6 hitos (sin entrega real)", () => {
+    const hitos = HITOS_POR_PROCESO.logistica;
+    assert.equal(hitos.length, 6);
+    assert.ok(!hitos.some((h) => h.campo === "fEntregaReal"));
+  });
+
+  test("Backlog NO contamina cobertura (cobertura solo mira cerrados)", () => {
+    // Universo COMPLETO con cerrados y abiertos
+    const filas = [
+      // Cerrado completo CN
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fSolicitudInscripcion: new Date(2026, 0, 1), fInscripcion: new Date(2026, 0, 2),
+        fPatenteEnviada: new Date(2026, 0, 3), fPatenteRecibida: new Date(2026, 0, 4) }),
+      // Abierto CN sin patente — NO debe contar en faltantes de cobertura
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Control de Negocio", entregado: false,
+        fFactura: new Date(2026, 0, 1),
+        fSolicitudInscripcion: null, fInscripcion: null,
+        fPatenteEnviada: null, fPatenteRecibida: null }),
+    ];
+    const cerrados = filasCerrado(filas, "control_negocio");
+    const cob = calcularCoberturaProceso(cerrados, "control_negocio");
+    assert.equal(cob.universoCerrado, 1);
+    assert.equal(cob.timelineCompleto, 1);
+    assert.equal(cob.pctTimelineCompleto, 100);
+    assert.equal(cob.hitosFaltantes.length, 0, "El backlog no aparece como faltante");
+  });
+
+  test("Mediana cerrada no se contamina con backlog abierto", () => {
+    // Mezclo cerrados y abiertos en el universo total
+    const filas = [
+      // Cerrado: timeline factura→entrega computable
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fFactura: new Date(2026, 0, 1), fEntregaReal: new Date(2026, 0, 11) }),
+      // Cerrado: 20 días
+      mkFila({ ventaId: 2, vin: "V0000000000000002", cuelloPrincipal: "Control de Negocio", entregado: true,
+        fFactura: new Date(2026, 0, 1), fEntregaReal: new Date(2026, 0, 21) }),
+      // Abierto: !entregado pero con fFactura — NO aporta a mediana cerrada
+      mkFila({ ventaId: 3, vin: "V0000000000000003", cuelloPrincipal: "Control de Negocio", entregado: false,
+        fFactura: new Date(2026, 0, 1), fEntregaReal: null }),
+    ];
+    const cerrados = filasCerrado(filas, "control_negocio");
+    assert.equal(cerrados.length, 2, "Solo los 2 entregados entran al cerrado");
+    // La fila abierta (ventaId=3) NO está en cerrados, por lo que no contamina nada.
+    const abiertos = filasAbierto(filas, "control_negocio");
+    assert.equal(abiertos.length, 1);
+    assert.equal(abiertos[0].ventaId, 3);
+  });
+
+  test("UMBRAL_DIAS_CLIENTE_DEMORADO está definido y es 7 (preliminar)", () => {
+    assert.equal(UMBRAL_DIAS_CLIENTE_DEMORADO, 7);
+  });
+
+  test("Cerrado de Comercial NO exige entregado — ese es el distintivo", () => {
+    const filas = [
+      // Tiene los 2 hitos comerciales y NO está entregado: ENTRA al cerrado Comercial
+      mkFila({ ventaId: 1, vin: "V0000000000000001", entregado: false,
+        fSolicitud: new Date(2026, 0, 1), fFactura: new Date(2026, 0, 5) }),
+    ];
+    const c = filasCerrado(filas, "comercial");
+    assert.equal(c.length, 1);
+    assert.equal(c[0].entregado, false);
+  });
+
+  test("Cerrado de CN/Log SÍ exige entregado", () => {
+    const filas = [
+      // Tiene cuello CN pero NO entregado: NO entra al cerrado CN
+      mkFila({ ventaId: 1, vin: "V0000000000000001", cuelloPrincipal: "Control de Negocio", entregado: false }),
+    ];
+    const cn = filasCerrado(filas, "control_negocio");
+    const lo = filasCerrado(filas, "logistica");
+    assert.equal(cn.length, 0);
+    assert.equal(lo.length, 0);
   });
 });

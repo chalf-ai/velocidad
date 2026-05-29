@@ -539,6 +539,142 @@ export function topPorDimension(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Ranking accionable — top peores por métrica de problema
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Diferencia clave vs `topPorDimension`: ese ordena por VOLUMEN; estos ordenan
+// por MÉTRICA DE PROBLEMA con piso de muestra (default n ≥ 20). Sirven para la
+// vista ejecutiva donde lo accionable son outliers, no el top de tamaño.
+
+export type RankingDim = "sucursal" | "marca" | "vendedor";
+
+export type RankingUnidad = "dias" | "porcentaje";
+
+export interface RankingItem {
+  key: string;
+  n: number;
+  /** Valor de la métrica de problema (mediana días, % completo, % problemático…). */
+  metrica: number;
+  unidad: RankingUnidad;
+  /** Subdetalle informativo (top razón, breakdown). Opcional. */
+  detalle?: string;
+}
+
+export interface RankingOpts {
+  /** Piso de muestra para considerar la clave. Default 20. */
+  minN?: number;
+  /** Tamaño máximo del ranking. Default 5. */
+  limit?: number;
+}
+
+function keyOf(f: EntradaConsolidada, dim: RankingDim): string {
+  if (dim === "sucursal") return f.sucursal ?? "(sin sucursal)";
+  if (dim === "marca") return f.marca ?? "(sin marca)";
+  return f.vendedor ?? "(sin vendedor)";
+}
+
+/**
+ * Top peores por mediana de `diasTotales` (más alta = más lento).
+ * Solo cuenta filas con `diasTotales` definido.
+ */
+export function rankingPeoresVelocidad(
+  filas: EntradaConsolidada[],
+  dim: RankingDim,
+  opts: RankingOpts = {},
+): RankingItem[] {
+  const minN = opts.minN ?? 20;
+  const limit = opts.limit ?? 5;
+  const grupos = new Map<string, number[]>();
+  for (const f of filas) {
+    if (f.diasTotales == null) continue;
+    const k = keyOf(f, dim);
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k)!.push(f.diasTotales);
+  }
+  const out: RankingItem[] = [];
+  for (const [k, arr] of grupos) {
+    if (arr.length < minN) continue;
+    const med = mediana(arr);
+    if (med === null) continue;
+    out.push({ key: k, n: arr.length, metrica: +med.toFixed(1), unidad: "dias" });
+  }
+  return out.sort((a, b) => b.metrica - a.metrica).slice(0, limit);
+}
+
+/**
+ * Top peores por % completo (más bajo = peor cumplimiento documental).
+ * Universo: filas en la dimensión (sin importar entregado/no).
+ */
+export function rankingPeoresCumplimiento(
+  filas: EntradaConsolidada[],
+  dim: RankingDim,
+  opts: RankingOpts = {},
+): RankingItem[] {
+  const minN = opts.minN ?? 20;
+  const limit = opts.limit ?? 5;
+  const grupos = new Map<string, { total: number; completos: number }>();
+  for (const f of filas) {
+    const k = keyOf(f, dim);
+    if (!grupos.has(k)) grupos.set(k, { total: 0, completos: 0 });
+    const g = grupos.get(k)!;
+    g.total++;
+    if (f.nivelDocumental === "completo") g.completos++;
+  }
+  const out: RankingItem[] = [];
+  for (const [k, g] of grupos) {
+    if (g.total < minN) continue;
+    const pct = +((g.completos / g.total) * 100).toFixed(2);
+    out.push({
+      key: k,
+      n: g.total,
+      metrica: pct,
+      unidad: "porcentaje",
+      detalle: `${g.completos} completos / ${g.total}`,
+    });
+  }
+  // Ascendente: el peor es el % más bajo
+  return out.sort((a, b) => a.metrica - b.metrica).slice(0, limit);
+}
+
+/**
+ * Top peores por % de cierre problemático (huérfano + inconsistente) sobre
+ * entregados. Universo del % son los entregados; filas no entregadas no cuentan.
+ */
+export function rankingPeoresCierre(
+  filas: EntradaConsolidada[],
+  dim: RankingDim,
+  opts: RankingOpts = {},
+): RankingItem[] {
+  const minN = opts.minN ?? 20;
+  const limit = opts.limit ?? 5;
+  const grupos = new Map<string, { entregados: number; problematicos: number; huer: number; incon: number }>();
+  for (const f of filas) {
+    if (!f.entregado) continue;
+    const k = keyOf(f, dim);
+    if (!grupos.has(k)) grupos.set(k, { entregados: 0, problematicos: 0, huer: 0, incon: 0 });
+    const g = grupos.get(k)!;
+    g.entregados++;
+    if (f.ejeCalidadCierre === "huerfano") { g.problematicos++; g.huer++; }
+    else if (f.ejeCalidadCierre === "inconsistente") { g.problematicos++; g.incon++; }
+  }
+  const out: RankingItem[] = [];
+  for (const [k, g] of grupos) {
+    if (g.entregados < minN) continue;
+    const pct = +((g.problematicos / g.entregados) * 100).toFixed(2);
+    const topRazon = g.huer >= g.incon ? `huérfano ${g.huer}` : `inconsistente ${g.incon}`;
+    out.push({
+      key: k,
+      n: g.entregados,
+      metrica: pct,
+      unidad: "porcentaje",
+      detalle: topRazon,
+    });
+  }
+  // Descendente: el peor es el % más alto
+  return out.sort((a, b) => b.metrica - a.metrica).slice(0, limit);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Opciones de filtros (para los selects)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -562,6 +698,253 @@ export function extraerOpciones(cruce: ResultadoCruce): OpcionesFiltro {
     sucursales: [...sucursales].sort(),
     vendedores: [...vendedores].sort(),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 3 — Navegación por proceso (3 lecturas: cerrado / abierto / cobertura)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Modelo conceptual:
+//   - "Histórico cerrado": casos con fechas suficientes para reconstruir el
+//     ciclo cerrado. Es donde se calculan medianas, p90, prom y se renderiza
+//     el timeline. NUNCA se mezclan casos vivos aquí.
+//   - "Backlog abierto": casos vivos con señales operacionales del proceso
+//     abiertas. Se mide aging, no duración cerrada.
+//   - "Cobertura del proceso": de los cerrados, ¿cuántos tienen TODOS los
+//     hitos para reconstruir bien la historia? Convive con el timeline y
+//     EXPLICITA la brecha (no la oculta).
+//
+// "Cierre y Cumplimiento" es transversal: sin modo, sin cobertura.
+
+/** Alias semántico — los 4 procesos operacionales (los que tienen cuello). */
+export type ProcesoOperacional = ProcesoId;
+
+/** Los 5 procesos navegables, incluida la pestaña transversal de cierre. */
+export type ProcesoActivo = ProcesoOperacional | "cierre_y_cumplimiento";
+
+/** Toggle interno por proceso operacional. Default "historico_cerrado". */
+export type ModoProceso = "historico_cerrado" | "backlog_abierto";
+
+/**
+ * Umbral operacional preliminar — revisar con operaciones.
+ * Define cuándo un cliente en backlog se considera "demorado".
+ */
+export const UMBRAL_DIAS_CLIENTE_DEMORADO = 7;
+
+// ── Cobertura ─────────────────────────────────────────────────────────────
+
+/** Hito evaluado para reconstruir la línea de tiempo del proceso. */
+export interface DefinicionHito {
+  id: string;
+  label: string;
+  campo: keyof EntradaConsolidada;
+}
+
+export interface HitoFaltante {
+  id: string;
+  label: string;
+  campo: keyof EntradaConsolidada;
+  faltantes: number;
+  pctUniverso: number;
+}
+
+export interface CoberturaProceso {
+  proceso: ProcesoOperacional;
+  universoCerrado: number;
+  /** Filas con TODOS los hitos del proceso presentes. */
+  timelineCompleto: number;
+  pctTimelineCompleto: number;
+  /** Hitos con `faltantes > 0`, ordenados desc por `faltantes`. */
+  hitosFaltantes: HitoFaltante[];
+}
+
+/**
+ * Hitos evaluados por proceso para Cobertura. Reglas:
+ *  - CN cerrado ya exige `entregado === true`, por eso NO se lista "sin
+ *    entrega real" (sería trivialmente 0 y mete ruido). Tampoco "sin factura"
+ *    (todo cerrado tiene factura por definición operacional).
+ *  - Logística idem para entrega real.
+ *  - Comercial cerrado se define por `fSolicitud && fFactura` → el universo
+ *    ya garantiza ambos hitos. Cobertura siempre 100%, hitosFaltantes vacío.
+ *  - Cliente cerrado se define por `fListoParaEntrega && fEntregaReal` →
+ *    mismo caso especial.
+ *
+ * Las cabeceras de la tarjeta de Cobertura usan los `label`. El campo `id`
+ * sirve como llave estable para drill y para tests.
+ */
+export const HITOS_POR_PROCESO: Record<ProcesoOperacional, DefinicionHito[]> = {
+  control_negocio: [
+    { id: "cn_sol_ins",      label: "Sin solicitud inscripción", campo: "fSolicitudInscripcion" },
+    { id: "cn_inscripcion",  label: "Sin inscripción",            campo: "fInscripcion" },
+    { id: "cn_pat_enviada",  label: "Sin patente enviada",        campo: "fPatenteEnviada" },
+    { id: "cn_pat_recibida", label: "Sin patente recibida",       campo: "fPatenteRecibida" },
+  ],
+  logistica: [
+    { id: "lo_sol_roma",     label: "Sin solicitud ROMA",         campo: "fSolicitud" },
+    { id: "lo_resp_log",     label: "Sin respuesta logística",    campo: "fRespuestaLogistica" },
+    { id: "lo_sol_bodega",   label: "Sin solicitud bodega",       campo: "fSolicitudBodega" },
+    { id: "lo_ing_bodega",   label: "Sin ingreso bodega",         campo: "fIngresoBodega" },
+    { id: "lo_planif",       label: "Sin planificación física",   campo: "fPlanificacionFisica" },
+    { id: "lo_salida",       label: "Sin salida física",          campo: "fSalidaFisica" },
+  ],
+  comercial: [
+    { id: "co_solicitud",    label: "Sin solicitud",              campo: "fSolicitud" },
+    { id: "co_factura",      label: "Sin factura",                campo: "fFactura" },
+  ],
+  cliente: [
+    { id: "cl_listo",        label: "Sin listo para entrega",     campo: "fListoParaEntrega" },
+    { id: "cl_entrega",      label: "Sin entrega real",           campo: "fEntregaReal" },
+  ],
+};
+
+// ── Selectores de universo ────────────────────────────────────────────────
+
+function tieneHito(f: EntradaConsolidada, campo: keyof EntradaConsolidada): boolean {
+  const v = f[campo];
+  return v !== null && v !== undefined;
+}
+
+/**
+ * Universo CERRADO del proceso (para timeline + cobertura + ranking por mediana).
+ *
+ * Definiciones:
+ *  - control_negocio: cuello === "Control de Negocio" && entregado.
+ *  - logistica:        cuello === "Logística" && entregado.
+ *  - comercial:        fSolicitud && fFactura  (NO exige entregado —
+ *                      mide velocidad comercial hasta facturación).
+ *  - cliente:          fListoParaEntrega && fEntregaReal.
+ */
+export function filasCerrado(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+): EntradaConsolidada[] {
+  switch (proceso) {
+    case "control_negocio":
+      return filas.filter((f) => f.entregado && f.cuelloPrincipal === "Control de Negocio");
+    case "logistica":
+      return filas.filter((f) => f.entregado && f.cuelloPrincipal === "Logística");
+    case "comercial":
+      return filas.filter((f) => f.fSolicitud !== null && f.fFactura !== null);
+    case "cliente":
+      return filas.filter((f) => f.fListoParaEntrega !== null && f.fEntregaReal !== null);
+  }
+}
+
+/**
+ * Universo ABIERTO del proceso (para backlog + aging vivo).
+ *
+ * Definiciones:
+ *  - control_negocio: !entregado && fFactura !== null (facturados sin entrega).
+ *  - logistica:        !entregado && (cuello=Log || tieneSinSalida ||
+ *                      ingreso bodega sin salida física).
+ *  - comercial:        fSolicitud sin factura, o listo para entrega sin
+ *                      flags Si en autorización/solicitud.
+ *  - cliente:          fListoParaEntrega && !fEntregaReal (esperando retiro).
+ */
+export function filasAbierto(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+): EntradaConsolidada[] {
+  switch (proceso) {
+    case "control_negocio":
+      return filas.filter((f) => !f.entregado && f.fFactura !== null);
+    case "logistica":
+      return filas.filter((f) => {
+        if (f.entregado) return false;
+        if (f.cuelloPrincipal === "Logística") return true;
+        if (f.tieneSinSalida) return true;
+        if (f.fIngresoBodega !== null && f.fSalidaFisica === null) return true;
+        return false;
+      });
+    case "comercial":
+      return filas.filter((f) => {
+        if (f.fSolicitud !== null && f.fFactura === null) return true;
+        if (f.fListoParaEntrega !== null) {
+          const aut = (f.autorizacionEntrega ?? "").trim();
+          const sol = (f.solEntrega ?? "").trim();
+          if (aut !== "Si" || sol !== "Si") return true;
+        }
+        return false;
+      });
+    case "cliente":
+      return filas.filter((f) => f.fListoParaEntrega !== null && f.fEntregaReal === null);
+  }
+}
+
+// ── Cobertura ─────────────────────────────────────────────────────────────
+
+/**
+ * Cobertura del proceso sobre su universo CERRADO. Devuelve el conteo de
+ * casos con la línea de tiempo completa y el ranking de hitos faltantes.
+ *
+ * El caller pasa ya el universo cerrado (`filasCerrado(filas, proceso)`).
+ * Esto evita recalcular y deja explícito que cobertura SOLO mira cerrados.
+ */
+export function calcularCoberturaProceso(
+  filasCerradas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+): CoberturaProceso {
+  const hitos = HITOS_POR_PROCESO[proceso];
+  const universoCerrado = filasCerradas.length;
+
+  // Timeline completo: cuenta filas con TODOS los hitos del proceso presentes.
+  let timelineCompleto = 0;
+  for (const f of filasCerradas) {
+    let completo = true;
+    for (const h of hitos) {
+      if (!tieneHito(f, h.campo)) {
+        completo = false;
+        break;
+      }
+    }
+    if (completo) timelineCompleto++;
+  }
+
+  // Hitos faltantes: por cada hito, contar cuántas filas NO lo tienen.
+  // Un caso puede aportar a varias filas (le falta más de un hito).
+  const hitosFaltantes: HitoFaltante[] = hitos
+    .map<HitoFaltante>((h) => {
+      let faltantes = 0;
+      for (const f of filasCerradas) {
+        if (!tieneHito(f, h.campo)) faltantes++;
+      }
+      const pct = universoCerrado > 0 ? (faltantes / universoCerrado) * 100 : 0;
+      return {
+        id: h.id,
+        label: h.label,
+        campo: h.campo,
+        faltantes,
+        pctUniverso: +pct.toFixed(2),
+      };
+    })
+    .filter((h) => h.faltantes > 0)
+    .sort((a, b) => b.faltantes - a.faltantes);
+
+  const pctCompleto =
+    universoCerrado > 0 ? (timelineCompleto / universoCerrado) * 100 : 0;
+
+  return {
+    proceso,
+    universoCerrado,
+    timelineCompleto,
+    pctTimelineCompleto: +pctCompleto.toFixed(2),
+    hitosFaltantes,
+  };
+}
+
+/**
+ * Drill por hito faltante: filas del universo cerrado a las que les falta
+ * el hito identificado por `hitoId`. Si el hito no existe en el proceso,
+ * retorna [].
+ */
+export function filasConHitoFaltante(
+  filasCerradas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+  hitoId: string,
+): EntradaConsolidada[] {
+  const hito = HITOS_POR_PROCESO[proceso].find((h) => h.id === hitoId);
+  if (!hito) return [];
+  return filasCerradas.filter((f) => !tieneHito(f, hito.campo));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
