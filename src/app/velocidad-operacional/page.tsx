@@ -22,6 +22,7 @@ import { DrillPanel } from "@/components/historico/DrillPanel";
 
 import { useHistoricoStore } from "@/lib/historico/store-cliente";
 import {
+  agregadosEje2,
   agregadosEje3,
   extraerOpciones,
   filtrarFilas,
@@ -89,6 +90,7 @@ export default function VelocidadOperacionalPage() {
   );
 
   // ── Counts para ProcesoSelector ──────────────────────────────────────────
+  const eje2 = useMemo(() => agregadosEje2(filasFiltradas), [filasFiltradas]);
   const eje3 = useMemo(() => agregadosEje3(filasFiltradas), [filasFiltradas]);
 
   const procesoCounts = useMemo<Record<ProcesoActivo, number>>(() => {
@@ -161,19 +163,71 @@ export default function VelocidadOperacionalPage() {
     tituloDrill: string;
     prefijoDrill?: string;
   }>(() => {
-    // 1) Cierre y Cumplimiento — foco de calidad
+    // 1) Cierre y Cumplimiento — 5 tipos de foco (calidad / huérfano por tipo /
+    //    conflicto material / nivel documental / alerta transversal).
     if (procesoActivo === "cierre_y_cumplimiento" && focoCierre) {
-      const filas = filasFiltradas.filter(
-        (f) => (f.ejeCalidadCierre ?? "no_evaluable") === focoCierre,
-      );
-      // Para huérfanos podemos pre-segmentar; en v1 mostramos todos.
-      // (inferirTipoHuerfano queda disponible para una futura columna).
-      void inferirTipoHuerfano;
-      return {
-        filasDrill: filas,
-        tituloDrill: `Cierre y Cumplimiento · ${focoCierre}`,
-        prefijoDrill: `Calidad cierre: ${focoCierre}`,
-      };
+      switch (focoCierre.tipo) {
+        case "calidad": {
+          const filas = filasFiltradas.filter(
+            (f) => (f.ejeCalidadCierre ?? "no_evaluable") === focoCierre.valor,
+          );
+          return {
+            filasDrill: filas,
+            tituloDrill: `Cierre y Cumplimiento · ${focoCierre.valor}`,
+            prefijoDrill: `Calidad cierre: ${focoCierre.valor}`,
+          };
+        }
+        case "huerfano_tipo": {
+          const filas = filasFiltradas.filter(
+            (f) => f.ejeCalidadCierre === "huerfano" && inferirTipoHuerfano(f) === focoCierre.valor,
+          );
+          return {
+            filasDrill: filas,
+            tituloDrill: `Cierre y Cumplimiento · Huérfano ${focoCierre.valor}`,
+            prefijoDrill: `Huérfano ${focoCierre.valor}`,
+          };
+        }
+        case "conflicto": {
+          const filas = filasFiltradas.filter(
+            (f) =>
+              f.ejeCalidadCierre === "inconsistente" &&
+              f.conflictos.some((c) => c.esMaterial && c.kind === focoCierre.valor),
+          );
+          return {
+            filasDrill: filas,
+            tituloDrill: `Cierre y Cumplimiento · Conflicto ${focoCierre.valor}`,
+            prefijoDrill: `Conflicto material: ${focoCierre.valor}`,
+          };
+        }
+        case "nivel": {
+          const filas = filasFiltradas.filter((f) => f.nivelDocumental === focoCierre.valor);
+          return {
+            filasDrill: filas,
+            tituloDrill: `Cierre y Cumplimiento · Nivel documental ${focoCierre.valor}`,
+            prefijoDrill: `Nivel documental: ${focoCierre.valor}`,
+          };
+        }
+        case "alerta": {
+          // Alertas transversales — siempre sobre entregados.
+          const pred =
+            focoCierre.valor === "sin_patente_recibida"
+              ? (f: typeof filasFiltradas[number]) => f.entregado && !f.fPatenteRecibida
+              : focoCierre.valor === "sin_autorizacion"
+                ? (f: typeof filasFiltradas[number]) => f.entregado && (f.autorizacionEntrega ?? "").trim() !== "Si"
+                : (f: typeof filasFiltradas[number]) => f.entregado && (f.solEntrega ?? "").trim() !== "Si";
+          const labels: Record<typeof focoCierre.valor, string> = {
+            sin_patente_recibida: "Entregados sin patente recibida",
+            sin_autorizacion:     "Entregados sin autorización",
+            sin_sol_entrega:      "Entregados sin solicitud entrega",
+          };
+          const filas = filasFiltradas.filter(pred);
+          return {
+            filasDrill: filas,
+            tituloDrill: `Cierre y Cumplimiento · ${labels[focoCierre.valor]}`,
+            prefijoDrill: `Alerta: ${labels[focoCierre.valor]}`,
+          };
+        }
+      }
     }
 
     // 2) Procesos operacionales con foco en backlog
@@ -348,9 +402,10 @@ export default function VelocidadOperacionalPage() {
           {/* ── CIERRE Y CUMPLIMIENTO (sin toggle, sin funnel) ───────────── */}
           {procesoActivo === "cierre_y_cumplimiento" && (
             <CierreCumplimientoView
+              eje2={eje2}
               eje3={eje3}
-              focoCalidad={focoCierre}
-              onSelectCalidad={(v) => setFocoCierre(v)}
+              focoCierre={focoCierre}
+              onSelectFoco={(v) => setFocoCierre(v)}
             />
           )}
 
