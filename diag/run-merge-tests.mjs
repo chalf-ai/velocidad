@@ -54,9 +54,14 @@ try {
   console.log("  Corriendo tests con node --test");
   console.log("══════════════════════════════════════════════════════════════════");
 
-  const testFiles = `${OUT}/lib/historico/__tests__/merge-policy.test.js`;
+  const testDir = `${OUT}/lib/historico/__tests__`;
   try {
-    execSync(`node --test ${testFiles}`, { stdio: "inherit" });
+    // NODE_PATH apunta al node_modules del proyecto para que los compilados
+    // resuelvan `xlsx` y demás deps.
+    execSync(`NODE_PATH=${PROJECT_ROOT}/node_modules node --test ${testDir}/*.test.js`, {
+      stdio: "inherit",
+      shell: "/bin/bash",
+    });
     console.log("");
     console.log("✅ TESTS OK");
   } catch (e) {
