@@ -8,23 +8,26 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Badge } from "@/components/ui/Badge";
 import { fmtNum } from "@/lib/format";
 
-import { HistoricoUploader } from "@/components/historico/HistoricoUploader";
-import { EstadoCargaPanel } from "@/components/historico/EstadoCargaPanel";
+import { EstadoFuentesBanner } from "@/components/historico/EstadoFuentesBanner";
 import { FiltrosHistoricoBar } from "@/components/historico/FiltrosHistoricoBar";
 import {
-  EjeVelocidadCard,
-  type FocoVelocidad,
-} from "@/components/historico/EjeVelocidadCard";
+  HeroEjecutivoVO,
+  type EjeId,
+  type KpiNav,
+  type PrincipalFocoOperacional,
+} from "@/components/historico/HeroEjecutivoVO";
 import {
-  EjeCumplimientoCard,
-  type FocoCumplimiento,
-} from "@/components/historico/EjeCumplimientoCard";
-import {
-  EjeCalidadCierreCard,
-  type FocoCalidadCierre,
-} from "@/components/historico/EjeCalidadCierreCard";
-import { DrillHistoricoTable } from "@/components/historico/DrillHistoricoTable";
-import { TimelineProcesoCard } from "@/components/historico/TimelineProcesoCard";
+  AlertasAccionables,
+  type AlertaId,
+  type AlertaTarget,
+} from "@/components/historico/AlertasAccionables";
+import { ProcesoSelector } from "@/components/historico/ProcesoSelector";
+import { ModoProcesoToggle } from "@/components/historico/ModoProcesoToggle";
+import { EjeTabs } from "@/components/historico/EjeTabs";
+import { EjeVelocidadInline } from "@/components/historico/EjeVelocidadInline";
+import { EjeCumplimientoInline } from "@/components/historico/EjeCumplimientoInline";
+import { EjeCalidadCierreInline } from "@/components/historico/EjeCalidadCierreInline";
+import { DrillPanel } from "@/components/historico/DrillPanel";
 
 import { useHistoricoStore } from "@/lib/historico/store-cliente";
 import {
@@ -35,12 +38,17 @@ import {
   extraerOpciones,
   filtrarFilas,
   filasDeTramo,
+  filasCerrado,
+  filasAbierto,
   fingerprintGlobal,
   inferirTipoHuerfano,
   procesoDeCuello,
   FILTROS_VACIOS,
   type FiltrosVista,
   type TramoId,
+  type ProcesoActivo,
+  type ProcesoOperacional,
+  type ModoProceso,
 } from "@/lib/historico/vista-derivados";
 import type {
   EntradaConsolidada,
@@ -50,37 +58,29 @@ import type {
 import type { BandaCumplimiento } from "@/lib/historico/cruce-roma-actas";
 import type { NivelDocumental } from "@/lib/historico/parser-actas";
 
+// Tipos de foco reusados de los Eje*Card legacy (que siguen vivos como deprecated).
+import type { FocoVelocidad } from "@/components/historico/EjeVelocidadCard";
+import type { FocoCumplimiento } from "@/components/historico/EjeCumplimientoCard";
+import type { FocoCalidadCierre } from "@/components/historico/EjeCalidadCierreCard";
+
 export default function VelocidadOperacionalPage() {
   const cruce = useHistoricoStore((s) => s.cruce);
+
   const [filtros, setFiltros] = useState<FiltrosVista>(FILTROS_VACIOS);
   const [modoValidacion, setModoValidacion] = useState(false);
 
-  // Foco por eje (uno a la vez)
-  const [foco1, setFoco1] = useState<FocoVelocidad | null>(null);
-  const [foco2, setFoco2] = useState<FocoCumplimiento | null>(null);
-  const [foco3, setFoco3] = useState<FocoCalidadCierre | null>(null);
-  // Foco de tramo (solo válido cuando foco1.tipo === "cuello" y el cuello es operacional).
-  const [focoTramo, setFocoTramo] = useState<TramoId | null>(null);
+  // Fase 3 — navegación por proceso (Tanda A: solo selectores).
+  const [procesoActivo, setProcesoActivo] = useState<ProcesoActivo>("control_negocio");
+  const [modoProceso, setModoProceso] = useState<ModoProceso>("historico_cerrado");
 
-  const setFocoExclusivo = (n: 1 | 2 | 3, v: unknown) => {
-    if (n === 1) {
-      setFoco1(v as FocoVelocidad | null);
-      setFoco2(null);
-      setFoco3(null);
-      // Al cambiar el foco 1, el foco de tramo deja de tener sentido.
-      setFocoTramo(null);
-    } else if (n === 2) {
-      setFoco1(null);
-      setFoco2(v as FocoCumplimiento | null);
-      setFoco3(null);
-      setFocoTramo(null);
-    } else {
-      setFoco1(null);
-      setFoco2(null);
-      setFoco3(v as FocoCalidadCierre | null);
-      setFocoTramo(null);
-    }
-  };
+  // Eje activo + foco preservado por eje (capa legacy — convive con la nueva
+  // navegación hasta Tanda E que reescribe page.tsx).
+  const [ejeActivo, setEjeActivo] = useState<EjeId>("velocidad");
+  const [focoVelocidad, setFocoVelocidad] = useState<FocoVelocidad | null>(null);
+  const [focoCumplimiento, setFocoCumplimiento] = useState<FocoCumplimiento | null>(null);
+  const [focoCalidad, setFocoCalidad] = useState<FocoCalidadCierre | null>(null);
+  const [focoTramo, setFocoTramo] = useState<TramoId | null>(null);
+  const [alertaActiva, setAlertaActiva] = useState<AlertaId | null>(null);
 
   const opciones = useMemo(
     () => (cruce ? extraerOpciones(cruce) : { marcas: [], sucursales: [], vendedores: [] }),
@@ -96,116 +96,238 @@ export default function VelocidadOperacionalPage() {
   const eje2 = useMemo(() => agregadosEje2(filasFiltradas), [filasFiltradas]);
   const eje3 = useMemo(() => agregadosEje3(filasFiltradas), [filasFiltradas]);
 
-  // Timeline activo solo si foco1 es un cuello operacional (Logística, Control de Negocio, Cliente, Comercial).
-  const procesoActivo = useMemo(() => {
-    if (!foco1 || foco1.tipo !== "cuello") return null;
-    return procesoDeCuello(foco1.valor as CuelloPrincipal);
-  }, [foco1]);
+  // Cuellos counts para alertas
+  const cuelloCounts = useMemo(() => {
+    const m = new Map<CuelloPrincipal, number>();
+    for (const d of eje1.distribucionCuello) m.set(d.cuello, d.cantidad);
+    return m;
+  }, [eje1]);
+
+  // Tanda A — counts por proceso para el ProcesoSelector.
+  // Los 4 operacionales se cuentan por su cuello. "Cierre y Cumplimiento"
+  // suma los entregados evaluables (correcto + huerfano + inconsistente).
+  const procesoCounts = useMemo<Record<ProcesoActivo, number>>(() => {
+    const entregadosEval =
+      eje3.distribucion.correcto + eje3.distribucion.huerfano + eje3.distribucion.inconsistente;
+    return {
+      control_negocio: cuelloCounts.get("Control de Negocio") ?? 0,
+      logistica: cuelloCounts.get("Logística") ?? 0,
+      comercial: cuelloCounts.get("Comercial") ?? 0,
+      cliente: cuelloCounts.get("Cliente") ?? 0,
+      cierre_y_cumplimiento: entregadosEval,
+    };
+  }, [cuelloCounts, eje3]);
+
+  // Tanda A — counts cerrado/abierto para el ModoProcesoToggle del proceso
+  // operacional activo. Si el proceso es "cierre_y_cumplimiento" no se usa.
+  const modoCounts = useMemo<{ cerrado: number; abierto: number }>(() => {
+    if (procesoActivo === "cierre_y_cumplimiento") return { cerrado: 0, abierto: 0 };
+    const op = procesoActivo as ProcesoOperacional;
+    return {
+      cerrado: filasCerrado(filasFiltradas, op).length,
+      abierto: filasAbierto(filasFiltradas, op).length,
+    };
+  }, [procesoActivo, filasFiltradas]);
+
+  // Hero: "Principal foco operacional" — proceso operacional con mayor backlog
+  // abierto dentro del universo filtrado. Solo considera los 4 operacionales
+  // (Mixto / Sin información / Cierre quedan fuera).
+  const principalFoco = useMemo<PrincipalFocoOperacional | null>(() => {
+    const procesosOps: Array<{ id: ProcesoOperacional; nombre: string }> = [
+      { id: "control_negocio", nombre: "Control de Negocio" },
+      { id: "logistica",       nombre: "Logística" },
+      { id: "comercial",       nombre: "Comercial" },
+      { id: "cliente",         nombre: "Cliente" },
+    ];
+    let mejor: { proceso: ProcesoOperacional; nombre: string; casosAbiertos: number } | null = null;
+    for (const p of procesosOps) {
+      const n = filasAbierto(filasFiltradas, p.id).length;
+      if (n === 0) continue;
+      if (!mejor || n > mejor.casosAbiertos) {
+        mejor = { proceso: p.id, nombre: p.nombre, casosAbiertos: n };
+      }
+    }
+    return mejor;
+  }, [filasFiltradas]);
+
+  // Counts para tabs
+  const tabCounts = useMemo(() => {
+    if (!cruce) return { vel: 0, cum: 0, cal: 0 };
+    const evaluados =
+      eje3.distribucion.correcto + eje3.distribucion.huerfano + eje3.distribucion.inconsistente;
+    return {
+      vel: filasFiltradas.length,
+      cum: eje2.global.universo,
+      cal: evaluados,
+    };
+  }, [cruce, filasFiltradas, eje2, eje3]);
+
+  // Timeline LEGACY solo cuando foco velocidad cae en cuello operacional.
+  // (Renombrado de `procesoActivo` para no colisionar con el state de Fase 3.)
+  const procesoLegacy = useMemo(() => {
+    if (!focoVelocidad || focoVelocidad.tipo !== "cuello") return null;
+    return procesoDeCuello(focoVelocidad.valor as CuelloPrincipal);
+  }, [focoVelocidad]);
 
   const timelineData = useMemo(
-    () => (procesoActivo ? calcularTimelineProceso(filasFiltradas, procesoActivo) : null),
-    [procesoActivo, filasFiltradas],
+    () => (procesoLegacy ? calcularTimelineProceso(filasFiltradas, procesoLegacy) : null),
+    [procesoLegacy, filasFiltradas],
   );
 
-  // Drill por eje en foco
+  // Drill — el drill activo depende del eje activo.
   const filasDrill = useMemo<EntradaConsolidada[]>(() => {
-    if (!foco1 && !foco2 && !foco3) return [];
-    if (foco1) {
-      if (foco1.tipo === "cuello") {
-        const base = filasFiltradas.filter((f) => f.cuelloPrincipal === (foco1.valor as CuelloPrincipal));
-        // Si hay foco de tramo, restringir más a las filas con ambas fechas del tramo
-        if (procesoActivo && focoTramo) {
-          return filasDeTramo(base, procesoActivo, focoTramo);
-        }
+    if (ejeActivo === "velocidad" && focoVelocidad) {
+      if (focoVelocidad.tipo === "cuello") {
+        const base = filasFiltradas.filter(
+          (f) => f.cuelloPrincipal === (focoVelocidad.valor as CuelloPrincipal),
+        );
+        if (procesoLegacy && focoTramo) return filasDeTramo(base, procesoLegacy, focoTramo);
         return base;
       }
-      return filasFiltradas.filter((f) => f.ejeVelocidad.bucket === (foco1.valor as BucketVelocidad));
-    }
-    if (foco2) {
-      if (foco2.tipo === "nivel")
-        return filasFiltradas.filter((f) => f.nivelDocumental === (foco2.valor as NivelDocumental));
       return filasFiltradas.filter(
-        (f) => f.ejeCumplimiento.banda === (foco2.valor as BandaCumplimiento),
+        (f) => f.ejeVelocidad.bucket === (focoVelocidad.valor as BucketVelocidad),
       );
     }
-    if (foco3) {
-      if (foco3.tipo === "estado")
+    if (ejeActivo === "cumplimiento" && focoCumplimiento) {
+      if (focoCumplimiento.tipo === "nivel")
         return filasFiltradas.filter(
-          (f) => (f.ejeCalidadCierre ?? "no_evaluable") === foco3.valor,
+          (f) => f.nivelDocumental === (focoCumplimiento.valor as NivelDocumental),
         );
-      if (foco3.tipo === "huerfano")
+      return filasFiltradas.filter(
+        (f) => f.ejeCumplimiento.banda === (focoCumplimiento.valor as BandaCumplimiento),
+      );
+    }
+    if (ejeActivo === "calidad" && focoCalidad) {
+      if (focoCalidad.tipo === "estado")
         return filasFiltradas.filter(
-          (f) => f.ejeCalidadCierre === "huerfano" && inferirTipoHuerfano(f) === foco3.valor,
+          (f) => (f.ejeCalidadCierre ?? "no_evaluable") === focoCalidad.valor,
+        );
+      if (focoCalidad.tipo === "huerfano")
+        return filasFiltradas.filter(
+          (f) => f.ejeCalidadCierre === "huerfano" && inferirTipoHuerfano(f) === focoCalidad.valor,
         );
       return filasFiltradas.filter(
         (f) =>
           f.ejeCalidadCierre === "inconsistente" &&
-          f.conflictos.some((c) => c.esMaterial && c.kind === foco3.valor),
+          f.conflictos.some((c) => c.esMaterial && c.kind === focoCalidad.valor),
       );
     }
     return [];
-  }, [foco1, foco2, foco3, filasFiltradas, procesoActivo, focoTramo]);
+  }, [
+    ejeActivo,
+    focoVelocidad,
+    focoCumplimiento,
+    focoCalidad,
+    focoTramo,
+    procesoLegacy,
+    filasFiltradas,
+  ]);
 
   const tituloDrill = useMemo(() => {
-    if (foco1) {
-      if (foco1.tipo === "cuello") {
-        const base = `Cuello: ${foco1.valor}`;
-        if (procesoActivo && focoTramo && timelineData) {
+    if (ejeActivo === "velocidad" && focoVelocidad) {
+      if (focoVelocidad.tipo === "cuello") {
+        const base = `Cuello: ${focoVelocidad.valor}`;
+        if (procesoLegacy && focoTramo && timelineData) {
           const tramo = timelineData.tramos.find((t) => t.id === focoTramo);
           if (tramo) return `${base} · tramo: ${tramo.label}`;
         }
         return base;
       }
-      return `Velocidad: ${foco1.valor}`;
+      return `Velocidad: ${focoVelocidad.valor}`;
     }
-    if (foco2)
-      return foco2.tipo === "nivel" ? `Nivel documental: ${foco2.valor}` : `Banda cumplimiento: ${foco2.valor}`;
-    if (foco3) {
-      if (foco3.tipo === "estado") return `Calidad cierre: ${foco3.valor}`;
-      if (foco3.tipo === "huerfano") return `Huérfano: ${foco3.valor}`;
-      return `Conflicto: ${foco3.valor}`;
+    if (ejeActivo === "cumplimiento" && focoCumplimiento) {
+      return focoCumplimiento.tipo === "nivel"
+        ? `Nivel documental: ${focoCumplimiento.valor}`
+        : `Banda cumplimiento: ${focoCumplimiento.valor}`;
+    }
+    if (ejeActivo === "calidad" && focoCalidad) {
+      if (focoCalidad.tipo === "estado") return `Calidad cierre: ${focoCalidad.valor}`;
+      if (focoCalidad.tipo === "huerfano") return `Huérfano: ${focoCalidad.valor}`;
+      return `Conflicto: ${focoCalidad.valor}`;
     }
     return "";
-  }, [foco1, foco2, foco3, procesoActivo, focoTramo, timelineData]);
+  }, [
+    ejeActivo,
+    focoVelocidad,
+    focoCumplimiento,
+    focoCalidad,
+    procesoLegacy,
+    focoTramo,
+    timelineData,
+  ]);
 
-  // Fingerprint (modo validación)
-  const fingerprint = useMemo(
-    () => (cruce ? fingerprintGlobal(cruce) : null),
-    [cruce],
+  const fingerprint = useMemo(() => (cruce ? fingerprintGlobal(cruce) : null), [cruce]);
+
+  const drillVisible = filasDrill.length > 0 || (
+    (ejeActivo === "velocidad" && !!focoVelocidad) ||
+    (ejeActivo === "cumplimiento" && !!focoCumplimiento) ||
+    (ejeActivo === "calidad" && !!focoCalidad)
   );
 
-  const filasParaDrill = foco1 || foco2 || foco3 ? filasDrill : [];
+  const cerrarDrillActivo = () => {
+    if (ejeActivo === "velocidad") {
+      setFocoVelocidad(null);
+      setFocoTramo(null);
+    } else if (ejeActivo === "cumplimiento") {
+      setFocoCumplimiento(null);
+    } else {
+      setFocoCalidad(null);
+    }
+    setAlertaActiva(null);
+  };
+
+  // Navegación desde KPIs del Hero.
+  const navegarKpi = (target: KpiNav) => {
+    setAlertaActiva(null);
+    if (target.tipo === "proceso") {
+      // KPI "Principal foco operacional" → cambia proceso + modo, no eje.
+      setProcesoActivo(target.proceso);
+      setModoProceso(target.modo);
+      return;
+    }
+    // Resto de KPIs: navegación legacy por eje.
+    setEjeActivo(target.eje);
+    if (target.eje === "calidad") {
+      if (target.focoCalidad === "huerfano")
+        setFocoCalidad({ tipo: "estado", valor: "huerfano" });
+      else if (target.focoCalidad === "inconsistente")
+        setFocoCalidad({ tipo: "estado", valor: "inconsistente" });
+      else if (target.focoCalidad === "correcto")
+        setFocoCalidad({ tipo: "estado", valor: "correcto" });
+    }
+  };
+
+  // Navegación desde Alertas.
+  const navegarAlerta = (t: AlertaTarget) => {
+    setEjeActivo(t.eje);
+    setAlertaActiva(t.id);
+    if (t.eje === "velocidad" && t.focoCuello) {
+      setFocoVelocidad({ tipo: "cuello", valor: t.focoCuello });
+      setFocoTramo(null);
+    } else if (t.eje === "calidad" && t.focoCalidad) {
+      setFocoCalidad({ tipo: "estado", valor: t.focoCalidad });
+    } else if (t.eje === "cumplimiento") {
+      // Si es "sin patente": ponemos foco en banda mayor para que el drill aterrice en algo útil.
+      setFocoCumplimiento({ tipo: "banda", valor: "mayor" });
+    }
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         kicker="HISTÓRICO"
         kickerIcon={<Activity className="size-3" />}
         title="Vista Histórica · 3 ejes"
         description="Velocidad, Cumplimiento y Calidad de Cierre del universo ROMA × Actas × ROMIA. Carga local, sin persistencia."
-        actions={
-          <button
-            onClick={() => setModoValidacion((v) => !v)}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11.5px] font-medium ring-1 ring-inset transition ${
-              modoValidacion
-                ? "bg-[--color-accent] text-white ring-[--color-accent]"
-                : "bg-[--color-bg-elev-1] text-[--color-fg-muted] ring-[--color-border] hover:ring-[--color-accent]"
-            }`}
-          >
-            <FlaskConical className="size-3.5" />
-            Modo validación
-          </button>
-        }
       />
 
-      <HistoricoUploader />
-      <EstadoCargaPanel />
+      <EstadoFuentesBanner />
 
       {!cruce && (
         <EmptyState
           icon={<Activity className="size-5" />}
-          title="Cargá los archivos del histórico para activar los 3 ejes"
-          description="Necesitas al menos ROMA (uno o más meses) y Actas. SCHIAPP y KAR son opcionales — sin ellos, las líneas físicas quedan en null."
+          title="Cargá los archivos del histórico para activar la vista"
+          description="Mínimo ROMA + Actas. Ingresá a /ingesta para cargar las fuentes."
         />
       )}
 
@@ -220,10 +342,52 @@ export default function VelocidadOperacionalPage() {
             totalFiltrado={filasFiltradas.length}
           />
 
+          {/* Orden nuevo (post-Tanda A reordenamiento):
+              alertas → proceso → modo → contexto ejecutivo.
+              El Hero ya NO domina — es referencia secundaria. */}
+          <AlertasAccionables
+            eje2={eje2}
+            eje3={eje3}
+            cuelloCounts={cuelloCounts}
+            alertaActiva={alertaActiva}
+            onAlerta={navegarAlerta}
+          />
+
+          <ProcesoSelector
+            activo={procesoActivo}
+            onChange={(p) => {
+              setProcesoActivo(p);
+              setModoProceso("historico_cerrado"); // reset modo al cambiar proceso
+            }}
+            counts={procesoCounts}
+          />
+          {procesoActivo !== "cierre_y_cumplimiento" && (
+            <ModoProcesoToggle
+              activo={modoProceso}
+              onChange={setModoProceso}
+              countCerrado={modoCounts.cerrado}
+              countAbierto={modoCounts.abierto}
+            />
+          )}
+
+          <HeroEjecutivoVO
+            totalUniverso={cruce.filas.length}
+            totalFiltrado={filasFiltradas.length}
+            ventaIdsUnicos={cruce.reporte.totales.ventaIds}
+            vinsUnicos={cruce.reporte.totales.vinsUnicos}
+            eje1={eje1}
+            eje2={eje2}
+            eje3={eje3}
+            principalFoco={principalFoco}
+            modoValidacion={modoValidacion}
+            onToggleModoValidacion={() => setModoValidacion((v) => !v)}
+            onNavigate={navegarKpi}
+          />
+
           {modoValidacion && fingerprint && (
-            <Card variant="elevated">
-              <CardBody>
-                <div className="flex items-center gap-2 mb-3">
+            <Card>
+              <CardBody className="space-y-2">
+                <div className="flex items-center gap-2">
                   <FlaskConical className="size-3.5 text-[--color-accent]" />
                   <span className="text-[11px] uppercase tracking-wider text-[--color-fg-muted] font-medium">
                     Modo validación · fingerprint global (universo SIN filtros)
@@ -235,56 +399,69 @@ export default function VelocidadOperacionalPage() {
                   <Metric label="VINs únicos" value={fmtNum(fingerprint.vinsUnicos)} />
                   <Metric
                     label="Caso VR3KAHPY3VS000844"
-                    value={
-                      <CasoFingerprint
-                        fila={cruce.byVin.get("VR3KAHPY3VS000844")?.[0]}
-                      />
-                    }
+                    value={<CasoFingerprint fila={cruce.byVin.get("VR3KAHPY3VS000844")?.[0]} />}
                   />
                 </div>
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-3 text-[12px]">
-                  <Dist titulo="Cuello principal" entries={fingerprint.cuello.map((c) => [c.cuello, c.cantidad])} />
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-[12px]">
                   <Dist
-                    titulo="Calidad cierre"
-                    entries={Object.entries(fingerprint.calidadCierre)}
+                    titulo="Cuello"
+                    entries={fingerprint.cuello.map((c) => [c.cuello, c.cantidad])}
                   />
-                  <Dist
-                    titulo="Velocidad bucket"
-                    entries={Object.entries(fingerprint.velocidadBucket)}
-                  />
+                  <Dist titulo="Calidad cierre" entries={Object.entries(fingerprint.calidadCierre)} />
+                  <Dist titulo="Velocidad bucket" entries={Object.entries(fingerprint.velocidadBucket)} />
                 </div>
               </CardBody>
             </Card>
           )}
 
-          <EjeVelocidadCard
-            data={eje1}
-            foco={foco1}
-            onFoco={(v) => setFocoExclusivo(1, v)}
-          />
-          {procesoActivo && timelineData && foco1?.tipo === "cuello" && (
-            <TimelineProcesoCard
-              data={timelineData}
+          {/* ─ Capa LEGACY (Fase 2 v2) — convive hasta Tanda E ──────────────── */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <EjeTabs
+              activo={ejeActivo}
+              onChange={(e) => {
+                setEjeActivo(e);
+                setAlertaActiva(null);
+              }}
+              countVelocidad={tabCounts.vel}
+              countCumplimiento={tabCounts.cum}
+              countCalidad={tabCounts.cal}
+            />
+          </div>
+
+          {ejeActivo === "velocidad" && (
+            <EjeVelocidadInline
+              data={eje1}
+              filas={filasFiltradas}
+              foco={focoVelocidad}
+              onFoco={(v) => {
+                setFocoVelocidad(v);
+                setFocoTramo(null);
+              }}
+              timeline={timelineData}
               focoTramo={focoTramo}
               onFocoTramo={setFocoTramo}
-              cuelloLabel={foco1.valor as CuelloPrincipal}
             />
           )}
-          {foco1 && <DrillHistoricoTable titulo={tituloDrill} filas={filasParaDrill} />}
+          {ejeActivo === "cumplimiento" && (
+            <EjeCumplimientoInline
+              data={eje2}
+              filas={filasFiltradas}
+              foco={focoCumplimiento}
+              onFoco={setFocoCumplimiento}
+            />
+          )}
+          {ejeActivo === "calidad" && (
+            <EjeCalidadCierreInline
+              data={eje3}
+              filas={filasFiltradas}
+              foco={focoCalidad}
+              onFoco={setFocoCalidad}
+            />
+          )}
 
-          <EjeCumplimientoCard
-            data={eje2}
-            foco={foco2}
-            onFoco={(v) => setFocoExclusivo(2, v)}
-          />
-          {foco2 && <DrillHistoricoTable titulo={tituloDrill} filas={filasParaDrill} />}
-
-          <EjeCalidadCierreCard
-            data={eje3}
-            foco={foco3}
-            onFoco={(v) => setFocoExclusivo(3, v)}
-          />
-          {foco3 && <DrillHistoricoTable titulo={tituloDrill} filas={filasParaDrill} />}
+          {drillVisible && (
+            <DrillPanel titulo={tituloDrill} filas={filasDrill} onClose={cerrarDrillActivo} />
+          )}
         </>
       )}
     </div>
@@ -320,8 +497,7 @@ function CasoFingerprint({ fila }: { fila: EntradaConsolidada | undefined }) {
   if (!fila) return <Badge tone="muted" size="xs">no presente</Badge>;
   const cuelloOk = fila.cuelloPrincipal === "Logística";
   const ventaOk = fila.ventaId === 213357;
-  const listoOk =
-    fila.fListoParaEntrega?.toISOString().slice(0, 10) === "2026-05-29";
+  const listoOk = fila.fListoParaEntrega?.toISOString().slice(0, 10) === "2026-05-29";
   const ok = cuelloOk && ventaOk && listoOk;
   return (
     <span className="inline-flex items-center gap-1">
