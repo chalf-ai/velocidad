@@ -348,6 +348,35 @@ export interface LogisticaOperacionVIN {
   // Enriquecimiento (cruce con el pipeline vivo)
   enStock: boolean; // VIN en Base_Stock actual
   enFNE: boolean; // VIN en FNE actual (facturado no entregado)
+
+  // ─── Campos opcionales del modelo ROMIA (SCHIAPP/KAR) ───
+  // Todos opcionales para no romper consumidores existentes. Se llenan cuando
+  // el VIN viene del modelo nuevo. Coexistencia con legacy: prioridad ROMIA.
+
+  /** Bodega de origen del registro ROMIA (SCHIAPP o KAR). null si vino solo del legacy. */
+  bodegaOrigen?: import("./romia-tipos").RomiaBodega | null;
+  /** Estado declarado por la bodega (ej. "PATIO - ALMACENADO", "EN PROCESO"). */
+  estadoBodega?: string | null;
+  /** Patio físico ("PATIO NOVICIADO", "PATIO LEYDA"). */
+  patio?: string | null;
+  /** Punto de entrega declarado en ENTRADAS (ej. "POMPEYO ARAUCO MAIPU"). */
+  puntoEntrega?: string | null;
+  /** TRUE cuando "Fecha despacho a sucursal" decía literalmente "SIN SALIDA". */
+  tieneSinSalida?: boolean;
+  /** Entrada al PATIO de bodega (NO recepción en sucursal — decisión explícita). */
+  fEntradaPatio?: Date | null;
+  /** Salida física del patio (de hoja SALIDAS). Suele coincidir con fDespacho. */
+  fSalidaPatio?: Date | null;
+  /** Fecha límite declarada por la bodega (KAR "Fecha limite"). */
+  fechaLimite?: Date | null;
+  /** Transportista de la salida más reciente. */
+  transportistaSalida?: string | null;
+  /** Cantidad de traslados encadenados (>1 = reasignaciones / devoluciones). */
+  numTraslados?: number | null;
+
+  /** Trazabilidad por hito: fuente + confianza. Solo se llena para hitos cubiertos
+   *  por el modelo ROMIA (los legacy quedan sin meta para preservar comportamiento). */
+  fuentesPorHito?: import("./romia-tipos").FuentesPorHito;
 }
 
 // ───────────────────────────── Lógica operacional ───────────────────────────

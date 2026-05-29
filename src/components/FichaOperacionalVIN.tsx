@@ -129,17 +129,45 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
   const ownerDom = log?.ownerLogistico ?? null;
 
   // ── Línea de tiempo (hitos reales, sin inventar fechas) ──────────────────
-  const hitos: { label: string; fecha: Date | null; fuente: string; compromiso?: boolean }[] = [
-    { label: "Ingreso APC / preparación", fecha: op?.fIngresoApc ?? null, fuente: "STLI" },
-    { label: "Solicitud del vendedor", fecha: op?.fSolicitudVendedor ?? null, fuente: "ROMA" },
-    { label: "Respuesta de logística", fecha: op?.fRespuestaLogistica ?? null, fuente: "ROMA" },
-    { label: "Solicitud a bodega", fecha: op?.fSolicitudBodega ?? null, fuente: "STLI" },
-    { label: "Despacho a sucursal", fecha: op?.fDespacho ?? null, fuente: "STLI" },
-    { label: "Llegada a sucursal", fecha: op?.fLlegadaSucursal ?? null, fuente: "ROMA" },
-    { label: "Factura a cliente", fecha: com.fechaFactura, fuente: "FNE" },
-    { label: "Inscripción", fecha: ins.fechaInscripcion, fuente: "FNE" },
-    { label: "Entrega comprometida", fecha: com.fechaEntregaComprometida, fuente: "ROMA", compromiso: true },
-    { label: "Entrega real", fecha: com.fechaEntregaReal, fuente: "—" },
+  // La fuente se lee desde `op.fuentesPorHito` (modelo ROMIA): cuando ROMIA
+  // aportó el dato, muestra KAR/SCHIAPP; si fue fallback legacy, muestra ROMA/STLI;
+  // los hitos FNE mantienen su etiqueta "FNE" (la fecha viene del archivo Actas).
+  type ConfianzaUI = "alta" | "media" | "baja" | "ninguna";
+  const labelFuente = (f: import("@/lib/logistica/romia-tipos").FuenteHito | undefined): string => {
+    switch (f) {
+      case "ROMIA_KAR": return "KAR";
+      case "ROMIA_SCHIAPP": return "SCHIAPP";
+      case "LEGACY_ROMA": return "ROMA";
+      case "LEGACY_STLI": return "STLI";
+      case "FNE": return "FNE";
+      default: return "—";
+    }
+  };
+  const fuenteDe = (key: import("@/lib/logistica/modelo").HitoLogistico) => {
+    const m = op?.fuentesPorHito?.[key];
+    return { label: labelFuente(m?.fuente), confianza: (m?.confianza ?? "ninguna") as ConfianzaUI };
+  };
+  const hitoOp = (
+    label: string,
+    key: import("@/lib/logistica/modelo").HitoLogistico,
+    fecha: Date | null,
+    extra?: { compromiso?: boolean },
+  ) => {
+    const meta = fuenteDe(key);
+    return { label, fecha, fuente: meta.label, confianza: meta.confianza, ...extra };
+  };
+
+  const hitos: { label: string; fecha: Date | null; fuente: string; confianza?: ConfianzaUI; compromiso?: boolean }[] = [
+    hitoOp("Ingreso APC / preparación", "ingreso_apc", op?.fIngresoApc ?? null),
+    hitoOp("Solicitud del vendedor", "solicitud_vendedor", op?.fSolicitudVendedor ?? null),
+    hitoOp("Respuesta de logística", "respuesta_logistica", op?.fRespuestaLogistica ?? null),
+    hitoOp("Solicitud a bodega", "solicitud_bodega", op?.fSolicitudBodega ?? null),
+    hitoOp("Despacho a sucursal", "despacho", op?.fDespacho ?? null),
+    hitoOp("Llegada a sucursal", "llegada_sucursal", op?.fLlegadaSucursal ?? null),
+    { label: "Factura a cliente", fecha: com.fechaFactura, fuente: "FNE", confianza: "alta" },
+    { label: "Inscripción", fecha: ins.fechaInscripcion, fuente: "FNE", confianza: "alta" },
+    hitoOp("Entrega comprometida", "entrega_comprometida", com.fechaEntregaComprometida, { compromiso: true }),
+    { label: "Entrega real", fecha: com.fechaEntregaReal, fuente: "—", confianza: "ninguna" },
   ];
   const hoy = Date.now();
   const estadoHito = (h: (typeof hitos)[number]): "ok" | "vencido" | "sin" => {
@@ -225,6 +253,20 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
         <div className="text-[10px] uppercase tracking-[0.14em] text-[--color-warning] font-semibold mb-1">
           Diagnóstico del quiebre
         </div>
+        {/* ANOMALÍA: patente recibida en sucursal + auto sin despacho físico = el
+            sistema dice "listo para entregar" pero el auto no salió de bodega. */}
+        {ins.patenteEnSucursal && op?.tieneSinSalida && !op.fSalidaPatio && (
+          <div className="rounded-md border border-[--color-danger]/40 bg-[--color-danger]/[0.08] px-3 py-2 mb-2">
+            <div className="text-[12.5px] font-semibold text-[--color-danger] flex items-center gap-1.5">
+              <Flame className="size-3.5" /> Anomalía documento ≠ físico
+            </div>
+            <div className="text-[11.5px] text-[--color-fg] mt-1 leading-relaxed">
+              La patente fue recibida en sucursal, pero el auto sigue en patio bodega ({op.bodegaOrigen ?? "—"})
+              marcado &ldquo;SIN SALIDA&rdquo;. El sistema lo trata como &ldquo;listo para entregar&rdquo;
+              pero <strong>físicamente no está en la sucursal</strong>.
+            </div>
+          </div>
+        )}
         {log && explicarCasoLogistico(op!) ? (
           <div className="text-[12.5px] text-[--color-fg] leading-relaxed">{explicarCasoLogistico(op!)}</div>
         ) : ope.bloqueado ? (
@@ -249,14 +291,28 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
           {hitos.map((h) => {
             const e = estadoHito(h);
             const color = e === "vencido" ? "var(--color-danger)" : e === "ok" ? "#0f7a59" : "var(--color-fg-dim)";
+            // Caso especial: despacho con "SIN SALIDA" — auto declarado sin salida.
+            const esDespachoSinSalida = h.label === "Despacho a sucursal" && !h.fecha && op?.tieneSinSalida;
             return (
               <li key={h.label} className="flex items-center gap-2.5 text-[12px]">
-                <span className="size-2 rounded-full shrink-0" style={{ background: color }} />
+                <span className="size-2 rounded-full shrink-0" style={{ background: esDespachoSinSalida ? "var(--color-warning)" : color }} />
                 <span className="w-52 shrink-0 text-[--color-fg]">{h.label}</span>
                 <span className="w-24 shrink-0 mono text-[--color-fg-muted]">{fechaTxt(h.fecha)}</span>
-                <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-[--color-fg-dim]">{h.fuente}</span>
+                <span
+                  className="w-16 shrink-0 text-[10px] uppercase tracking-wide text-[--color-fg-dim]"
+                  title={h.confianza === "ninguna" ? "Sin dato" : `Confianza ${h.confianza}`}
+                >
+                  {h.fuente}
+                </span>
+                {h.confianza === "media" && h.fecha && (
+                  <Badge tone="info" size="xs">proxy</Badge>
+                )}
+                {h.confianza === "baja" && h.fecha && (
+                  <Badge tone="warning" size="xs">inferido</Badge>
+                )}
                 {e === "vencido" && <Badge tone="danger" size="xs">vencido</Badge>}
-                {e === "sin" && <span className="text-[10.5px] text-[--color-fg-dim]">pendiente / sin dato</span>}
+                {esDespachoSinSalida && <Badge tone="warning" size="xs">SIN SALIDA</Badge>}
+                {e === "sin" && !esDespachoSinSalida && <span className="text-[10.5px] text-[--color-fg-dim]">pendiente / sin dato</span>}
               </li>
             );
           })}
@@ -311,6 +367,38 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
               </>
             ) : null}
           </CapaCard>
+
+          {/* ── Bodega ROMIA (modelo nuevo SCHIAPP/KAR) ── */}
+          {op?.bodegaOrigen && (
+            <CapaCard
+              icon={<Truck className="size-3.5" />}
+              titulo={`Bodega · ${op.bodegaOrigen}`}
+              presente
+            >
+              {op.estadoBodega && <Linea k="Estado bodega" v={op.estadoBodega} />}
+              {op.patio && <Linea k="Patio" v={op.patio} />}
+              {op.puntoEntrega && <Linea k="Punto entrega" v={op.puntoEntrega} />}
+              {op.fEntradaPatio && <Linea k="Entrada al patio" v={fechaTxt(op.fEntradaPatio)} />}
+              {op.fSalidaPatio && <Linea k="Salida del patio" v={fechaTxt(op.fSalidaPatio)} />}
+              {op.fechaLimite && <Linea k="Fecha límite" v={fechaTxt(op.fechaLimite)} />}
+              {op.cumplimientoDespacho && (
+                <Linea
+                  k="Cumplimiento"
+                  v={op.cumplimientoDespacho}
+                  tono={/no\s*cumplido/i.test(op.cumplimientoDespacho) ? "danger" : undefined}
+                />
+              )}
+              {op.numTraslados != null && op.numTraslados > 1 && (
+                <Linea k="Traslados" v={`${op.numTraslados} (reasignado)`} tono="warning" />
+              )}
+              {op.transportistaSalida && <Linea k="Transportista" v={op.transportistaSalida} />}
+              {op.tieneSinSalida && (
+                <div className="text-[11px] text-[--color-warning] font-medium pt-1">
+                  ⚠ Marcado &ldquo;SIN SALIDA&rdquo; — auto físico aún en patio.
+                </div>
+              )}
+            </CapaCard>
+          )}
 
           <CapaCard icon={<Banknote className="size-3.5" />} titulo="Saldos" presente={caso.capas.includes("saldos")}>
             <Linea k="Saldo cliente" v={fin.saldoCliente > 0 ? fmtCLPCompact(fin.saldoCliente) : "—"} tono={fin.saldoCliente > 0 ? "warning" : undefined} />

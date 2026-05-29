@@ -9,6 +9,20 @@
  *
  * NO toca el módulo VPP/VU en autos sin entregar — ese sigue calculándose desde
  * Base_Stock vía esVPPComprometido. Este selector ignora PatenteVpp del archivo.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * SPLIT HISTÓRICO vs OPERATIVO (regla operacional desde 2026-05):
+ *
+ * La base "Autos no entregados.xlsx" puede venir como base completa de autos
+ * facturados (incluyendo entregados y no entregados). Todos los cálculos del
+ * pipeline operacional, KPIs, alertas, listados y drill-downs operan SOLO sobre
+ * el universo `entregado=false`. La base completa queda en el store/snapshot
+ * para análisis histórico futuro (tiempos promedio, throughput, aging histórico).
+ *
+ * Punto de filtrado único: `cruzarFNEConStock` aplica `filtrarFNEOperativo`
+ * antes de procesar. Quien necesite el universo histórico llama a
+ * `filtrarFNEHistorico` explícitamente o pasa `incluirEntregados: true`.
+ * ───────────────────────────────────────────────────────────────────────────
  */
 
 import type {
@@ -110,6 +124,17 @@ function deriveEstadoEntrega(fne: AutoNoEntregado): EstadoEntrega {
   return "sin_solicitud_inscripcion";
 }
 
+/** Subconjunto operativo — universo gestionable vivo. Alimenta TODOS los KPIs. */
+export function filtrarFNEOperativo(registros: AutoNoEntregado[]): AutoNoEntregado[] {
+  return registros.filter((r) => !r.entregado);
+}
+
+/** Subconjunto histórico de entregados — fuera del pipeline operacional.
+ *  Reservado para módulos futuros de tiempos / throughput / comparativas. */
+export function filtrarFNEHistorico(registros: AutoNoEntregado[]): AutoNoEntregado[] {
+  return registros.filter((r) => r.entregado);
+}
+
 /**
  * Cruza cada registro FNE con info de stock. Estrategia en capas:
  *   1. Match VIN normalizado contra Base_Stock (stock activo) → "vehiculo"
@@ -117,13 +142,22 @@ function deriveEstadoEntrega(fne: AutoNoEntregado): EstadoEntrega {
  *      Financiado) que cubre VINs ya facturados/entregados → "vehiculoExtra"
  *
  * Esto recupera ~99% de cobertura vs el 24% que da solo Base_Stock.
+ *
+ * Por defecto FILTRA los entregados antes de cruzar — el universo retornado
+ * es el operativo vivo. Pasá `incluirEntregados: true` solo si necesitás el
+ * histórico completo (módulos futuros de tiempos / throughput).
  */
 export function cruzarFNEConStock(
   registros: AutoNoEntregado[],
   vehiculos: Vehiculo[],
   vinsExtra: Map<string, VINSupplementary> | null = null,
   hoy: Date = new Date(),
+  opts: { incluirEntregados?: boolean } = {},
 ): FNERealCruzado[] {
+  const universo = opts.incluirEntregados === true
+    ? registros
+    : filtrarFNEOperativo(registros);
+
   // Indexamos Base_Stock por VIN NORMALIZADO (no por el VIN raw)
   const byVinStock = new Map<string, Vehiculo>();
   for (const v of vehiculos) {
@@ -131,7 +165,7 @@ export function cruzarFNEConStock(
     if (k && !byVinStock.has(k)) byVinStock.set(k, v);
   }
 
-  return registros.map<FNERealCruzado>((fne) => {
+  return universo.map<FNERealCruzado>((fne) => {
     const vinLimpio = limpiarVIN(fne.vin);
     const veh = byVinStock.get(vinLimpio) ?? null;
     const extra = veh ? null : vinsExtra?.get(vinLimpio) ?? null;

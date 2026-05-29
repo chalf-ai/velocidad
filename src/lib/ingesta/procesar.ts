@@ -18,6 +18,7 @@ import { parseFNEFile } from "../parser/autos-no-entregados";
 import { parseSaldosFile } from "../parser/saldos";
 import { parseProvisionesFile } from "../parser/provisiones";
 import { parseLogisticaFile } from "../parser/logistica";
+import { parseRomiaFile } from "../parser/romia-logistica";
 import { limpiarVIN } from "../parser/venta-apc";
 import { useExcelStore } from "../store";
 import { useIngestaStore, type FuenteId, type IngestaMeta } from "./store";
@@ -201,6 +202,65 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
         };
       }
 
+      case "romia_schiapp":
+      case "romia_kar": {
+        // Modelo logístico nuevo (SCHIAPPCASSE / KAR-LOGISTICS). Mismo parser
+        // unificado: parseRomiaFile detecta la bodega y produce RomiaRow[].
+        const parsed = await parseRomiaFile(file);
+        const esperado: FuenteTipo = tipo;
+        const obtenido: FuenteTipo =
+          parsed.bodega === "SCHIAPP" ? "romia_schiapp" : "romia_kar";
+        const fuenteId: FuenteId = obtenido;
+        const reemplazo =
+          parsed.bodega === "SCHIAPP" ? excel.romiaSchiapp != null : excel.romiaKar != null;
+        if (parsed.bodega === "SCHIAPP") excel.setRomiaSchiapp(parsed.filas);
+        else excel.setRomiaKar(parsed.filas);
+        const fechaCorte = maxDate(
+          parsed.filas.flatMap((r) => [
+            r.fIngresoApc,
+            r.fSolicitudBodega,
+            r.fSolicitudVendedor,
+            r.fDespacho,
+            r.fEntradaPatio,
+            r.fSalidaPatio,
+            r.fechaLimite,
+          ]),
+        );
+        const vins = contarVins(parsed.filas.map((r) => r.vin));
+        const adv: string[] = [];
+        if (esperado !== obtenido) {
+          adv.push(
+            `Detección por hojas dijo ${esperado}, parser identificó ${obtenido}. Se aplicó el resultado del parser.`,
+          );
+        }
+        if (parsed.report.sinSalida > 0) {
+          adv.push(
+            `${parsed.report.sinSalida} VIN con "SIN SALIDA" — auto físico aún en patio.`,
+          );
+        }
+        aplicarMeta({
+          fuenteId,
+          archivoNombre: file.name,
+          archivoSize: file.size,
+          fechaCarga: new Date(),
+          fechaCorte,
+          registros: parsed.filas.length,
+          vins,
+          advertencias: adv,
+        });
+        return {
+          ...base,
+          tipo: fuenteId,
+          fuenteId,
+          ok: true,
+          reemplazo,
+          registros: parsed.filas.length,
+          vins,
+          fechaCorte,
+          advertencias: adv,
+        };
+      }
+
       default:
         return {
           ...base,
@@ -245,10 +305,15 @@ export function limpiarFuente(id: FuenteId): void {
       return;
     case "logistica_roma":
     case "logistica_stli":
-      // El store maneja ROMA+STLI juntos; limpiar una limpia la logística completa.
+    case "romia_schiapp":
+    case "romia_kar":
+      // El store maneja ROMA + STLI + ROMIA(SCHIAPP+KAR) juntos en
+      // `logisticaPorVin`. clearLogistica los limpia todos a la vez.
       s.clearLogistica();
       ing.clearMeta("logistica_roma");
       ing.clearMeta("logistica_stli");
+      ing.clearMeta("romia_schiapp");
+      ing.clearMeta("romia_kar");
       return;
   }
 }

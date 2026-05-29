@@ -25,6 +25,8 @@ export type FuenteTipo =
   | "provisiones"
   | "logistica_roma"
   | "logistica_stli"
+  | "romia_schiapp"
+  | "romia_kar"
   | "tescar"
   | "desconocido";
 
@@ -57,8 +59,10 @@ export const FUENTE_LABEL: Record<FuenteTipo, string> = {
   fne: "FNE · facturados no entregados",
   saldos: "Saldos / SALVING",
   provisiones: "Provisiones",
-  logistica_roma: "Logística ROMA (agenda)",
-  logistica_stli: "Logística STLI (bodega)",
+  logistica_roma: "Logística ROMA (agenda · legacy)",
+  logistica_stli: "Logística STLI (bodega · legacy)",
+  romia_schiapp: "Logística ROMIA · SCHIAPPACASSE",
+  romia_kar: "Logística ROMIA · KAR-LOGISTICS",
   tescar: "Control TestCars / TESCAR",
   desconocido: "Archivo no reconocido",
 };
@@ -88,6 +92,24 @@ export function detectarFuente(wb: WorkBook): FuenteDeteccion {
   // 1) STOCK maestro — hoja "Base_Stock" (incluye también Control TestCars, líneas…).
   if (tieneHoja("Base_Stock"))
     return out("stock", "Base_Stock", 'Hoja "Base_Stock" presente (Excel maestro de stock).');
+
+  // 1.5) ROMIA SCHIAPPACASSE — hojas únicas "DIRECCIONES" / "Listado laminado"
+  //      (no aparecen en KAR ni en archivos legacy). Modelo logístico nuevo.
+  if (tieneHoja("DIRECCIONES") || tieneHoja("Listado laminado"))
+    return out(
+      "romia_schiapp",
+      tieneHoja("DIRECCIONES") ? "DIRECCIONES" : "Listado laminado",
+      'Hojas características SCHIAPPACASSE ("DIRECCIONES" / "Listado laminado").',
+    );
+
+  // 1.6) ROMIA KAR-LOGISTICS — hojas únicas "CODIGO DESPACHO" / "Compras Marca"
+  //      ("Compras Marca" con S final, distinto de "Compra Marca" del SCHIAPP).
+  if (tieneHoja("CODIGO DESPACHO") || tieneHoja("Compras Marca"))
+    return out(
+      "romia_kar",
+      tieneHoja("CODIGO DESPACHO") ? "CODIGO DESPACHO" : "Compras Marca",
+      'Hojas características KAR-LOGISTICS ("CODIGO DESPACHO" / "Compras Marca").',
+    );
 
   // 2) SALDOS / SALVING — hoja "FUSION BD 3.0" o columnas CATEGORIA + Saldo x Documentar.
   const hSaldos = tieneHoja("FUSION BD 3.0")

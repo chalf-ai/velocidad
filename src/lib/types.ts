@@ -708,6 +708,38 @@ export interface AutoNoEntregado {
 
   rowIndex: number;
 
+  // ───────────────────────────────────────────────────────────────
+  // Separación universo histórico vs operativo (split FNE).
+  //
+  // Regla canónica de detección — validada contra "Actas al 28 de Mayo.xlsx"
+  // donde la columna está 100% poblada (Cargado | No Cargado):
+  //   entregado = (entrega_auto_txt.trim() === "Cargado")
+  //
+  // "Cargado" = acta de entrega cargada en sistema = auto entregado al cliente.
+  // Cualquier otro valor (incluido "No Cargado", vacíos, nulos) deja el
+  // registro en el universo FNE operativo. Red de seguridad adicional:
+  // fecha_patente_entregada poblada también marca entregado (defensivo).
+  //
+  // La base completa se conserva en el store (histórico). Todos los KPIs,
+  // pipeline, alertas y listados operacionales SOLO se calculan sobre el
+  // subconjunto operativo (entregado=false). El histórico queda disponible
+  // internamente para módulos futuros de tiempos / throughput.
+  // ───────────────────────────────────────────────────────────────
+
+  /** TRUE = ya entregado al cliente. Filtrar antes de cualquier cálculo
+   *  operacional. Default false en snapshots viejos (idempotente). */
+  entregado: boolean;
+  /** Fecha de la entrega real al cliente (de fecha_patente_entregada cuando
+   *  está disponible). null si entregado=false o si la fecha no quedó en el
+   *  archivo. */
+  fechaEntregaReal: Date | null;
+  /** Texto literal de `entrega_auto_txt` al momento de parsear — auditoría
+   *  contra clasificaciones automáticas del Excel ("Cargado" / "No Cargado"). */
+  estadoEntregaOriginal: string | null;
+  /** Qué columna disparó la marca de entregado. Para diagnóstico cuando
+   *  un VIN queda fuera del universo operativo. */
+  fuenteEntrega: "entrega_auto_txt" | "fecha_patente_entregada" | "ninguna";
+
   /**
    * ¿La operación FNE pertenece a la unidad USADOS? Enriquecido al cruzar contra
    * Base_Stock (store.enriquecerFNEUsados): true si la sucursal es de usados O el
@@ -789,6 +821,10 @@ export interface FNERealParseReport {
   filasOmitidas: number;
   vinsDuplicados: string[];
   durMs: number;
+  /** Subconjunto con `entregado=true` — base histórica. NO entra al pipeline operacional. */
+  entregadosCount: number;
+  /** Subconjunto con `entregado=false` — universo operativo vivo. Alimenta TODOS los KPIs. */
+  noEntregadosCount: number;
 }
 
 export interface ParsedFNE {
