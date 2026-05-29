@@ -318,8 +318,8 @@ export default function VelocidadOperacionalPage() {
       <PageHeader
         kicker="HISTÓRICO"
         kickerIcon={<Activity className="size-3" />}
-        title="Vista Histórica · Funnel por proceso"
-        description="Tres lecturas separadas por proceso: funnel histórico cerrado, backlog abierto y cierre. Carga local, sin persistencia."
+        title="Tiempos Operacionales"
+        description="Histórico de tiempos · Control de Negocio · Logística · Comercial · Cliente · Cierre y Cumplimiento"
       />
 
       <EstadoFuentesBanner />

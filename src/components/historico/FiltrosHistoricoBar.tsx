@@ -1,6 +1,7 @@
 "use client";
 
-import { Filter } from "lucide-react";
+import { useState } from "react";
+import { Filter, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fmtNum } from "@/lib/format";
 import { Card, CardBody } from "@/components/ui/Card";
@@ -78,6 +79,19 @@ const ENTREGADO_OPTIONS = [
   { value: "no" as const, label: "No" },
 ];
 
+/**
+ * Barra de filtros colapsable.
+ *
+ * Estado por defecto: COLAPSADA. Solo se ve la fila resumen:
+ *   `Filtros · Universo X / Y · Mostrar filtros`
+ *
+ * Si hay filtros activos, el badge cambia a tono accent y aparece el botón
+ * "Limpiar filtros" incluso en estado colapsado para que el usuario sepa
+ * que hay un filtro aplicado sin tener que abrir el panel.
+ *
+ * Al expandir, se muestran los 6 selects en flex-wrap y un botón "Ocultar
+ * filtros" alineado a la derecha.
+ */
 export function FiltrosHistoricoBar({
   opciones,
   filtros,
@@ -86,6 +100,8 @@ export function FiltrosHistoricoBar({
   totalUniverso,
   totalFiltrado,
 }: Props) {
+  const [expandido, setExpandido] = useState(false);
+
   const algunFiltroActivo =
     filtros.marca !== null ||
     filtros.sucursal !== null ||
@@ -96,15 +112,14 @@ export function FiltrosHistoricoBar({
 
   return (
     <Card>
-      <CardBody>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Filter className="size-3.5 text-[--color-fg-muted]" />
+      <CardBody className="py-2.5 px-4">
+        {/* Barra resumen — siempre visible */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <Filter className="size-3.5 text-[--color-fg-muted] shrink-0" />
             <span className="text-[11px] uppercase tracking-wider text-[--color-fg-muted] font-medium">
               Filtros
             </span>
-          </div>
-          <div className="flex items-center gap-2">
             <Badge tone={algunFiltroActivo ? "accent" : "muted"} size="sm">
               Universo: {fmtNum(totalFiltrado)} / {fmtNum(totalUniverso)}
             </Badge>
@@ -114,58 +129,81 @@ export function FiltrosHistoricoBar({
               </Button>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setExpandido((v) => !v)}
+            className={cn(
+              "inline-flex items-center gap-1 text-[12px] font-medium",
+              "text-[--color-accent] hover:underline shrink-0",
+            )}
+          >
+            {expandido ? (
+              <>
+                Ocultar filtros
+                <ChevronUp className="size-3" />
+              </>
+            ) : (
+              <>
+                Mostrar filtros
+                <ChevronDown className="size-3" />
+              </>
+            )}
+          </button>
         </div>
 
-        <div className="flex flex-wrap gap-3 items-end">
-          <Select
-            label="Marca"
-            value={filtros.marca}
-            onChange={(v) => onChange({ ...filtros, marca: v })}
-            options={opciones.marcas.map((m) => ({ value: m }))}
-          />
-          <Select
-            label="Sucursal"
-            value={filtros.sucursal}
-            onChange={(v) => onChange({ ...filtros, sucursal: v })}
-            options={opciones.sucursales.map((s) => ({ value: s }))}
-          />
-          <Select
-            label="Vendedor"
-            value={filtros.vendedor}
-            onChange={(v) => onChange({ ...filtros, vendedor: v })}
-            options={opciones.vendedores.map((v) => ({ value: v }))}
-          />
-          <Select
-            label="Entregado"
-            value={filtros.entregado === "todos" ? null : filtros.entregado}
-            onChange={(v) =>
-              onChange({ ...filtros, entregado: (v ?? "todos") as FiltrosVista["entregado"] })
-            }
-            options={ENTREGADO_OPTIONS}
-          />
-          <Select
-            label="Calidad cierre"
-            value={filtros.calidadCierre === "todas" ? null : filtros.calidadCierre}
-            onChange={(v) =>
-              onChange({
-                ...filtros,
-                calidadCierre: (v ?? "todas") as FiltrosVista["calidadCierre"],
-              })
-            }
-            options={CALIDAD_OPTIONS}
-          />
-          <Select
-            label="Cuello principal"
-            value={filtros.cuelloPrincipal === "todos" ? null : filtros.cuelloPrincipal}
-            onChange={(v) =>
-              onChange({
-                ...filtros,
-                cuelloPrincipal: (v ?? "todos") as FiltrosVista["cuelloPrincipal"],
-              })
-            }
-            options={CUELLO_OPTIONS}
-          />
-        </div>
+        {/* Panel expandido — solo cuando `expandido === true` */}
+        {expandido && (
+          <div className="mt-3 flex flex-wrap gap-3 items-end">
+            <Select
+              label="Marca"
+              value={filtros.marca}
+              onChange={(v) => onChange({ ...filtros, marca: v })}
+              options={opciones.marcas.map((m) => ({ value: m }))}
+            />
+            <Select
+              label="Sucursal"
+              value={filtros.sucursal}
+              onChange={(v) => onChange({ ...filtros, sucursal: v })}
+              options={opciones.sucursales.map((s) => ({ value: s }))}
+            />
+            <Select
+              label="Vendedor"
+              value={filtros.vendedor}
+              onChange={(v) => onChange({ ...filtros, vendedor: v })}
+              options={opciones.vendedores.map((v) => ({ value: v }))}
+            />
+            <Select
+              label="Entregado"
+              value={filtros.entregado === "todos" ? null : filtros.entregado}
+              onChange={(v) =>
+                onChange({ ...filtros, entregado: (v ?? "todos") as FiltrosVista["entregado"] })
+              }
+              options={ENTREGADO_OPTIONS}
+            />
+            <Select
+              label="Calidad cierre"
+              value={filtros.calidadCierre === "todas" ? null : filtros.calidadCierre}
+              onChange={(v) =>
+                onChange({
+                  ...filtros,
+                  calidadCierre: (v ?? "todas") as FiltrosVista["calidadCierre"],
+                })
+              }
+              options={CALIDAD_OPTIONS}
+            />
+            <Select
+              label="Cuello principal"
+              value={filtros.cuelloPrincipal === "todos" ? null : filtros.cuelloPrincipal}
+              onChange={(v) =>
+                onChange({
+                  ...filtros,
+                  cuelloPrincipal: (v ?? "todos") as FiltrosVista["cuelloPrincipal"],
+                })
+              }
+              options={CUELLO_OPTIONS}
+            />
+          </div>
+        )}
       </CardBody>
     </Card>
   );

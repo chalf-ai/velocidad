@@ -62,7 +62,7 @@ const NAV_OPS: NavItem[] = [
   { href: "/tescar", label: "TESCAR", icon: TestTube2 },
   { href: "/vencimientos", label: "Vencimientos", icon: CalendarClock },
   { href: "/alertas", label: "Alertas", icon: AlertTriangle },
-  { href: "/velocidad-operacional", label: "Vista Histórica · 3 ejes", icon: Activity },
+  { href: "/velocidad-operacional", label: "Tiempos Operacionales", icon: Activity },
 ];
 
 const NAV_TEC: NavItem[] = [
