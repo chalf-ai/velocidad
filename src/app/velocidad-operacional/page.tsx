@@ -24,18 +24,23 @@ import {
   type FocoCalidadCierre,
 } from "@/components/historico/EjeCalidadCierreCard";
 import { DrillHistoricoTable } from "@/components/historico/DrillHistoricoTable";
+import { TimelineProcesoCard } from "@/components/historico/TimelineProcesoCard";
 
 import { useHistoricoStore } from "@/lib/historico/store-cliente";
 import {
   agregadosEje1,
   agregadosEje2,
   agregadosEje3,
+  calcularTimelineProceso,
   extraerOpciones,
   filtrarFilas,
+  filasDeTramo,
   fingerprintGlobal,
   inferirTipoHuerfano,
+  procesoDeCuello,
   FILTROS_VACIOS,
   type FiltrosVista,
+  type TramoId,
 } from "@/lib/historico/vista-derivados";
 import type {
   EntradaConsolidada,
@@ -54,20 +59,26 @@ export default function VelocidadOperacionalPage() {
   const [foco1, setFoco1] = useState<FocoVelocidad | null>(null);
   const [foco2, setFoco2] = useState<FocoCumplimiento | null>(null);
   const [foco3, setFoco3] = useState<FocoCalidadCierre | null>(null);
+  // Foco de tramo (solo válido cuando foco1.tipo === "cuello" y el cuello es operacional).
+  const [focoTramo, setFocoTramo] = useState<TramoId | null>(null);
 
   const setFocoExclusivo = (n: 1 | 2 | 3, v: unknown) => {
     if (n === 1) {
       setFoco1(v as FocoVelocidad | null);
       setFoco2(null);
       setFoco3(null);
+      // Al cambiar el foco 1, el foco de tramo deja de tener sentido.
+      setFocoTramo(null);
     } else if (n === 2) {
       setFoco1(null);
       setFoco2(v as FocoCumplimiento | null);
       setFoco3(null);
+      setFocoTramo(null);
     } else {
       setFoco1(null);
       setFoco2(null);
       setFoco3(v as FocoCalidadCierre | null);
+      setFocoTramo(null);
     }
   };
 
@@ -85,11 +96,29 @@ export default function VelocidadOperacionalPage() {
   const eje2 = useMemo(() => agregadosEje2(filasFiltradas), [filasFiltradas]);
   const eje3 = useMemo(() => agregadosEje3(filasFiltradas), [filasFiltradas]);
 
+  // Timeline activo solo si foco1 es un cuello operacional (Logística, Control de Negocio, Cliente, Comercial).
+  const procesoActivo = useMemo(() => {
+    if (!foco1 || foco1.tipo !== "cuello") return null;
+    return procesoDeCuello(foco1.valor as CuelloPrincipal);
+  }, [foco1]);
+
+  const timelineData = useMemo(
+    () => (procesoActivo ? calcularTimelineProceso(filasFiltradas, procesoActivo) : null),
+    [procesoActivo, filasFiltradas],
+  );
+
   // Drill por eje en foco
   const filasDrill = useMemo<EntradaConsolidada[]>(() => {
     if (!foco1 && !foco2 && !foco3) return [];
     if (foco1) {
-      if (foco1.tipo === "cuello") return filasFiltradas.filter((f) => f.cuelloPrincipal === (foco1.valor as CuelloPrincipal));
+      if (foco1.tipo === "cuello") {
+        const base = filasFiltradas.filter((f) => f.cuelloPrincipal === (foco1.valor as CuelloPrincipal));
+        // Si hay foco de tramo, restringir más a las filas con ambas fechas del tramo
+        if (procesoActivo && focoTramo) {
+          return filasDeTramo(base, procesoActivo, focoTramo);
+        }
+        return base;
+      }
       return filasFiltradas.filter((f) => f.ejeVelocidad.bucket === (foco1.valor as BucketVelocidad));
     }
     if (foco2) {
@@ -115,11 +144,20 @@ export default function VelocidadOperacionalPage() {
       );
     }
     return [];
-  }, [foco1, foco2, foco3, filasFiltradas]);
+  }, [foco1, foco2, foco3, filasFiltradas, procesoActivo, focoTramo]);
 
   const tituloDrill = useMemo(() => {
-    if (foco1)
-      return foco1.tipo === "cuello" ? `Cuello: ${foco1.valor}` : `Velocidad: ${foco1.valor}`;
+    if (foco1) {
+      if (foco1.tipo === "cuello") {
+        const base = `Cuello: ${foco1.valor}`;
+        if (procesoActivo && focoTramo && timelineData) {
+          const tramo = timelineData.tramos.find((t) => t.id === focoTramo);
+          if (tramo) return `${base} · tramo: ${tramo.label}`;
+        }
+        return base;
+      }
+      return `Velocidad: ${foco1.valor}`;
+    }
     if (foco2)
       return foco2.tipo === "nivel" ? `Nivel documental: ${foco2.valor}` : `Banda cumplimiento: ${foco2.valor}`;
     if (foco3) {
@@ -128,7 +166,7 @@ export default function VelocidadOperacionalPage() {
       return `Conflicto: ${foco3.valor}`;
     }
     return "";
-  }, [foco1, foco2, foco3]);
+  }, [foco1, foco2, foco3, procesoActivo, focoTramo, timelineData]);
 
   // Fingerprint (modo validación)
   const fingerprint = useMemo(
@@ -224,6 +262,14 @@ export default function VelocidadOperacionalPage() {
             foco={foco1}
             onFoco={(v) => setFocoExclusivo(1, v)}
           />
+          {procesoActivo && timelineData && foco1?.tipo === "cuello" && (
+            <TimelineProcesoCard
+              data={timelineData}
+              focoTramo={focoTramo}
+              onFocoTramo={setFocoTramo}
+              cuelloLabel={foco1.valor as CuelloPrincipal}
+            />
+          )}
           {foco1 && <DrillHistoricoTable titulo={tituloDrill} filas={filasParaDrill} />}
 
           <EjeCumplimientoCard

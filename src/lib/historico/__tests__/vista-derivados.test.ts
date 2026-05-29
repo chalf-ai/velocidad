@@ -22,6 +22,9 @@ import {
   extraerOpciones,
   fingerprintGlobal,
   inferirTipoHuerfano,
+  calcularTimelineProceso,
+  filasDeTramo,
+  procesoDeCuello,
   FILTROS_VACIOS,
 } from "../vista-derivados.js";
 import type { EntradaConsolidada, ResultadoCruce } from "../cruce-roma-actas.js";
@@ -445,5 +448,201 @@ describe("7. fingerprintGlobal", () => {
     assert.equal(fp.cumplimientoBanda.ok, 1);
     assert.equal(fp.cumplimientoBanda.mayor, 1);
     assert.equal(fp.cuello.length, 2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. calcularTimelineProceso — línea de tiempo por cuello
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("8. calcularTimelineProceso", () => {
+  test("procesoDeCuello mapea los 4 cuellos operacionales", () => {
+    assert.equal(procesoDeCuello("Control de Negocio"), "control_negocio");
+    assert.equal(procesoDeCuello("Logística"), "logistica");
+    assert.equal(procesoDeCuello("Cliente"), "cliente");
+    assert.equal(procesoDeCuello("Comercial"), "comercial");
+    assert.equal(procesoDeCuello("Mixto"), null);
+    assert.equal(procesoDeCuello("Sin información suficiente"), null);
+  });
+
+  test("Control de Negocio: 5 tramos, métricas correctas, n y sinDato bien diferenciados", () => {
+    const fas = (vin: string, opts: Partial<{
+      fFactura: Date | null;
+      fSolicitudInscripcion: Date | null;
+      fInscripcion: Date | null;
+      fPatenteEnviada: Date | null;
+      fPatenteRecibida: Date | null;
+      fEntregaReal: Date | null;
+      sucursal: string;
+      marca: string;
+    }>): EntradaConsolidada =>
+      mkFila({
+        ventaId: 0,
+        vin,
+        cuelloPrincipal: "Control de Negocio",
+        fFactura: opts.fFactura ?? new Date(2026, 0, 1),
+        fSolicitudInscripcion: opts.fSolicitudInscripcion ?? null,
+        fInscripcion: opts.fInscripcion ?? null,
+        fPatenteEnviada: opts.fPatenteEnviada ?? null,
+        fPatenteRecibida: opts.fPatenteRecibida ?? null,
+        fEntregaReal: opts.fEntregaReal ?? null,
+        sucursal: opts.sucursal ?? "S1",
+        marca: opts.marca ?? "KIA",
+      });
+
+    const cruce = mkCruce([
+      // Caso 1: completo, todas las fechas, ciclo limpio
+      fas("VIN0000000000001", {
+        fFactura:              new Date(2026, 0, 1),
+        fSolicitudInscripcion: new Date(2026, 0, 2),  // +1d
+        fInscripcion:          new Date(2026, 0, 5),  // +3d
+        fPatenteEnviada:       new Date(2026, 0, 10), // +5d
+        fPatenteRecibida:      new Date(2026, 0, 12), // +2d
+        fEntregaReal:          new Date(2026, 0, 20), // +8d
+      }),
+      // Caso 2: solo factura → solins (1d), después nada
+      fas("VIN0000000000002", {
+        fFactura:              new Date(2026, 0, 1),
+        fSolicitudInscripcion: new Date(2026, 0, 2),
+        fInscripcion:          null,
+      }),
+      // Caso 3: factura → solins (3d) + solins → ins (5d), sin patente
+      fas("VIN0000000000003", {
+        fFactura:              new Date(2026, 0, 1),
+        fSolicitudInscripcion: new Date(2026, 0, 4),  // +3d
+        fInscripcion:          new Date(2026, 0, 9),  // +5d
+        sucursal:              "S2",
+      }),
+      // Caso 4: cuello Mixto (NO entra al universo del proceso)
+      mkFila({
+        ventaId: 0,
+        vin: "VIN0000000000004",
+        cuelloPrincipal: "Mixto",
+      }),
+    ]);
+    const t = calcularTimelineProceso(cruce.filas, "control_negocio");
+    assert.equal(t.proceso, "control_negocio");
+    assert.equal(t.universoEnProceso, 3, "Solo 3 entran al cuello Control de Negocio");
+    assert.equal(t.tramos.length, 5);
+
+    // Tramo 1: Factura → Solicitud inscripción — todos los 3 lo tienen
+    const t1 = t.tramos[0];
+    assert.equal(t1.id, "cn_fac_solins");
+    assert.equal(t1.n, 3);
+    assert.equal(t1.sinDato, 0);
+    // Casos dan deltas 1d, 1d, 3d → ordenados [1, 1, 3], mediana=1, p90=3
+    assert.equal(t1.medianaDias, 1);
+    assert.equal(t1.p90Dias, 3);
+    assert.ok(t1.topSucursal);
+    // Tramo 2: solins → inscripción — solo casos 1 y 3 lo tienen
+    const t2 = t.tramos[1];
+    assert.equal(t2.id, "cn_solins_ins");
+    assert.equal(t2.n, 2);
+    assert.equal(t2.sinDato, 1);
+    // Tramo 3: ins → patente enviada — solo caso 1
+    const t3 = t.tramos[2];
+    assert.equal(t3.n, 1);
+    assert.equal(t3.sinDato, 2);
+    // Tramo 5: patente recibida → entrega — solo caso 1
+    const t5 = t.tramos[4];
+    assert.equal(t5.id, "cn_patrec_ent");
+    assert.equal(t5.n, 1);
+    assert.equal(t5.medianaDias, 8);
+  });
+
+  test("Logística: 6 tramos definidos, todos calculables sobre el cuello correcto", () => {
+    const t = calcularTimelineProceso([], "logistica");
+    assert.equal(t.tramos.length, 6);
+    assert.deepEqual(t.tramos.map((x) => x.id), [
+      "lo_sol_resp",
+      "lo_resp_solbod",
+      "lo_solbod_ing",
+      "lo_ing_plan",
+      "lo_plan_sal",
+      "lo_sal_ent",
+    ]);
+    // Universo vacío: todos los tramos en n=0
+    for (const tramo of t.tramos) {
+      assert.equal(tramo.n, 0);
+      assert.equal(tramo.sinDato, 0);
+      assert.equal(tramo.medianaDias, null);
+    }
+  });
+
+  test("Cliente: 1 tramo único", () => {
+    const t = calcularTimelineProceso([], "cliente");
+    assert.equal(t.tramos.length, 1);
+    assert.equal(t.tramos[0].id, "cl_listo_ent");
+  });
+
+  test("Comercial: solo 1 tramo medible (Solicitud → Factura)", () => {
+    const t = calcularTimelineProceso([], "comercial");
+    assert.equal(t.tramos.length, 1);
+    assert.equal(t.tramos[0].id, "co_sol_fac");
+  });
+
+  test("Tramo hacia entrega usa fEntregaReal estricto (no sustituye por fListoParaEntrega)", () => {
+    const cruce = mkCruce([
+      // Tiene fPatenteRecibida + fListoParaEntrega pero NO fEntregaReal → debe contar como sinDato
+      mkFila({
+        vin: "VIN0000000000005",
+        cuelloPrincipal: "Control de Negocio",
+        fFactura: new Date(2026, 0, 1),
+        fPatenteRecibida: new Date(2026, 0, 5),
+        fListoParaEntrega: new Date(2026, 0, 7),
+        fEntregaReal: null,
+      }),
+    ]);
+    const t = calcularTimelineProceso(cruce.filas, "control_negocio");
+    const tEntrega = t.tramos.find((x) => x.id === "cn_patrec_ent")!;
+    assert.equal(tEntrega.n, 0, "Sin fEntregaReal no debe calcularse");
+    assert.equal(tEntrega.sinDato, 1);
+    assert.equal(tEntrega.medianaDias, null);
+  });
+
+  test("filasDeTramo devuelve solo las filas con AMBAS fechas del tramo", () => {
+    const cruce = mkCruce([
+      // Caso con ambas fechas del tramo factura→solins
+      mkFila({
+        ventaId: 100, vin: "VIN0000000000006",
+        cuelloPrincipal: "Control de Negocio",
+        fFactura: new Date(2026, 0, 1), fSolicitudInscripcion: new Date(2026, 0, 2),
+      }),
+      // Caso solo con una fecha
+      mkFila({
+        ventaId: 101, vin: "VIN0000000000007",
+        cuelloPrincipal: "Control de Negocio",
+        fFactura: new Date(2026, 0, 1), fSolicitudInscripcion: null,
+      }),
+      // Caso con ambas pero en otro cuello
+      mkFila({
+        ventaId: 102, vin: "VIN0000000000008",
+        cuelloPrincipal: "Mixto",
+        fFactura: new Date(2026, 0, 1), fSolicitudInscripcion: new Date(2026, 0, 5),
+      }),
+    ]);
+    const r = filasDeTramo(cruce.filas, "control_negocio", "cn_fac_solins");
+    assert.equal(r.length, 1);
+    assert.equal(r[0].ventaId, 100);
+  });
+
+  test("Tramo con n=0 mantiene métricas en null y top en null", () => {
+    const cruce = mkCruce([
+      mkFila({
+        ventaId: 0,
+        vin: "VIN0000000000009",
+        cuelloPrincipal: "Cliente",
+        fListoParaEntrega: null,
+        fEntregaReal: null,
+      }),
+    ]);
+    const t = calcularTimelineProceso(cruce.filas, "cliente");
+    const tramo = t.tramos[0];
+    assert.equal(tramo.n, 0);
+    assert.equal(tramo.medianaDias, null);
+    assert.equal(tramo.promedioDias, null);
+    assert.equal(tramo.p90Dias, null);
+    assert.equal(tramo.topSucursal, null);
+    assert.equal(tramo.topMarca, null);
   });
 });

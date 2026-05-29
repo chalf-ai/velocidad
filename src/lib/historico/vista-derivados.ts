@@ -322,6 +322,177 @@ export function agregadosEje3(filas: EntradaConsolidada[]): AgregadoCalidadCierr
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Línea de tiempo por proceso (Velocidad — drill por tramo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ProcesoId = "control_negocio" | "logistica" | "cliente" | "comercial";
+export type TramoId = string;
+
+export interface TramoDefinicion {
+  id: TramoId;
+  label: string;
+  getDesde: (f: EntradaConsolidada) => Date | null;
+  getHasta: (f: EntradaConsolidada) => Date | null;
+}
+
+export interface TramoMetricas {
+  id: TramoId;
+  label: string;
+  /** Casos con AMBAS fechas válidas (el delta es calculable). */
+  n: number;
+  /** Casos donde falta una o ambas fechas. */
+  sinDato: number;
+  promedioDias: number | null;
+  medianaDias: number | null;
+  p90Dias: number | null;
+  topSucursal: { key: string; n: number } | null;
+  topMarca: { key: string; n: number } | null;
+}
+
+export interface TimelineProceso {
+  proceso: ProcesoId;
+  /** Filas cuyo `cuelloPrincipal` corresponde al proceso (universo donde se mide el timeline). */
+  universoEnProceso: number;
+  tramos: TramoMetricas[];
+}
+
+/**
+ * Mapeo `ProcesoId` → etiqueta de cuello principal. La vista solo activa el
+ * timeline cuando el foco del Eje 1 cae en uno de los 4 cuellos operacionales.
+ */
+export const CUELLO_POR_PROCESO: Record<ProcesoId, CuelloPrincipal> = {
+  control_negocio: "Control de Negocio",
+  logistica: "Logística",
+  cliente: "Cliente",
+  comercial: "Comercial",
+};
+
+/**
+ * Definición de tramos por proceso. Cada tramo es un par de fechas en la fila
+ * consolidada. Las funciones de extracción son seguras ante null.
+ *
+ * Reglas de decisión (aprobadas en diseño):
+ *  - Tramos hacia entrega usan `fEntregaReal` ESTRICTO. No se sustituye por
+ *    `fListoParaEntrega` ni `fETASucursalPromesa`.
+ *  - Comercial solo expone un tramo medible (Solicitud → Factura). Los otros
+ *    dos ("Listo → Sol. entrega" y "Sol. entrega → Autorización") no se
+ *    incluyen porque `solEntrega` y `autorizacionEntrega` son flags, no fechas.
+ */
+export const TRAMOS_DEFINICION: Record<ProcesoId, TramoDefinicion[]> = {
+  control_negocio: [
+    { id: "cn_fac_solins",  label: "Factura → Solicitud inscripción",       getDesde: (f) => f.fFactura,             getHasta: (f) => f.fSolicitudInscripcion },
+    { id: "cn_solins_ins",  label: "Solicitud inscripción → Inscripción",    getDesde: (f) => f.fSolicitudInscripcion, getHasta: (f) => f.fInscripcion },
+    { id: "cn_ins_paten",   label: "Inscripción → Patente enviada",          getDesde: (f) => f.fInscripcion,          getHasta: (f) => f.fPatenteEnviada },
+    { id: "cn_paten_patrec",label: "Patente enviada → Patente recibida",     getDesde: (f) => f.fPatenteEnviada,       getHasta: (f) => f.fPatenteRecibida },
+    { id: "cn_patrec_ent",  label: "Patente recibida → Entrega real",        getDesde: (f) => f.fPatenteRecibida,      getHasta: (f) => f.fEntregaReal },
+  ],
+  logistica: [
+    { id: "lo_sol_resp",    label: "Solicitud vendedor → Respuesta logística", getDesde: (f) => f.fSolicitud,            getHasta: (f) => f.fRespuestaLogistica },
+    { id: "lo_resp_solbod", label: "Respuesta logística → Solicitud bodega",   getDesde: (f) => f.fRespuestaLogistica,   getHasta: (f) => f.fSolicitudBodega },
+    { id: "lo_solbod_ing",  label: "Solicitud bodega → Ingreso bodega",        getDesde: (f) => f.fSolicitudBodega,      getHasta: (f) => f.fIngresoBodega },
+    { id: "lo_ing_plan",    label: "Ingreso bodega → Planificación física",    getDesde: (f) => f.fIngresoBodega,        getHasta: (f) => f.fPlanificacionFisica },
+    { id: "lo_plan_sal",    label: "Planificación → Salida física",            getDesde: (f) => f.fPlanificacionFisica,  getHasta: (f) => f.fSalidaFisica },
+    { id: "lo_sal_ent",     label: "Salida física → Entrega real",             getDesde: (f) => f.fSalidaFisica,         getHasta: (f) => f.fEntregaReal },
+  ],
+  cliente: [
+    { id: "cl_listo_ent",   label: "Listo para entrega → Entrega real",      getDesde: (f) => f.fListoParaEntrega,    getHasta: (f) => f.fEntregaReal },
+  ],
+  comercial: [
+    { id: "co_sol_fac",     label: "Solicitud vendedor → Factura",           getDesde: (f) => f.fSolicitud,           getHasta: (f) => f.fFactura },
+  ],
+};
+
+const MS_DIA_TIMELINE = 86_400_000;
+
+function topClave(
+  filas: EntradaConsolidada[],
+  getter: (f: EntradaConsolidada) => string | null,
+): { key: string; n: number } | null {
+  const m = new Map<string, number>();
+  for (const f of filas) {
+    const k = getter(f);
+    if (!k) continue;
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  if (m.size === 0) return null;
+  let top: { key: string; n: number } | null = null;
+  for (const [key, n] of m) {
+    if (!top || n > top.n) top = { key, n };
+  }
+  return top;
+}
+
+export function calcularTimelineProceso(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoId,
+): TimelineProceso {
+  const cuello = CUELLO_POR_PROCESO[proceso];
+  const universo = filas.filter((f) => f.cuelloPrincipal === cuello);
+  const definicion = TRAMOS_DEFINICION[proceso];
+
+  const tramos: TramoMetricas[] = definicion.map((d) => {
+    const conAmbas: EntradaConsolidada[] = [];
+    const dias: number[] = [];
+    let sinDato = 0;
+    for (const f of universo) {
+      const desde = d.getDesde(f);
+      const hasta = d.getHasta(f);
+      if (desde && hasta) {
+        conAmbas.push(f);
+        dias.push((hasta.getTime() - desde.getTime()) / MS_DIA_TIMELINE);
+      } else {
+        sinDato++;
+      }
+    }
+    const prom = promedio(dias);
+    const med = mediana(dias);
+    const p = p90(dias);
+    return {
+      id: d.id,
+      label: d.label,
+      n: conAmbas.length,
+      sinDato,
+      promedioDias: prom !== null ? +prom.toFixed(1) : null,
+      medianaDias: med !== null ? +med.toFixed(1) : null,
+      p90Dias: p !== null ? +p.toFixed(1) : null,
+      topSucursal: topClave(conAmbas, (f) => f.sucursal),
+      topMarca: topClave(conAmbas, (f) => f.marca),
+    };
+  });
+
+  return {
+    proceso,
+    universoEnProceso: universo.length,
+    tramos,
+  };
+}
+
+/**
+ * Devuelve las filas que aportan al cálculo de un tramo específico — es decir,
+ * las que tienen AMBAS fechas válidas. Útil para el drill del tramo.
+ */
+export function filasDeTramo(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoId,
+  tramoId: TramoId,
+): EntradaConsolidada[] {
+  const cuello = CUELLO_POR_PROCESO[proceso];
+  const def = TRAMOS_DEFINICION[proceso].find((t) => t.id === tramoId);
+  if (!def) return [];
+  return filas
+    .filter((f) => f.cuelloPrincipal === cuello)
+    .filter((f) => def.getDesde(f) !== null && def.getHasta(f) !== null);
+}
+
+/** Indica si el cuello (string) tiene una línea de tiempo asociada. */
+export function procesoDeCuello(cuello: CuelloPrincipal): ProcesoId | null {
+  for (const [pid, cu] of Object.entries(CUELLO_POR_PROCESO) as Array<[ProcesoId, CuelloPrincipal]>) {
+    if (cu === cuello) return pid;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Top por dimensión (reusable)
 // ─────────────────────────────────────────────────────────────────────────────
 
