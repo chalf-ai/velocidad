@@ -1140,3 +1140,449 @@ describe("14. Anti-regresión Fase 3", () => {
     assert.equal(lo.length, 0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Funnel cerrado + Backlog + Segmentación temporal
+// ─────────────────────────────────────────────────────────────────────────────
+
+import {
+  filasFunnelCerrado,
+  calcularFunnelCerrado,
+  calcularSegmentacionTramo,
+  calcularBacklogAbierto,
+  agingUltimaSenal,
+  filasDeEtapa,
+  filasSinEtapa,
+  filasDeCubeta,
+  ETAPAS_POR_PROCESO,
+  CUBETAS_BACKLOG,
+} from "../vista-derivados.js";
+
+describe("filasFunnelCerrado — universo extendido (NO filtra por cuello)", () => {
+  test("CN cerrado = todos los entregados, sin importar cuelloPrincipal", () => {
+    const filas: EntradaConsolidada[] = [
+      mkFila({
+        ventaId: 1, vin: "V0000000000000001",
+        entregado: true,
+        cuelloPrincipal: "Logística",  // ← NO es cuello CN, pero igual entra
+        fEntregaReal: new Date(2026, 2, 20),
+      }),
+      mkFila({
+        ventaId: 2, vin: "V0000000000000002",
+        entregado: true,
+        cuelloPrincipal: "Control de Negocio",
+        fEntregaReal: new Date(2026, 2, 21),
+      }),
+      mkFila({
+        ventaId: 3, vin: "V0000000000000003",
+        entregado: false,
+        cuelloPrincipal: "Control de Negocio",
+      }),
+    ];
+    assert.equal(filasFunnelCerrado(filas, "control_negocio").length, 2);
+    assert.equal(filasFunnelCerrado(filas, "logistica").length, 2);
+  });
+
+  test("Comercial cerrado = fSolicitud && fFactura", () => {
+    const filas: EntradaConsolidada[] = [
+      mkFila({ vin: "V01", fSolicitud: new Date(2026, 2, 1), fFactura: new Date(2026, 2, 5) }),
+      mkFila({ vin: "V02", fSolicitud: new Date(2026, 2, 1), fFactura: null }),
+      mkFila({ vin: "V03", fSolicitud: null, fFactura: new Date(2026, 2, 5) }),
+    ];
+    assert.equal(filasFunnelCerrado(filas, "comercial").length, 1);
+  });
+
+  test("Cliente cerrado = fListoParaEntrega && fEntregaReal", () => {
+    const filas: EntradaConsolidada[] = [
+      mkFila({ vin: "V01", fListoParaEntrega: new Date(2026, 2, 10), fEntregaReal: new Date(2026, 2, 12) }),
+      mkFila({ vin: "V02", fListoParaEntrega: null, fEntregaReal: new Date(2026, 2, 12) }),
+      mkFila({ vin: "V03", fListoParaEntrega: new Date(2026, 2, 10), fEntregaReal: null }),
+    ];
+    assert.equal(filasFunnelCerrado(filas, "cliente").length, 1);
+  });
+});
+
+describe("calcularFunnelCerrado", () => {
+  test("CN — etapas con cobertura, transiciones con mediana sobre pares", () => {
+    // 3 entregados; el segundo no tiene patente recibida; el tercero tampoco
+    // tiene fSolicitudInscripcion.
+    const filas: EntradaConsolidada[] = [
+      mkFila({
+        vin: "V01", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 2),
+        fInscripcion: new Date(2026, 2, 3),
+        fPatenteEnviada: new Date(2026, 2, 5),
+        fPatenteRecibida: new Date(2026, 2, 6),
+        fEntregaReal: new Date(2026, 2, 11),
+      }),
+      mkFila({
+        vin: "V02", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 2),
+        fInscripcion: new Date(2026, 2, 3),
+        fPatenteEnviada: new Date(2026, 2, 5),
+        fPatenteRecibida: null,  // ← falta
+        fEntregaReal: new Date(2026, 2, 12),
+      }),
+      mkFila({
+        vin: "V03", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: null,  // ← falta
+        fInscripcion: new Date(2026, 2, 3),
+        fPatenteEnviada: new Date(2026, 2, 5),
+        fPatenteRecibida: new Date(2026, 2, 6),
+        fEntregaReal: new Date(2026, 2, 13),
+      }),
+    ];
+    const cerradas = filasFunnelCerrado(filas, "control_negocio");
+    const funnel = calcularFunnelCerrado(cerradas, "control_negocio");
+
+    assert.equal(funnel.universoCerrado, 3);
+    // Cobertura por etapa
+    const eFacturados = funnel.etapas.find((e) => e.id === "facturados")!;
+    assert.equal(eFacturados.cantidad, 3);
+    const eSolInsc = funnel.etapas.find((e) => e.id === "sol_inscripcion")!;
+    assert.equal(eSolInsc.cantidad, 2);
+    assert.equal(eSolInsc.faltantes, 1);
+    const ePatRec = funnel.etapas.find((e) => e.id === "patente_recibida")!;
+    assert.equal(ePatRec.cantidad, 2);
+    assert.equal(ePatRec.faltantes, 1);
+    const eEntregados = funnel.etapas.find((e) => e.id === "entregados")!;
+    assert.equal(eEntregados.cantidad, 3);
+    assert.equal(eEntregados.pctVsUniverso, 100);
+    assert.equal(eEntregados.esTerminal, true);
+    assert.equal(eEntregados.cantidadHito, 3);  // todos tienen fEntregaReal acá
+
+    // Transición Patente recibida → Entregados
+    const tRecEntr = funnel.transiciones.find(
+      (t) => t.desdeId === "patente_recibida" && t.hastaId === "entregados",
+    )!;
+    // Solo V01 y V03 tienen ambos hitos. Diffs = 5 y 7. Mediana = 6.
+    assert.equal(tRecEntr.n, 2);
+    assert.equal(tRecEntr.medianaDias, 6);
+
+    // Cuello pérdida = etapa con más faltantes (sol_inscripcion y pat_recibida
+    // empatan en 1; ordenar desc por faltantes y luego por orden del array
+    // hace que el primero gane).
+    assert.ok(funnel.cuelloPerdida !== null);
+    assert.equal(funnel.cuelloPerdida!.faltantes, 1);
+
+    // Cuello demora = tramo con mayor mediana (rec→entr = 6, env→rec = 1,
+    // insc→env = 2, sol_insc→insc = 1, fact→sol_insc = 1).
+    assert.equal(funnel.cuelloDemora!.desdeId, "patente_recibida");
+    assert.equal(funnel.cuelloDemora!.hastaId, "entregados");
+  });
+
+  test("Funnel universo vacío no rompe", () => {
+    const funnel = calcularFunnelCerrado([], "control_negocio");
+    assert.equal(funnel.universoCerrado, 0);
+    assert.equal(funnel.cuelloPerdida, null);
+    assert.equal(funnel.cuelloDemora, null);
+    assert.equal(funnel.faltantes.length, 0);
+  });
+
+  test("Etapa terminal — cantidad = universo aunque falten fEntregaReal", () => {
+    // 4 entregados (universo). 1 NO tiene fEntregaReal.
+    const filas: EntradaConsolidada[] = [
+      mkFila({
+        vin: "V01", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 2),
+        fInscripcion: new Date(2026, 2, 3),
+        fPatenteEnviada: new Date(2026, 2, 4),
+        fPatenteRecibida: new Date(2026, 2, 5),
+        fEntregaReal: new Date(2026, 2, 10),
+      }),
+      mkFila({
+        vin: "V02", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 2),
+        fInscripcion: new Date(2026, 2, 3),
+        fPatenteEnviada: new Date(2026, 2, 4),
+        fPatenteRecibida: new Date(2026, 2, 5),
+        fEntregaReal: new Date(2026, 2, 11),
+      }),
+      mkFila({
+        vin: "V03", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 2),
+        fInscripcion: new Date(2026, 2, 3),
+        fPatenteEnviada: new Date(2026, 2, 4),
+        fPatenteRecibida: new Date(2026, 2, 5),
+        fEntregaReal: new Date(2026, 2, 12),
+      }),
+      mkFila({
+        vin: "V04", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 2),
+        fInscripcion: new Date(2026, 2, 3),
+        fPatenteEnviada: new Date(2026, 2, 4),
+        fPatenteRecibida: new Date(2026, 2, 5),
+        fEntregaReal: null, // ← entregado sin fecha entrega real
+      }),
+    ];
+    const cerradas = filasFunnelCerrado(filas, "control_negocio");
+    assert.equal(cerradas.length, 4);
+
+    const funnel = calcularFunnelCerrado(cerradas, "control_negocio");
+    assert.equal(funnel.universoCerrado, 4);
+
+    // La ETAPA terminal mantiene cantidad = universo aunque le falte fecha
+    // entrega real a uno.
+    const eEntregados = funnel.etapas.find((e) => e.id === "entregados")!;
+    assert.equal(eEntregados.esTerminal, true);
+    assert.equal(eEntregados.cantidad, 4);          // = universo
+    assert.equal(eEntregados.pctVsUniverso, 100);
+    assert.equal(eEntregados.faltantes, 0);         // visual
+    assert.equal(eEntregados.cantidadHito, 3);      // campo realmente registrado
+
+    // El FALTANTE del hito SÍ aparece en la lista de cobertura.
+    const sinEntrega = funnel.faltantes.find((f) => f.etapaId === "entregados");
+    assert.ok(sinEntrega, '"Sin fecha entrega real" debe aparecer en faltantes');
+    assert.equal(sinEntrega!.faltantes, 1);
+    assert.equal(sinEntrega!.labelHito, "fecha entrega real");
+
+    // El drill por "Sin entrega real" devuelve la fila sin fecha registrada.
+    const drillSinEntrega = filasSinEtapa(cerradas, "control_negocio", "entregados");
+    assert.equal(drillSinEntrega.length, 1);
+    assert.equal(drillSinEntrega[0].vin, "V04");
+
+    // El drill por la etapa terminal devuelve TODOS los del universo.
+    const drillEtapa = filasDeEtapa(cerradas, "control_negocio", "entregados");
+    assert.equal(drillEtapa.length, 4);
+
+    // La transición Patente recibida → Entregados se calcula SOLO con pares
+    // completos (los 3 que tienen fEntregaReal). n debe ser 3, no 4.
+    const tRecEntr = funnel.transiciones.find(
+      (t) => t.desdeId === "patente_recibida" && t.hastaId === "entregados",
+    )!;
+    assert.equal(tRecEntr.n, 3);
+    // caidaCount visual = count[patente_recibida] - count[entregados]
+    //                   = 4 - 4 = 0 (todos tienen patente recibida en este test)
+    assert.equal(tRecEntr.caidaCount, 0);
+  });
+
+  test("Diferencias negativas (hito posterior antes que el previo) se descartan", () => {
+    const filas: EntradaConsolidada[] = [
+      mkFila({
+        vin: "V01", entregado: true,
+        fFactura: new Date(2026, 2, 5),
+        fSolicitudInscripcion: new Date(2026, 2, 1), // ← antes que factura, anomalía
+        fInscripcion: new Date(2026, 2, 6),
+        fPatenteEnviada: new Date(2026, 2, 7),
+        fPatenteRecibida: new Date(2026, 2, 8),
+        fEntregaReal: new Date(2026, 2, 10),
+      }),
+    ];
+    const funnel = calcularFunnelCerrado(filas, "control_negocio");
+    const tFactSolInsc = funnel.transiciones.find(
+      (t) => t.desdeId === "facturados" && t.hastaId === "sol_inscripcion",
+    )!;
+    // Diff = -4, descartado → n=0
+    assert.equal(tFactSolInsc.n, 0);
+    assert.equal(tFactSolInsc.medianaDias, null);
+  });
+});
+
+describe("calcularSegmentacionTramo", () => {
+  test("Bucketiza por día del mes de la fecha-fin del tramo", () => {
+    // 3 cerrados con tramo Patente recibida → Entrega:
+    //  V01 entrega día  5  →  bucket 1-10,  diff 2 días
+    //  V02 entrega día 15  →  bucket 11-20, diff 4 días
+    //  V03 entrega día 25  →  bucket 21-fin, diff 6 días
+    const filas: EntradaConsolidada[] = [
+      mkFila({
+        vin: "V01", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 1),
+        fInscripcion: new Date(2026, 2, 1),
+        fPatenteEnviada: new Date(2026, 2, 2),
+        fPatenteRecibida: new Date(2026, 2, 3),
+        fEntregaReal: new Date(2026, 2, 5),
+      }),
+      mkFila({
+        vin: "V02", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 1),
+        fInscripcion: new Date(2026, 2, 1),
+        fPatenteEnviada: new Date(2026, 2, 10),
+        fPatenteRecibida: new Date(2026, 2, 11),
+        fEntregaReal: new Date(2026, 2, 15),
+      }),
+      mkFila({
+        vin: "V03", entregado: true,
+        fFactura: new Date(2026, 2, 1),
+        fSolicitudInscripcion: new Date(2026, 2, 1),
+        fInscripcion: new Date(2026, 2, 1),
+        fPatenteEnviada: new Date(2026, 2, 18),
+        fPatenteRecibida: new Date(2026, 2, 19),
+        fEntregaReal: new Date(2026, 2, 25),
+      }),
+    ];
+    const cerradas = filasFunnelCerrado(filas, "control_negocio");
+    const seg = calcularSegmentacionTramo(
+      cerradas, "control_negocio", "patente_recibida", "entregados",
+    )!;
+    assert.equal(seg.global.n, 3);
+    assert.equal(seg.global.medianaDias, 4);
+    assert.equal(seg.dias_1_10.n, 1);
+    assert.equal(seg.dias_1_10.medianaDias, 2);
+    assert.equal(seg.dias_11_20.n, 1);
+    assert.equal(seg.dias_11_20.medianaDias, 4);
+    assert.equal(seg.dias_21_fin.n, 1);
+    assert.equal(seg.dias_21_fin.medianaDias, 6);
+    assert.equal(seg.campoReferencia, "fEntregaReal");
+  });
+
+  test("Tramo inexistente devuelve null", () => {
+    const seg = calcularSegmentacionTramo(
+      [], "control_negocio", "facturados", "no_existe_etapa",
+    );
+    assert.equal(seg, null);
+  });
+});
+
+describe("agingUltimaSenal", () => {
+  test("Devuelve días desde la última fecha registrada del proceso", () => {
+    const hoy = new Date(2026, 4, 20); // mayo 20
+    const f = mkFila({
+      vin: "V01",
+      fFactura: new Date(2026, 4, 1),
+      fSolicitudInscripcion: new Date(2026, 4, 5),
+      fInscripcion: new Date(2026, 4, 10),
+      fPatenteEnviada: new Date(2026, 4, 15), // ← última
+      fPatenteRecibida: null,
+      entregado: false,
+    });
+    assert.equal(agingUltimaSenal(f, "control_negocio", hoy), 5);
+  });
+
+  test("Sin fechas registradas devuelve null", () => {
+    const hoy = new Date(2026, 4, 20);
+    const f = mkFila({
+      vin: "V01",
+      fFactura: null,
+      fSolicitudInscripcion: null,
+      fInscripcion: null,
+      fPatenteEnviada: null,
+      fPatenteRecibida: null,
+      fEntregaReal: null,
+      entregado: false,
+    });
+    assert.equal(agingUltimaSenal(f, "control_negocio", hoy), null);
+  });
+});
+
+describe("calcularBacklogAbierto", () => {
+  test("CN — cubetas por hito faltante con aging mediano", () => {
+    const hoy = new Date(2026, 4, 20);
+    const filas: EntradaConsolidada[] = [
+      // 2 sin patente recibida (con env): aging 5 y 10
+      mkFila({
+        vin: "V01", entregado: false,
+        fFactura: new Date(2026, 4, 1),
+        fSolicitudInscripcion: new Date(2026, 4, 2),
+        fInscripcion: new Date(2026, 4, 5),
+        fPatenteEnviada: new Date(2026, 4, 15), // última: hoy-15 = 5d
+        fPatenteRecibida: null,
+        cuelloPrincipal: "Control de Negocio",
+      }),
+      mkFila({
+        vin: "V02", entregado: false,
+        fFactura: new Date(2026, 4, 1),
+        fSolicitudInscripcion: new Date(2026, 4, 2),
+        fInscripcion: new Date(2026, 4, 5),
+        fPatenteEnviada: new Date(2026, 4, 10), // 10d
+        fPatenteRecibida: null,
+        cuelloPrincipal: "Control de Negocio",
+      }),
+      // 1 sin solicitud inscripción
+      mkFila({
+        vin: "V03", entregado: false,
+        fFactura: new Date(2026, 4, 18), // 2d
+        fSolicitudInscripcion: null,
+        cuelloPrincipal: "Control de Negocio",
+      }),
+    ];
+    const backlog = calcularBacklogAbierto(filas, "control_negocio", hoy);
+    assert.equal(backlog.universoAbierto, 3);
+    const sinPatRec = backlog.cubetas.find((c) => c.id === "sin_patente_recibida")!;
+    assert.equal(sinPatRec.cantidad, 2);
+    assert.equal(sinPatRec.agingMedianoDias, 7.5); // (5+10)/2
+    const sinSolInsc = backlog.cubetas.find((c) => c.id === "sin_sol_inscripcion")!;
+    assert.equal(sinSolInsc.cantidad, 1);
+    assert.equal(sinSolInsc.agingMedianoDias, 2);
+    // Peor cubeta = mayor aging mediano = sin_patente_recibida
+    assert.equal(backlog.cubetaPeorId, "sin_patente_recibida");
+  });
+
+  test("Cliente — cubeta `demorados` solo cuenta los que superan UMBRAL", () => {
+    const hoy = new Date(2026, 4, 20);
+    const filas: EntradaConsolidada[] = [
+      mkFila({
+        vin: "V01", entregado: false,
+        fListoParaEntrega: new Date(2026, 4, 18), // aging 2d, NO demora (≤7d)
+        fEntregaReal: null,
+      }),
+      mkFila({
+        vin: "V02", entregado: false,
+        fListoParaEntrega: new Date(2026, 4, 5), // aging 15d, SÍ demora
+        fEntregaReal: null,
+      }),
+    ];
+    const backlog = calcularBacklogAbierto(filas, "cliente", hoy);
+    const listo = backlog.cubetas.find((c) => c.id === "listo_no_entregado")!;
+    assert.equal(listo.cantidad, 2);
+    const demorados = backlog.cubetas.find((c) => c.id === "demorados")!;
+    assert.equal(demorados.cantidad, 1);
+    assert.equal(demorados.agingMedianoDias, 15);
+  });
+});
+
+describe("filasDeEtapa / filasSinEtapa / filasDeCubeta", () => {
+  test("filasDeEtapa devuelve cerrados con hito presente", () => {
+    const filas = [
+      mkFila({ vin: "V01", entregado: true, fPatenteRecibida: new Date(2026, 2, 1) }),
+      mkFila({ vin: "V02", entregado: true, fPatenteRecibida: null }),
+    ];
+    const cerradas = filasFunnelCerrado(filas, "control_negocio");
+    assert.equal(
+      filasDeEtapa(cerradas, "control_negocio", "patente_recibida").length, 1);
+    assert.equal(
+      filasSinEtapa(cerradas, "control_negocio", "patente_recibida").length, 1);
+  });
+
+  test("filasDeCubeta — demorados respeta UMBRAL en cliente", () => {
+    const hoy = new Date(2026, 4, 20);
+    const filas = [
+      mkFila({
+        vin: "V01", entregado: false,
+        fListoParaEntrega: new Date(2026, 4, 18), fEntregaReal: null,
+      }),
+      mkFila({
+        vin: "V02", entregado: false,
+        fListoParaEntrega: new Date(2026, 4, 5), fEntregaReal: null,
+      }),
+    ];
+    const r = filasDeCubeta(filas, "cliente", "demorados", hoy);
+    assert.equal(r.length, 1);
+    assert.equal(r[0].vin, "V02");
+  });
+});
+
+describe("Constantes declarativas — sanidad", () => {
+  test("ETAPAS_POR_PROCESO tiene 6 etapas CN, 7 Log, 2 Com, 2 Cli", () => {
+    assert.equal(ETAPAS_POR_PROCESO.control_negocio.length, 6);
+    assert.equal(ETAPAS_POR_PROCESO.logistica.length, 7);
+    assert.equal(ETAPAS_POR_PROCESO.comercial.length, 2);
+    assert.equal(ETAPAS_POR_PROCESO.cliente.length, 2);
+  });
+
+  test("CUBETAS_BACKLOG tiene cubetas declaradas por proceso", () => {
+    assert.ok(CUBETAS_BACKLOG.control_negocio.length >= 4);
+    assert.ok(CUBETAS_BACKLOG.logistica.length >= 4);
+    assert.ok(CUBETAS_BACKLOG.comercial.length >= 1);
+    assert.ok(CUBETAS_BACKLOG.cliente.length >= 2);
+  });
+});

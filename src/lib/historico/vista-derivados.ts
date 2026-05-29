@@ -1001,3 +1001,726 @@ export function fingerprintGlobal(cruce: ResultadoCruce): FingerprintGlobal {
     velocidadBucket: e1.distribucionVelocidad,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Funnel histórico cerrado + Backlog abierto + Segmentación temporal
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Tres lecturas separadas, tres universos, tres cálculos distintos:
+//
+//   A. Funnel histórico cerrado  → universoFunnel(filas, proceso)
+//      Mide cobertura por etapa y mediana/p90 por tramo.
+//      Mediana se calcula SOLO sobre pares con AMBOS hitos no nulos.
+//      Si a un cerrado le falta un hito: NO participa de medianas; SÍ aparece
+//      en `faltantes`.
+//
+//   B. Backlog abierto            → filasAbierto(filas, proceso)
+//      Mide cantidad por cubeta y aging mediano/p90 (días desde última señal).
+//      Nunca usa medianas históricas.
+//
+//   C. Segmentación temporal      → calcularSegmentacionTramo
+//      Solo aplica al universo cerrado. Bucketiza por día del mes de la
+//      FECHA-FIN del tramo (la fecha del hito posterior).
+//
+// Nada de esto contamina al otro. Las medianas históricas se calculan SOLO
+// con cerrados completos; el aging del backlog se calcula SOLO con abiertos.
+
+/**
+ * Etapa del funnel — campo de fecha del hito + label legible.
+ *
+ * Una etapa puede ser TERMINAL (esTerminal=true). Las terminales son etapas
+ * cuya cantidad visual del funnel coincide con el UNIVERSO CERRADO (por
+ * construcción del universo) — no con el conteo de filas que tienen el campo.
+ *
+ * Ejemplo: en Control de Negocio el universo es `entregado === true`. La
+ * etapa "Entregados" siempre vale el universo (es 100%). Pero el campo
+ * `fEntregaReal` puede estar null en algunos casos entregados — esos casos
+ * aparecen en la cobertura como "Sin fecha entrega real" (faltante), no como
+ * una reducción del count de la etapa terminal.
+ *
+ * `labelHito` permite distinguir el rótulo VISUAL del rótulo en la lista de
+ * faltantes ("Entregados" en el funnel vs "fecha entrega real" en la
+ * cobertura).
+ */
+export interface EtapaProceso {
+  id: string;
+  label: string;
+  campo: keyof EntradaConsolidada;
+  /** Si true, la cantidad visual = universoCerrado (no depende del campo). */
+  esTerminal?: boolean;
+  /** Rótulo usado en la lista de faltantes — defaultea a `label`. */
+  labelHito?: string;
+}
+
+/**
+ * Etapas en orden cronológico por proceso.
+ *
+ * Las etapas TERMINALES marcadas con `esTerminal: true` son las que coinciden
+ * con el universo cerrado por construcción del universo:
+ *  - CN cerrado = `entregado === true` → la etapa "Entregados" es terminal.
+ *  - Logística cerrado = `entregado === true` → "Entrega" es terminal.
+ *  - Comercial cerrado = `fSolicitud && fFactura` → ambas etapas se llenan
+ *    por definición (no se marcan terminales — el campo está garantizado).
+ *  - Cliente cerrado = `fListoParaEntrega && fEntregaReal` → idem.
+ *
+ * Solo CN y Logística distinguen `entregado` (bool semántico) de `fEntregaReal`
+ * (fecha que puede faltar). Por eso ahí necesitamos el flag terminal.
+ */
+export const ETAPAS_POR_PROCESO: Record<ProcesoOperacional, EtapaProceso[]> = {
+  control_negocio: [
+    { id: "facturados",          label: "Facturados",            campo: "fFactura" },
+    { id: "sol_inscripcion",     label: "Solicitud inscripción", campo: "fSolicitudInscripcion" },
+    { id: "inscripcion",         label: "Inscripción",           campo: "fInscripcion" },
+    { id: "patente_enviada",     label: "Patente enviada",       campo: "fPatenteEnviada" },
+    { id: "patente_recibida",    label: "Patente recibida",      campo: "fPatenteRecibida" },
+    {
+      id: "entregados", label: "Entregados", campo: "fEntregaReal",
+      esTerminal: true, labelHito: "fecha entrega real",
+    },
+  ],
+  logistica: [
+    { id: "sol_roma",            label: "Solicitud ROMA",        campo: "fSolicitud" },
+    { id: "resp_log",            label: "Respuesta logística",   campo: "fRespuestaLogistica" },
+    { id: "sol_bodega",          label: "Solicitud bodega",      campo: "fSolicitudBodega" },
+    { id: "ing_bodega",          label: "Ingreso bodega",        campo: "fIngresoBodega" },
+    { id: "planificacion",       label: "Planificación",         campo: "fPlanificacionFisica" },
+    { id: "salida_fisica",       label: "Salida física",         campo: "fSalidaFisica" },
+    {
+      id: "entrega", label: "Entrega", campo: "fEntregaReal",
+      esTerminal: true, labelHito: "fecha entrega real",
+    },
+  ],
+  comercial: [
+    { id: "solicitud",           label: "Solicitud",             campo: "fSolicitud" },
+    { id: "factura",             label: "Factura",               campo: "fFactura" },
+  ],
+  cliente: [
+    { id: "listo",               label: "Listo para entrega",    campo: "fListoParaEntrega" },
+    { id: "entrega",             label: "Entrega",               campo: "fEntregaReal" },
+  ],
+};
+
+/**
+ * Universo del FUNNEL CERRADO por proceso (distinto a `filasCerrado`):
+ *
+ *   - control_negocio: entregado === true (NO filtra por cuelloPrincipal).
+ *     Mide la sub-cadena documental dentro de TODOS los cerrados.
+ *   - logistica:        entregado === true (idem).
+ *   - comercial:        fSolicitud && fFactura  (ambos hitos del proceso).
+ *   - cliente:          fListoParaEntrega && fEntregaReal.
+ */
+export function filasFunnelCerrado(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+): EntradaConsolidada[] {
+  switch (proceso) {
+    case "control_negocio":
+      return filas.filter((f) => f.entregado);
+    case "logistica":
+      return filas.filter((f) => f.entregado);
+    case "comercial":
+      return filas.filter((f) => f.fSolicitud !== null && f.fFactura !== null);
+    case "cliente":
+      return filas.filter((f) => f.fListoParaEntrega !== null && f.fEntregaReal !== null);
+  }
+}
+
+// ── Helpers numéricos ─────────────────────────────────────────────────────
+
+function tieneFecha(f: EntradaConsolidada, campo: keyof EntradaConsolidada): boolean {
+  const v = f[campo];
+  return v instanceof Date;
+}
+
+function fechaDe(f: EntradaConsolidada, campo: keyof EntradaConsolidada): Date | null {
+  const v = f[campo];
+  return v instanceof Date ? v : null;
+}
+
+const MS_POR_DIA = 86_400_000;
+
+function diasEntre(a: Date, b: Date): number {
+  // Redondea al día más cercano. Acepta diferencias negativas (las descarta el caller).
+  return Math.round((b.getTime() - a.getTime()) / MS_POR_DIA);
+}
+
+// Reusamos los helpers estadísticos definidos arriba (mediana, p90, promedio)
+// para mantener coherencia numérica con el resto del archivo.
+
+function redondear2(x: number | null): number | null {
+  return x == null ? null : +x.toFixed(2);
+}
+
+// ── Funnel cerrado ────────────────────────────────────────────────────────
+
+export interface EtapaCalculada {
+  id: string;
+  label: string;
+  campo: keyof EntradaConsolidada;
+  /** Si la etapa es terminal del universo cerrado (cantidad = universo). */
+  esTerminal: boolean;
+  /** Rótulo usado en la lista de faltantes. */
+  labelHito: string;
+  /**
+   * Cantidad visual del funnel. Para etapas TERMINALES = universoCerrado
+   * (independiente del campo). Para etapas normales = filas con campo no nulo.
+   */
+  cantidad: number;
+  /** cantidad / universoCerrado. 0..100. */
+  pctVsUniverso: number;
+  /**
+   * Faltantes VISUALES del funnel = universoCerrado - cantidad. Para
+   * terminales es 0 por construcción.
+   */
+  faltantes: number;
+  /**
+   * Filas del universo con el campo realmente registrado (no nulo). Para
+   * etapas no-terminales coincide con `cantidad`. Para terminales puede ser
+   * menor — los faltantes a nivel HITO (no nivel etapa visual) se calculan
+   * desde `universoCerrado - cantidadHito`.
+   */
+  cantidadHito: number;
+}
+
+export interface TransicionCalculada {
+  desdeId: string;
+  hastaId: string;
+  desdeLabel: string;
+  hastaLabel: string;
+  /**
+   * count(desde) - count(hasta). Positivo = caída de cobertura (sale del flujo).
+   * Negativo = brecha de registro inversa (la etapa posterior tiene más
+   * registros que la previa — es DATA, no operación; el UI lo enmarca como
+   * "X del universo no registraron {desdeLabel}").
+   */
+  caidaCount: number;
+  /** Filas con AMBOS hitos no nulos (universo de cálculo de tiempos). */
+  n: number;
+  medianaDias: number | null;
+  promedioDias: number | null;
+  p90Dias: number | null;
+}
+
+export interface FaltanteEtapa {
+  etapaId: string;
+  /** Rótulo de la etapa visual (ej. "Entregados"). */
+  etapaLabel: string;
+  /** Rótulo del hito faltante (ej. "fecha entrega real"). Usado en "Sin {…}". */
+  labelHito: string;
+  faltantes: number;
+  pctUniverso: number;
+  /** Etapa previa (de dónde se perdió el registro). null para la primera etapa. */
+  desdeEtapaId: string | null;
+  desdeEtapaLabel: string | null;
+}
+
+export interface FunnelCerrado {
+  proceso: ProcesoOperacional;
+  universoCerrado: number;
+  etapas: EtapaCalculada[];
+  transiciones: TransicionCalculada[];
+  /**
+   * Etapa con más faltantes (mayor `faltantes`). null si universoCerrado=0
+   * o todas las etapas tienen 0 faltantes.
+   * Es la "Mayor pérdida de cobertura" — independiente del cálculo de demora.
+   */
+  cuelloPerdida: FaltanteEtapa | null;
+  /**
+   * Tramo con mayor `medianaDias`. null si no hay ningún tramo con datos.
+   * Es la "Mayor demora histórica" — independiente del cálculo de cobertura.
+   */
+  cuelloDemora: TransicionCalculada | null;
+  /** Faltantes ordenados desc por `faltantes`, filtrados > 0. */
+  faltantes: FaltanteEtapa[];
+}
+
+/**
+ * Cálculo del funnel histórico cerrado para un proceso operacional.
+ *
+ * Tres lecturas separadas — NUNCA se mezclan:
+ *
+ *  A. Velocidad histórica — `transiciones[].medianaDias / promedioDias / p90Dias`
+ *     se calculan SOLO con filas donde AMBOS hitos están registrados y la
+ *     diferencia es ≥ 0. Las filas con un hito faltante NO participan.
+ *
+ *  B. Cobertura del hito — `etapas[].cantidadHito` es el conteo REAL de filas
+ *     con el campo del hito registrado. Los `faltantes` en la lista de
+ *     ranking se calculan desde `universoCerrado - cantidadHito`, independiente
+ *     de si la etapa es terminal.
+ *
+ *  C. Brecha de registro (etapa terminal) — `etapas[].cantidad` para una etapa
+ *     terminal = universoCerrado (no depende del campo). El campo en sí puede
+ *     estar faltando en algunos casos; eso aparece en la cobertura como
+ *     "Sin {labelHito}" pero NO reduce el count visual del funnel terminal.
+ *
+ *  `cuelloPerdida` y `cuelloDemora` son dos señales independientes que pueden
+ *  caer en etapas/tramos distintos.
+ */
+export function calcularFunnelCerrado(
+  filasCerradas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+): FunnelCerrado {
+  const etapasDef = ETAPAS_POR_PROCESO[proceso];
+  const universoCerrado = filasCerradas.length;
+
+  // Cobertura por etapa. cantidadHito = filas con el campo no nulo (verdad
+  // operacional). cantidad = cantidad visual del funnel (=universo para
+  // terminales, = cantidadHito para no-terminales).
+  const etapas: EtapaCalculada[] = etapasDef.map((e) => {
+    let cantidadHito = 0;
+    for (const f of filasCerradas) {
+      if (tieneFecha(f, e.campo)) cantidadHito++;
+    }
+    const esTerminal = !!e.esTerminal;
+    const cantidad = esTerminal ? universoCerrado : cantidadHito;
+    const faltantesVisual = universoCerrado - cantidad; // 0 si terminal
+    const pct = universoCerrado > 0 ? (cantidad / universoCerrado) * 100 : 0;
+    return {
+      id: e.id,
+      label: e.label,
+      campo: e.campo,
+      esTerminal,
+      labelHito: e.labelHito ?? e.label,
+      cantidad,
+      pctVsUniverso: +pct.toFixed(2),
+      faltantes: faltantesVisual,
+      cantidadHito,
+    };
+  });
+
+  // Transiciones — mediana/p90/promedio sobre pares completos con diff ≥ 0.
+  // Las terminales NO cambian este cálculo: se sigue exigiendo que AMBOS
+  // hitos (incluido el terminal) tengan fecha real para entrar al cómputo.
+  const transiciones: TransicionCalculada[] = [];
+  for (let i = 0; i < etapasDef.length - 1; i++) {
+    const desde = etapasDef[i];
+    const hasta = etapasDef[i + 1];
+    const diffs: number[] = [];
+    for (const f of filasCerradas) {
+      const a = fechaDe(f, desde.campo);
+      const b = fechaDe(f, hasta.campo);
+      if (a && b) {
+        const d = diasEntre(a, b);
+        if (d >= 0) diffs.push(d);
+      }
+    }
+    transiciones.push({
+      desdeId: desde.id,
+      hastaId: hasta.id,
+      desdeLabel: desde.label,
+      hastaLabel: hasta.label,
+      // caidaCount visual usa la cantidad de cada etapa (terminal o no).
+      caidaCount: etapas[i].cantidad - etapas[i + 1].cantidad,
+      n: diffs.length,
+      medianaDias: redondear2(mediana(diffs)),
+      promedioDias: redondear2(promedio(diffs)),
+      p90Dias: redondear2(p90(diffs)),
+    });
+  }
+
+  // Faltantes a nivel HITO ordenados desc. Usan `cantidadHito` (no `cantidad`),
+  // así que "Sin fecha entrega real" entra en el ranking aunque la etapa
+  // terminal visual sea 100%. `labelHito` se usa para el rótulo "Sin {…}".
+  const faltantes: FaltanteEtapa[] = etapas
+    .map<FaltanteEtapa>((e, i) => {
+      const faltantesHito = universoCerrado - e.cantidadHito;
+      return {
+        etapaId: e.id,
+        etapaLabel: e.label,
+        labelHito: e.labelHito,
+        faltantes: faltantesHito,
+        pctUniverso:
+          universoCerrado > 0 ? +((faltantesHito / universoCerrado) * 100).toFixed(2) : 0,
+        desdeEtapaId: i > 0 ? etapas[i - 1].id : null,
+        desdeEtapaLabel: i > 0 ? etapas[i - 1].label : null,
+      };
+    })
+    .filter((f) => f.faltantes > 0)
+    .sort((a, b) => b.faltantes - a.faltantes);
+
+  const cuelloPerdida = faltantes.length > 0 ? faltantes[0] : null;
+
+  // Cuello demora — tramo con mayor mediana (solo entre tramos con datos).
+  let cuelloDemora: TransicionCalculada | null = null;
+  for (const t of transiciones) {
+    if (t.medianaDias == null) continue;
+    if (!cuelloDemora || (cuelloDemora.medianaDias ?? -1) < t.medianaDias) {
+      cuelloDemora = t;
+    }
+  }
+
+  return {
+    proceso,
+    universoCerrado,
+    etapas,
+    transiciones,
+    cuelloPerdida,
+    cuelloDemora,
+    faltantes,
+  };
+}
+
+// ── Segmentación temporal ─────────────────────────────────────────────────
+
+export type BucketMes = "dias_1_10" | "dias_11_20" | "dias_21_fin";
+
+export interface MetricasTramo {
+  n: number;
+  medianaDias: number | null;
+  promedioDias: number | null;
+  p90Dias: number | null;
+}
+
+export interface SegmentacionTramo {
+  proceso: ProcesoOperacional;
+  desdeId: string;
+  hastaId: string;
+  desdeLabel: string;
+  hastaLabel: string;
+  /** Hito cuya fecha bucketiza el día del mes. Siempre es el hito posterior. */
+  campoReferencia: keyof EntradaConsolidada;
+  global: MetricasTramo;
+  dias_1_10: MetricasTramo;
+  dias_11_20: MetricasTramo;
+  dias_21_fin: MetricasTramo;
+}
+
+function bucketDelDia(d: number): BucketMes {
+  if (d <= 10) return "dias_1_10";
+  if (d <= 20) return "dias_11_20";
+  return "dias_21_fin";
+}
+
+function metricasDe(diffs: number[]): MetricasTramo {
+  return {
+    n: diffs.length,
+    medianaDias: redondear2(mediana(diffs)),
+    promedioDias: redondear2(promedio(diffs)),
+    p90Dias: redondear2(p90(diffs)),
+  };
+}
+
+/**
+ * Segmenta un tramo histórico por el día del mes de la FECHA-FIN del tramo
+ * (la fecha del hito posterior). Devuelve null si el tramo no existe o si
+ * el proceso no es válido.
+ *
+ * Convención: para "Patente recibida → Entrega" se bucketiza por el día del
+ * mes de fEntregaReal. Permite leer atochamientos de cierre de mes en el
+ * calendario operativo.
+ */
+export function calcularSegmentacionTramo(
+  filasCerradas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+  desdeId: string,
+  hastaId: string,
+): SegmentacionTramo | null {
+  const etapas = ETAPAS_POR_PROCESO[proceso];
+  const desde = etapas.find((e) => e.id === desdeId);
+  const hasta = etapas.find((e) => e.id === hastaId);
+  if (!desde || !hasta) return null;
+
+  const globalDiffs: number[] = [];
+  const bucketDiffs: Record<BucketMes, number[]> = {
+    dias_1_10: [],
+    dias_11_20: [],
+    dias_21_fin: [],
+  };
+
+  for (const f of filasCerradas) {
+    const a = fechaDe(f, desde.campo);
+    const b = fechaDe(f, hasta.campo);
+    if (!a || !b) continue;
+    const d = diasEntre(a, b);
+    if (d < 0) continue;
+    globalDiffs.push(d);
+    const bucket = bucketDelDia(b.getDate());
+    bucketDiffs[bucket].push(d);
+  }
+
+  return {
+    proceso,
+    desdeId,
+    hastaId,
+    desdeLabel: desde.label,
+    hastaLabel: hasta.label,
+    campoReferencia: hasta.campo,
+    global: metricasDe(globalDiffs),
+    dias_1_10: metricasDe(bucketDiffs.dias_1_10),
+    dias_11_20: metricasDe(bucketDiffs.dias_11_20),
+    dias_21_fin: metricasDe(bucketDiffs.dias_21_fin),
+  };
+}
+
+// ── Backlog abierto ───────────────────────────────────────────────────────
+
+/**
+ * Definición declarativa de cubeta de backlog. El predicado opera sobre la
+ * fila completa; la cubeta no obliga a "no estar entregado" (eso lo hace
+ * el universo `filasAbierto` ya filtrado por el caller).
+ *
+ * Las cubetas pueden ser NO mutuamente excluyentes — una fila abierta con
+ * varios hitos faltantes aparece en varias cubetas. El UI lo explicita
+ * con texto.
+ */
+export interface CubetaDef {
+  id: string;
+  label: string;
+  predicado: (f: EntradaConsolidada) => boolean;
+}
+
+export interface CubetaCalculada {
+  id: string;
+  label: string;
+  cantidad: number;
+  agingMedianoDias: number | null;
+  agingP90Dias: number | null;
+  agingPromedioDias: number | null;
+}
+
+export interface BacklogAbierto {
+  proceso: ProcesoOperacional;
+  universoAbierto: number;
+  /** Aging mediano sobre el universo abierto entero. */
+  agingMedianoGlobal: number | null;
+  agingP90Global: number | null;
+  cubetas: CubetaCalculada[];
+  /** id de la cubeta con peor aging mediano (mayor número). null si no hay. */
+  cubetaPeorId: string | null;
+}
+
+/**
+ * Aging del caso = días desde la ÚLTIMA SEÑAL REGISTRADA del proceso (la
+ * fecha más reciente entre los campos de las etapas del proceso). Si no
+ * hay ninguna fecha del proceso, retorna null.
+ */
+export function agingUltimaSenal(
+  f: EntradaConsolidada,
+  proceso: ProcesoOperacional,
+  hoy: Date,
+): number | null {
+  const etapas = ETAPAS_POR_PROCESO[proceso];
+  let ultima: Date | null = null;
+  for (const e of etapas) {
+    const d = fechaDe(f, e.campo);
+    if (d && (!ultima || d.getTime() > ultima.getTime())) ultima = d;
+  }
+  if (!ultima) return null;
+  const dias = diasEntre(ultima, hoy);
+  return dias < 0 ? 0 : dias;
+}
+
+/** Cubetas por proceso. Lista declarativa, no exhaustiva. */
+export const CUBETAS_BACKLOG: Record<ProcesoOperacional, CubetaDef[]> = {
+  control_negocio: [
+    {
+      id: "cuello_vivo_cn",
+      label: "Cuello vivo Control de Negocio",
+      predicado: (f) => f.cuelloPrincipal === "Control de Negocio",
+    },
+    {
+      id: "sin_patente_recibida",
+      label: "Sin patente recibida (con env)",
+      predicado: (f) => f.fPatenteEnviada !== null && f.fPatenteRecibida === null,
+    },
+    {
+      id: "sin_patente_enviada",
+      label: "Sin patente enviada (con inscripción)",
+      predicado: (f) => f.fInscripcion !== null && f.fPatenteEnviada === null,
+    },
+    {
+      id: "sin_inscripcion",
+      label: "Sin inscripción (con sol. inscripción)",
+      predicado: (f) => f.fSolicitudInscripcion !== null && f.fInscripcion === null,
+    },
+    {
+      id: "sin_sol_inscripcion",
+      label: "Sin solicitud inscripción",
+      predicado: (f) => f.fFactura !== null && f.fSolicitudInscripcion === null,
+    },
+  ],
+  logistica: [
+    {
+      id: "cuello_vivo_log",
+      label: "Cuello vivo Logística",
+      predicado: (f) => f.cuelloPrincipal === "Logística",
+    },
+    {
+      id: "sin_salida",
+      label: "Sin salida física",
+      predicado: (f) =>
+        (f.fIngresoBodega !== null && f.fSalidaFisica === null) || f.tieneSinSalida,
+    },
+    {
+      id: "en_bodega_sin_planificacion",
+      label: "En bodega sin planificación",
+      predicado: (f) =>
+        f.fIngresoBodega !== null && f.fPlanificacionFisica === null,
+    },
+    {
+      id: "sin_planificacion",
+      label: "Sin planificación",
+      predicado: (f) =>
+        f.fSolicitudBodega !== null && f.fPlanificacionFisica === null,
+    },
+    {
+      id: "sin_sol_roma",
+      label: "Sin solicitud ROMA",
+      predicado: (f) => f.fSolicitud === null,
+    },
+  ],
+  comercial: [
+    {
+      id: "sol_sin_factura",
+      label: "Solicitud sin factura",
+      predicado: (f) => f.fSolicitud !== null && f.fFactura === null,
+    },
+    {
+      id: "listo_sin_autorizacion",
+      label: "Listo sin autorización completa",
+      predicado: (f) => {
+        if (f.fListoParaEntrega === null) return false;
+        const aut = (f.autorizacionEntrega ?? "").trim();
+        const sol = (f.solEntrega ?? "").trim();
+        return aut !== "Si" || sol !== "Si";
+      },
+    },
+  ],
+  cliente: [
+    {
+      id: "listo_no_entregado",
+      label: "Listos no entregados",
+      predicado: (f) => f.fListoParaEntrega !== null && f.fEntregaReal === null,
+    },
+    {
+      id: "demorados",
+      label: `Demorados (>${UMBRAL_DIAS_CLIENTE_DEMORADO}d sin entrega)`,
+      // El predicado de demora se aplica DENTRO de calcularBacklogAbierto
+      // porque depende de `hoy`. Acá dejamos un sentinel; el cálculo real
+      // usa el agingUltimaSenal del propio cliente para determinar demora.
+      predicado: (f) => f.fListoParaEntrega !== null && f.fEntregaReal === null,
+    },
+  ],
+};
+
+/**
+ * Calcula backlog abierto por proceso: cantidad por cubeta + aging mediano/p90.
+ *
+ * El caller debe pasar `filasAbiertas` = filasAbierto(filasFiltradas, proceso).
+ * `hoy` se inyecta para que los tests sean deterministas.
+ */
+export function calcularBacklogAbierto(
+  filasAbiertas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+  hoy: Date = new Date(),
+): BacklogAbierto {
+  const cubetasDef = CUBETAS_BACKLOG[proceso];
+  const universoAbierto = filasAbiertas.length;
+
+  // Aging global del universo abierto.
+  const agingsGlobales: number[] = [];
+  for (const f of filasAbiertas) {
+    const a = agingUltimaSenal(f, proceso, hoy);
+    if (a !== null) agingsGlobales.push(a);
+  }
+
+  // Para cliente.demorados, filtramos por aging > UMBRAL.
+  const cubetas: CubetaCalculada[] = cubetasDef.map((def) => {
+    const agings: number[] = [];
+    let cantidad = 0;
+    for (const f of filasAbiertas) {
+      if (!def.predicado(f)) continue;
+      const a = agingUltimaSenal(f, proceso, hoy);
+      // Cliente.demorados — refinamiento: solo cuenta si aging > UMBRAL.
+      if (def.id === "demorados") {
+        if (a === null || a <= UMBRAL_DIAS_CLIENTE_DEMORADO) continue;
+      }
+      cantidad++;
+      if (a !== null) agings.push(a);
+    }
+    return {
+      id: def.id,
+      label: def.label,
+      cantidad,
+      agingMedianoDias: redondear2(mediana(agings)),
+      agingP90Dias: redondear2(p90(agings)),
+      agingPromedioDias: redondear2(promedio(agings)),
+    };
+  });
+
+  // Peor cubeta = mayor aging mediano (ignora cubetas vacías).
+  let cubetaPeorId: string | null = null;
+  let peorMediana = -Infinity;
+  for (const c of cubetas) {
+    if (c.cantidad === 0 || c.agingMedianoDias == null) continue;
+    if (c.agingMedianoDias > peorMediana) {
+      peorMediana = c.agingMedianoDias;
+      cubetaPeorId = c.id;
+    }
+  }
+
+  return {
+    proceso,
+    universoAbierto,
+    agingMedianoGlobal: redondear2(mediana(agingsGlobales)),
+    agingP90Global: redondear2(p90(agingsGlobales)),
+    cubetas,
+    cubetaPeorId,
+  };
+}
+
+/**
+ * Drill por cubeta: filas abiertas que satisfacen el predicado de la
+ * cubeta. Incluye el filtro por aging > UMBRAL para `demorados`.
+ */
+export function filasDeCubeta(
+  filasAbiertas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+  cubetaId: string,
+  hoy: Date = new Date(),
+): EntradaConsolidada[] {
+  const def = CUBETAS_BACKLOG[proceso].find((c) => c.id === cubetaId);
+  if (!def) return [];
+  if (cubetaId === "demorados") {
+    return filasAbiertas.filter((f) => {
+      if (!def.predicado(f)) return false;
+      const a = agingUltimaSenal(f, proceso, hoy);
+      return a !== null && a > UMBRAL_DIAS_CLIENTE_DEMORADO;
+    });
+  }
+  return filasAbiertas.filter(def.predicado);
+}
+
+/**
+ * Drill por etapa del funnel:
+ *  - Etapa NORMAL: filas del universo cerrado con el campo del hito registrado.
+ *  - Etapa TERMINAL: el universo cerrado entero (la cantidad visual es el
+ *    universo, no el conteo del campo). Útil para "ver los N entregados".
+ *    Si querés solo los entregados CON `fEntregaReal` registrada, usá la
+ *    fila correspondiente en faltantes (drill de "Sin fecha entrega real")
+ *    o filtrá manualmente.
+ */
+export function filasDeEtapa(
+  filasCerradas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+  etapaId: string,
+): EntradaConsolidada[] {
+  const etapa = ETAPAS_POR_PROCESO[proceso].find((e) => e.id === etapaId);
+  if (!etapa) return [];
+  if (etapa.esTerminal) return filasCerradas.slice();
+  return filasCerradas.filter((f) => tieneFecha(f, etapa.campo));
+}
+
+/**
+ * Drill por faltante (hito no registrado en el cerrado): filas del
+ * universo cerrado SIN ese hito registrado.
+ */
+export function filasSinEtapa(
+  filasCerradas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+  etapaId: string,
+): EntradaConsolidada[] {
+  const etapa = ETAPAS_POR_PROCESO[proceso].find((e) => e.id === etapaId);
+  if (!etapa) return [];
+  return filasCerradas.filter((f) => !tieneFecha(f, etapa.campo));
+}
