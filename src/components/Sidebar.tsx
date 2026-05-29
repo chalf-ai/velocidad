@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
+  Activity,
   AlertTriangle,
   Bug,
   CalendarClock,
@@ -61,6 +62,7 @@ const NAV_OPS: NavItem[] = [
   { href: "/tescar", label: "TESCAR", icon: TestTube2 },
   { href: "/vencimientos", label: "Vencimientos", icon: CalendarClock },
   { href: "/alertas", label: "Alertas", icon: AlertTriangle },
+  { href: "/velocidad-operacional", label: "Vista Histórica · 3 ejes", icon: Activity },
 ];
 
 const NAV_TEC: NavItem[] = [

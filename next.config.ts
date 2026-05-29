@@ -6,6 +6,21 @@ const nextConfig: NextConfig = {
   experimental: {
     // Turbopack en dev ya está activado via `next dev --turbopack`
   },
+  /**
+   * Resolver `.js` → `.ts/.tsx` para imports ESM-style entre módulos del motor
+   * histórico (src/lib/historico). El motor escribe `from "./parser.js"` para
+   * mantener compatibilidad con Node ESM en los tests y diagnósticos (node
+   * --test bajo `nodenext`). Sin este alias webpack falla al bundlear esos
+   * módulos para la página /velocidad-operacional. Cambio aditivo: imports
+   * extensionless del resto del proyecto siguen funcionando.
+   */
+  webpack: (config) => {
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias ?? {}),
+      ".js": [".ts", ".tsx", ".js"],
+    };
+    return config;
+  },
 };
 
 export default nextConfig;
