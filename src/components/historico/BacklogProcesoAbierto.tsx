@@ -97,7 +97,7 @@ export function BacklogProcesoAbierto({
                       disabled={c.cantidad === 0}
                       className={cn(
                         "w-full flex items-center gap-3 rounded-lg px-3 py-2 text-left transition ring-1 ring-inset",
-                        c.cantidad === 0 && "opacity-50 cursor-not-allowed",
+                        c.cantidad === 0 && "text-[--color-fg-dim] cursor-not-allowed",
                         activa
                           ? "bg-[--color-accent-dim] text-[--color-accent] ring-[--color-accent]"
                           : esPeor && c.cantidad > 0

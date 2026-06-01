@@ -36,8 +36,11 @@ import { useHistoricoStore, type CargaRomaMeta } from "./store-cliente.js";
 
 export type TipoArchivoHistorico = "roma" | "actas" | "schiapp" | "kar" | "desconocido";
 
-const RE_ROMA = /(^|[\s_/-])log\b.*\.xlsx?$/i;
-const RE_ACTAS = /\bactas?\b.*\.xlsx?$/i;
+const RE_ROMA = /(?:^|[\s_/-])log(?![a-z]).*\.xlsx?$/i;
+// Mismo patrón de boundary que detectar-fuente.RE_NOMBRE_ACTAS: usa lookbehind/
+// lookahead de letras para que casos como "ACTAS_2026_05" o "Acta_individual"
+// matcheen (el `\b` no funciona ahí porque `_` es word char).
+const RE_ACTAS = /(?<![a-z])actas?(?![a-z]).*\.xlsx?$/i;
 const RE_SCHIAPP = /schiapp/i;
 const RE_KAR = /kar[-\s_]?logistics?/i;
 

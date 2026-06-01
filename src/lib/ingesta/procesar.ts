@@ -22,6 +22,14 @@ import { parseRomiaFile } from "../parser/romia-logistica";
 import { limpiarVIN } from "../parser/venta-apc";
 import { useExcelStore } from "../store";
 import { useIngestaStore, type FuenteId, type IngestaMeta } from "./store";
+// Puente al motor histórico: el dispatcher histórico parsea con los parsers
+// nuevos y popula `useHistoricoStore` para alimentar /velocidad-operacional.
+// Una sola ingesta, muchas vistas.
+import {
+  procesarArchivos as procesarArchivosHistorico,
+  limpiarTodo as limpiarTodoHistorico,
+} from "../historico/cargar-archivos-cliente";
+import { useHistoricoStore } from "../historico/store-cliente";
 
 export interface IngestaResultado {
   archivoNombre: string;
@@ -78,7 +86,7 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
     const buf = await file.arrayBuffer();
     // Solo el encabezado: barato aun en archivos grandes.
     const wbHead = XLSX.read(buf, { type: "array", sheetRows: 1 });
-    const det = detectarFuente(wbHead);
+    const det = detectarFuente(wbHead, file.name);
     tipo = det.tipo;
     base.tipo = det.tipo;
     base.motivoDeteccion = det.motivo;
@@ -188,7 +196,48 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
         const omit = parsed.report.filasTotales - parsed.report.filasProcesadas;
         if (omit > 0) adv.push(`${omit} filas sin VIN`);
         aplicarMeta({ fuenteId, archivoNombre: file.name, archivoSize: file.size, fechaCarga: new Date(), fechaCorte, registros: parsed.report.filasProcesadas, vins, advertencias: adv });
+        // ── DOBLE PARSEO ROMA: si es agenda ROMA, alimentar también el motor
+        //    histórico (parseRomaMensualBuffer + consolidador). El parser legacy
+        //    sigue ahí para el cockpit; el motor nuevo se entera del mismo file.
+        if (parsed.kind === "ROMA") {
+          await procesarArchivosHistorico([file]);
+        }
         return { ...base, tipo: fuenteId, fuenteId, ok: true, reemplazo, registros: parsed.report.filasProcesadas, vins, fechaCorte, advertencias: adv };
+      }
+
+      case "actas": {
+        // Fuente nueva del módulo histórico. La parsea y carga el dispatcher
+        // histórico (parseActasBuffer + consolidador) y luego registramos meta
+        // para que `/ingesta` muestre la tarjeta como cargada.
+        const reemplazoActas = useHistoricoStore.getState().cargaActas != null;
+        await procesarArchivosHistorico([file]);
+        const hs = useHistoricoStore.getState();
+        const carga = hs.cargaActas;
+        const corteFecha = hs.historicoActas?.cortes.at(-1)?.corteFecha ?? null;
+        const advActas: string[] = [];
+        if (!carga) {
+          advActas.push("El dispatcher histórico no pudo procesar el archivo.");
+        }
+        aplicarMeta({
+          fuenteId: "actas",
+          archivoNombre: file.name,
+          archivoSize: file.size,
+          fechaCarga: new Date(),
+          fechaCorte: corteFecha,
+          registros: carga?.filas ?? 0,
+          vins: carga?.filas ?? null,
+          advertencias: advActas,
+        });
+        return {
+          ...base,
+          fuenteId: "actas",
+          ok: !!carga,
+          reemplazo: reemplazoActas,
+          registros: carga?.filas ?? 0,
+          vins: carga?.filas ?? null,
+          fechaCorte: corteFecha,
+          advertencias: advActas,
+        };
       }
 
       case "tescar": {
@@ -248,6 +297,10 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
           vins,
           advertencias: adv,
         });
+        // ── Puente histórico para ROMIA: el dispatcher histórico parsea el
+        //    archivo y construye el snapshot ROMIA del cruce. El archivo se
+        //    parsea dos veces (legacy + histórico) — costo aceptado.
+        await procesarArchivosHistorico([file]);
         return {
           ...base,
           tipo: fuenteId,
@@ -314,11 +367,22 @@ export function limpiarFuente(id: FuenteId): void {
       ing.clearMeta("logistica_stli");
       ing.clearMeta("romia_schiapp");
       ing.clearMeta("romia_kar");
+      // El histórico se invalida en cascada: dejamos cualquier histórico que
+      // dependiera de esa fuente fuera del cruce. La forma menos invasiva
+      // es limpiar todo el motor histórico — el usuario lo repuebla
+      // recargando los archivos correspondientes.
+      limpiarTodoHistorico();
+      ing.clearMeta("actas");
+      return;
+    case "actas":
+      // Limpieza específica de Actas: borra del histórico y libera el cruce.
+      limpiarTodoHistorico();
+      ing.clearMeta("actas");
       return;
   }
 }
 
-/** Limpia TODO (datos + metadatos). */
+/** Limpia TODO (datos + metadatos), incluido el motor histórico. */
 export function limpiarTodo(): void {
   const s = useExcelStore.getState();
   s.reset();
@@ -327,6 +391,7 @@ export function limpiarTodo(): void {
   s.resetProvisiones();
   s.clearLogistica();
   useIngestaStore.getState().clearAll();
+  limpiarTodoHistorico();
 }
 
 export interface ResumenCortes {

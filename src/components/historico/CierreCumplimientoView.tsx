@@ -216,7 +216,7 @@ export function CierreCumplimientoView({ eje2, eje3, focoCierre, onSelectFoco }:
               onClick={() => onSelectFoco(toggle(focoCierre, { tipo: "calidad", valor: b.id }))}
               className={cn(
                 "rounded-xl p-4 text-left ring-1 ring-inset transition",
-                disabled && "opacity-50 cursor-not-allowed",
+                disabled && "text-[--color-fg-dim] cursor-not-allowed",
                 activa
                   ? "bg-[--color-accent-dim] ring-[--color-accent]"
                   : cn(t.bg, t.ring),

@@ -19,6 +19,7 @@ import type {
 } from "./cruce-roma-actas.js";
 import type { CalidadCierre } from "./consolidador-actas.js";
 import type { NivelDocumental } from "./parser-actas.js";
+import { normalizarMarcaOperacional } from "../selectors/owner-operacional";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Filtros
@@ -50,9 +51,14 @@ export function filtrarFilas(
   cruce: ResultadoCruce,
   f: FiltrosVista,
 ): EntradaConsolidada[] {
+  // Pre-computar el objetivo de marca normalizado UNA vez fuera del loop
+  // para que el matching tolere variantes de casing/espacios entre el filtro
+  // (que puede venir del header global con valores canónicos como "GEELY"
+  // o "KIA MOTORS") y los strings literales del row (que vienen del archivo).
+  const marcaObjetivo = f.marca ? normalizarMarcaOperacional(f.marca) : null;
   const out: EntradaConsolidada[] = [];
   for (const r of cruce.filas) {
-    if (f.marca && r.marca !== f.marca) continue;
+    if (marcaObjetivo && normalizarMarcaOperacional(r.marca) !== marcaObjetivo) continue;
     if (f.sucursal && r.sucursal !== f.sucursal) continue;
     if (f.vendedor && r.vendedor !== f.vendedor) continue;
     if (f.entregado === "si" && !r.entregado) continue;
@@ -1364,6 +1370,72 @@ export function calcularFunnelCerrado(
 
 export type BucketMes = "dias_1_10" | "dias_11_20" | "dias_21_fin";
 
+// ── Filtro temporal global (aplica al modo histórico cerrado) ────────────
+
+/**
+ * Periodo del filtro temporal. "global" no filtra. El resto bucketiza por
+ * día del mes o semana del mes de la fecha-fin del proceso (la fecha del
+ * último hito del proceso — para CN/Log/Cliente = fEntregaReal; para
+ * Comercial = fFactura).
+ */
+export type PeriodoTemporal =
+  | "global"
+  | "dias_1_10"
+  | "dias_11_20"
+  | "dias_21_fin"
+  | "sem_1"
+  | "sem_2"
+  | "sem_3"
+  | "sem_4";
+
+/**
+ * Campo de referencia para el filtro temporal por proceso. Es la fecha
+ * que termina el ciclo del proceso (la última etapa cronológica).
+ */
+export function campoReferenciaPeriodo(
+  proceso: ProcesoOperacional,
+): keyof EntradaConsolidada {
+  const etapas = ETAPAS_POR_PROCESO[proceso];
+  return etapas[etapas.length - 1].campo;
+}
+
+function semanaDelMes(d: number): 1 | 2 | 3 | 4 {
+  if (d <= 7) return 1;
+  if (d <= 14) return 2;
+  if (d <= 21) return 3;
+  return 4;
+}
+
+/**
+ * Filtra filas cerradas por periodo temporal. La referencia es el día
+ * del mes del campo de fin del proceso. Si la fila no tiene la fecha
+ * registrada, NO entra en el filtro (queda fuera).
+ *
+ * Para periodo "global" devuelve las filas tal cual.
+ */
+export function filtrarPorPeriodo(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+  periodo: PeriodoTemporal,
+): EntradaConsolidada[] {
+  if (periodo === "global") return filas;
+  const campo = campoReferenciaPeriodo(proceso);
+  return filas.filter((f) => {
+    const d = f[campo];
+    if (!(d instanceof Date)) return false;
+    const dia = d.getDate();
+    switch (periodo) {
+      case "dias_1_10":  return dia <= 10;
+      case "dias_11_20": return dia >= 11 && dia <= 20;
+      case "dias_21_fin": return dia >= 21;
+      case "sem_1": return semanaDelMes(dia) === 1;
+      case "sem_2": return semanaDelMes(dia) === 2;
+      case "sem_3": return semanaDelMes(dia) === 3;
+      case "sem_4": return semanaDelMes(dia) === 4;
+    }
+  });
+}
+
 export interface MetricasTramo {
   n: number;
   medianaDias: number | null;
@@ -1724,3 +1796,633 @@ export function filasSinEtapa(
   if (!etapa) return [];
   return filasCerradas.filter((f) => !tieneFecha(f, etapa.campo));
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VISTA POR MES DE FACTURA — modelo operacional aprobado
+//
+// La pantalla /velocidad-operacional opera sobre el universo de autos
+// facturados en un mes dado (filtro principal). Las funciones acá:
+//
+//  · mesesFacturaDisponibles + filtrarPorMesFactura: filtro principal.
+//  · OWNER_POR_TRAMO / OWNER_POR_HITO: responsable operativo conceptual
+//    de cada tramo / hito (no es un campo del row — es regla del negocio).
+//  · UMBRAL_TRAMO + semaforoTramo: semáforo verde/amarillo/rojo por tramo.
+//  · topPorCampo + montoRetenido: ranking de sucursales/responsables con
+//    cantidad, monto retenido (valorFactura) y mediana de aging.
+//  · calcularFunnelPorFactura: estructura completa etapas+tramos para el
+//    componente FunnelHitosFactura.
+//  · faltantesPorProceso: cards de "Sin X" con top + monto.
+//  · backlogFacturados: vista paralela "facturados sin entregar".
+//  · cierreYCumplimientoStats: stats del proceso Cierre y Cumplimiento.
+//
+// Reutiliza TRAMOS_DEFINICION y ETAPAS_POR_PROCESO existentes para no
+// duplicar conocimiento. Cero side effects; cero React.
+// ═════════════════════════════════════════════════════════════════════════════
+
+export type MesFacturaKey = string; // "YYYY-MM"
+
+export interface MesFacturaOption {
+  key: MesFacturaKey;
+  label: string;
+  count: number;
+}
+
+const MESES_ES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+function mesFacturaKey(f: EntradaConsolidada): MesFacturaKey | null {
+  const d = f.fFactura;
+  if (!(d instanceof Date)) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+function labelMesFactura(key: MesFacturaKey): string {
+  const [y, m] = key.split("-");
+  const idx = Number(m) - 1;
+  if (idx < 0 || idx > 11) return key;
+  return `${MESES_ES[idx]} ${y}`;
+}
+
+/**
+ * Meses con al menos una factura, orden desc (más reciente primero).
+ *
+ * Acepta `ResultadoCruce` (para uso macro/headless) o `EntradaConsolidada[]`
+ * directamente (para alimentar con un universo YA filtrado por marca/sucursal
+ * globales — así el counter del selector coincide con el universo real).
+ */
+export function mesesFacturaDisponibles(
+  fuente: ResultadoCruce | EntradaConsolidada[],
+): MesFacturaOption[] {
+  const filas = Array.isArray(fuente) ? fuente : fuente.filas;
+  const m = new Map<MesFacturaKey, number>();
+  for (const f of filas) {
+    const k = mesFacturaKey(f);
+    if (!k) continue;
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  return Array.from(m, ([key, count]) => ({ key, count, label: labelMesFactura(key) }))
+    .sort((a, b) => b.key.localeCompare(a.key));
+}
+
+/** Filtra filas por mes de factura. `null` = todos los meses (passthrough). */
+export function filtrarPorMesFactura(
+  filas: EntradaConsolidada[],
+  mes: MesFacturaKey | null,
+): EntradaConsolidada[] {
+  if (!mes) return filas;
+  return filas.filter((f) => mesFacturaKey(f) === mes);
+}
+
+/**
+ * ¿La fila queda FUERA del flujo de autos nuevos?
+ *
+ * Dos universos quedan fuera de Control de Negocio (inscripción/patente nueva)
+ * y Logística (traslado físico desde fábrica/bodega central):
+ *
+ *   1. USADOS  — autos transferidos (no inscritos nuevos), físicamente ya en
+ *      la sucursal donde se tomaron en parte de pago.
+ *   2. MAYORISTA — venta mayorista de usados (subcategoría operacional del
+ *      universo de usados; tiene su propio flujo de liquidación, no pasa por
+ *      la cadena CN ni por logística retail).
+ *
+ * Detección DEFENSIVA: combina la canonización oficial (`normalizarMarcaOperacional`
+ * canoniza la familia USADOS / VU EN NUEVOS / VU EN USADOS) con una búsqueda
+ * textual en el campo `marca` por si en el cruce ROMA-Actas aparece "MAYORISTA"
+ * o "LIQUIDACIÓN" como dimensión independiente.
+ *
+ * SÍ aplican (passthrough) a Comercial (vendedor solicita / factura), Cliente
+ * (entrega) y Cierre y Cumplimiento (calidad documental).
+ */
+export function esUsadoHistorico(f: EntradaConsolidada): boolean {
+  if (normalizarMarcaOperacional(f.marca) === "USADOS") return true;
+  const m = (f.marca ?? "").toUpperCase();
+  if (m.includes("MAYORISTA") || m.includes("MAYORIST")) return true;
+  if (m.includes("LIQUIDA")) return true;
+  return false;
+}
+
+/**
+ * Aplica la regla "Usados + Mayorista fuera de CN/Logística" sobre un universo
+ * de filas.
+ *
+ *   · control_negocio / logistica → excluye usados + mayorista.
+ *   · comercial / cliente / cierre_y_cumplimiento → passthrough (incluye todo).
+ *
+ * Centralizada acá para que todos los selectores y vistas la apliquen igual.
+ */
+export function aplicarRegladeUsados(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoOperacional | "cierre_y_cumplimiento" | null,
+): EntradaConsolidada[] {
+  if (proceso === "control_negocio" || proceso === "logistica") {
+    return filas.filter((f) => !esUsadoHistorico(f));
+  }
+  return filas;
+}
+
+// ── Responsable operativo conceptual por tramo / hito ────────────────────────
+//
+// Etiquetas legibles que aparecen en la UI como "Responsable operativo". No
+// es responsable individual (eso lo dice `vendedor` o la sucursal) — es el
+// ROL del negocio que avanza ese paso del proceso.
+
+export type ResponsableOperativo =
+  | "Admin / Control de Negocio"
+  | "Control de Negocio"
+  | "Registro Civil (externo)"
+  | "Vendedor"
+  | "Vendedor / Sucursal"
+  | "Logística"
+  | "STLI / Bodega"
+  | "Logística / Transporte"
+  | "Cierre / Control de Negocio";
+
+export const OWNER_POR_TRAMO: Record<ProcesoOperacional, Record<string, ResponsableOperativo>> = {
+  control_negocio: {
+    cn_fac_solins:   "Admin / Control de Negocio",
+    cn_solins_ins:   "Control de Negocio",
+    cn_ins_paten:    "Control de Negocio",
+    cn_paten_patrec: "Registro Civil (externo)",
+    cn_patrec_ent:   "Vendedor / Sucursal",
+  },
+  logistica: {
+    lo_sol_resp:     "Logística",
+    lo_resp_solbod:  "Logística",
+    lo_solbod_ing:   "STLI / Bodega",
+    lo_ing_plan:     "STLI / Bodega",
+    lo_plan_sal:     "STLI / Bodega",
+    lo_sal_ent:      "Logística / Transporte",
+  },
+  comercial: {
+    co_sol_fac:      "Vendedor",
+  },
+  cliente: {
+    cl_listo_ent:    "Vendedor / Sucursal",
+  },
+};
+
+export const OWNER_POR_HITO: Record<ProcesoOperacional, Record<string, ResponsableOperativo>> = {
+  control_negocio: {
+    facturados:       "Vendedor",
+    sol_inscripcion:  "Admin / Control de Negocio",
+    inscripcion:      "Control de Negocio",
+    patente_enviada:  "Control de Negocio",
+    patente_recibida: "Registro Civil (externo)",
+    entregados:       "Vendedor / Sucursal",
+  },
+  logistica: {
+    sol_roma:        "Vendedor",
+    resp_log:        "Logística",
+    sol_bodega:      "Logística",
+    ing_bodega:      "STLI / Bodega",
+    planificacion:   "STLI / Bodega",
+    salida_fisica:   "STLI / Bodega",
+    entrega:         "Logística / Transporte",
+  },
+  comercial: {
+    solicitud:       "Vendedor",
+    factura:         "Vendedor",
+  },
+  cliente: {
+    listo:           "Cierre / Control de Negocio",
+    entrega:         "Vendedor / Sucursal",
+  },
+};
+
+// ── Semáforo por tramo (umbrales calibrables) ────────────────────────────────
+
+export type Semaforo = "verde" | "amarillo" | "rojo";
+
+export interface UmbralTramo {
+  /** Mediana ≤ verdeHasta → verde. */
+  verdeHasta: number;
+  /** Mediana ≤ amarilloHasta → amarillo; > → rojo. */
+  amarilloHasta: number;
+}
+
+/**
+ * Umbrales por tramo (días). Valores iniciales sensatos — calibrables viendo
+ * la pantalla real. Si un tramo no está en el map, se asume verde.
+ */
+export const UMBRAL_TRAMO: Record<ProcesoOperacional, Record<string, UmbralTramo>> = {
+  control_negocio: {
+    cn_fac_solins:   { verdeHasta: 3,  amarilloHasta: 7 },
+    cn_solins_ins:   { verdeHasta: 5,  amarilloHasta: 10 },
+    cn_ins_paten:    { verdeHasta: 3,  amarilloHasta: 7 },
+    cn_paten_patrec: { verdeHasta: 7,  amarilloHasta: 15 },
+    cn_patrec_ent:   { verdeHasta: 5,  amarilloHasta: 10 },
+  },
+  logistica: {
+    lo_sol_resp:     { verdeHasta: 1,  amarilloHasta: 3 },
+    lo_resp_solbod:  { verdeHasta: 2,  amarilloHasta: 5 },
+    lo_solbod_ing:   { verdeHasta: 3,  amarilloHasta: 7 },
+    lo_ing_plan:     { verdeHasta: 3,  amarilloHasta: 7 },
+    lo_plan_sal:     { verdeHasta: 5,  amarilloHasta: 10 },
+    lo_sal_ent:      { verdeHasta: 5,  amarilloHasta: 12 },
+  },
+  comercial: {
+    co_sol_fac:      { verdeHasta: 3,  amarilloHasta: 7 },
+  },
+  cliente: {
+    cl_listo_ent:    { verdeHasta: 3,  amarilloHasta: 7 },
+  },
+};
+
+export function semaforoTramo(mediana: number | null, u: UmbralTramo | undefined): Semaforo {
+  if (mediana == null || !u) return "verde";
+  if (mediana <= u.verdeHasta) return "verde";
+  if (mediana <= u.amarilloHasta) return "amarillo";
+  return "rojo";
+}
+
+// ── Monto retenido + top sucursales / responsables ───────────────────────────
+
+/** Suma `valorFactura` (null → 0). UI muestra nota chica de cobertura del dato. */
+export function montoRetenido(filas: EntradaConsolidada[]): number {
+  let s = 0;
+  for (const f of filas) s += f.valorFactura ?? 0;
+  return s;
+}
+
+export interface TopItem {
+  key: string;
+  count: number;
+  monto: number;
+  medianaDias: number | null;
+}
+
+/** Mediana de un array numérico (`null` si vacío). Helper local. */
+function medianaSimple(xs: number[]): number | null {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+}
+
+/**
+ * Ranking por (sucursal | vendedor) con count + monto + medianaDias.
+ *
+ *   `getDias` opcional: si provisto, calcula mediana de días por grupo (usado
+ *   para "top responsables más lentos del tramo" o "aging medio del backlog").
+ *   Si no, `medianaDias` queda null.
+ *
+ *   Orden: primero por monto desc, luego por count desc (empate visual = más
+ *   plata retenida primero, criterio aprobado).
+ */
+export function topPorCampo(
+  filas: EntradaConsolidada[],
+  campo: "sucursal" | "vendedor",
+  n: number,
+  getDias?: (f: EntradaConsolidada) => number | null,
+): TopItem[] {
+  const acc = new Map<string, { count: number; monto: number; dias: number[] }>();
+  for (const f of filas) {
+    const k = (f[campo] ?? "").trim();
+    if (!k) continue;
+    const e = acc.get(k) ?? { count: 0, monto: 0, dias: [] };
+    e.count++;
+    e.monto += f.valorFactura ?? 0;
+    if (getDias) {
+      const d = getDias(f);
+      if (d != null && Number.isFinite(d)) e.dias.push(d);
+    }
+    acc.set(k, e);
+  }
+  return Array.from(acc, ([key, v]) => ({
+    key,
+    count: v.count,
+    monto: v.monto,
+    medianaDias: getDias ? medianaSimple(v.dias) : null,
+  }))
+    .sort((a, b) => b.monto - a.monto || b.count - a.count)
+    .slice(0, n);
+}
+
+// ── Funnel por factura ───────────────────────────────────────────────────────
+
+const MS_DIA_FAC = 86_400_000;
+
+function diasEntreFac(a: Date | null, b: Date | null): number | null {
+  if (!(a instanceof Date) || !(b instanceof Date)) return null;
+  return (b.getTime() - a.getTime()) / MS_DIA_FAC;
+}
+
+function p75(xs: number[]): number | null {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(s.length * 0.75))];
+}
+
+export interface EtapaFunnel {
+  id: string;
+  label: string;
+  count: number;
+  pct: number;
+  faltantes: number;
+  monto: number;
+  owner: ResponsableOperativo;
+  /** Etapa terminal (entregados/entrega): la cobertura se mide por `entregado`. */
+  esTerminal: boolean;
+}
+
+export interface TramoFunnel {
+  id: string;
+  label: string;
+  owner: ResponsableOperativo;
+  mediana: number | null;
+  promedio: number | null;
+  p90: number | null;
+  /** Pares completos en el tramo. */
+  n: number;
+  /** Casos del tramo cuyo delta > p75 — usados para top de "más lentos". */
+  lentosCount: number;
+  semaforo: Semaforo;
+  topSucursalesLentas: TopItem[];
+  topResponsablesLentos: TopItem[];
+}
+
+export interface FunnelPorFactura {
+  proceso: ProcesoOperacional;
+  universo: number;
+  monto: number;
+  etapas: EtapaFunnel[];
+  tramos: TramoFunnel[];
+}
+
+/**
+ * Funnel sobre el universo de facturados del mes:
+ *  · Cada ETAPA cuenta cobertura (% de los facturados que llegaron al hito).
+ *  · Cada TRAMO calcula mediana/promedio/p90/n sobre pares completos.
+ *  · Para cada tramo, los "lentos" (días > p75 del tramo) alimentan el ranking
+ *    de top sucursales / responsables.
+ *
+ * El universo `filas` debe venir YA filtrado por mes de factura.
+ */
+export function calcularFunnelPorFactura(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+): FunnelPorFactura {
+  const universo = filas.length;
+  const monto = montoRetenido(filas);
+  const etapasDef = ETAPAS_POR_PROCESO[proceso];
+  const tramosDef = TRAMOS_DEFINICION[proceso];
+
+  const etapas: EtapaFunnel[] = etapasDef.map((e) => {
+    let count = 0;
+    let m = 0;
+    for (const f of filas) {
+      const tiene = e.esTerminal ? f.entregado : (f[e.campo] instanceof Date);
+      if (tiene) {
+        count++;
+        m += f.valorFactura ?? 0;
+      }
+    }
+    return {
+      id: e.id,
+      label: e.label,
+      count,
+      pct: universo > 0 ? (count / universo) * 100 : 0,
+      faltantes: universo - count,
+      monto: m,
+      owner: OWNER_POR_HITO[proceso][e.id] ?? "Vendedor",
+      esTerminal: !!e.esTerminal,
+    };
+  });
+
+  const tramos: TramoFunnel[] = tramosDef.map((d) => {
+    const dias: number[] = [];
+    const pares: EntradaConsolidada[] = [];
+    for (const f of filas) {
+      const x = diasEntreFac(d.getDesde(f), d.getHasta(f));
+      if (x != null && x >= 0) {
+        dias.push(x);
+        pares.push(f);
+      }
+    }
+    const med = medianaSimple(dias);
+    const prom = dias.length ? dias.reduce((a, b) => a + b, 0) / dias.length : null;
+    const sortedP90 = [...dias].sort((a, b) => a - b);
+    const p90v = dias.length
+      ? sortedP90[Math.min(sortedP90.length - 1, Math.floor(sortedP90.length * 0.9))]
+      : null;
+    const corte = p75(dias);
+    const lentos: EntradaConsolidada[] = [];
+    const diasPorFila = new Map<EntradaConsolidada, number>();
+    for (let i = 0; i < pares.length; i++) {
+      diasPorFila.set(pares[i], dias[i]);
+      if (corte != null && dias[i] > corte) lentos.push(pares[i]);
+    }
+    const u = UMBRAL_TRAMO[proceso][d.id];
+    return {
+      id: d.id,
+      label: d.label,
+      owner: OWNER_POR_TRAMO[proceso][d.id] ?? "Vendedor",
+      mediana: med,
+      promedio: prom,
+      p90: p90v,
+      n: dias.length,
+      lentosCount: lentos.length,
+      semaforo: semaforoTramo(med, u),
+      topSucursalesLentas: topPorCampo(lentos, "sucursal", 5, (f) => diasPorFila.get(f) ?? null),
+      topResponsablesLentos: topPorCampo(lentos, "vendedor", 5, (f) => diasPorFila.get(f) ?? null),
+    };
+  });
+
+  return { proceso, universo, monto, etapas, tramos };
+}
+
+// ── Faltantes del proceso ────────────────────────────────────────────────────
+
+export interface FaltanteHito {
+  id: string;
+  label: string;
+  /** Campo de la fila que define el hito. */
+  campo: keyof EntradaConsolidada;
+  count: number;
+  monto: number;
+  pct: number;
+  owner: ResponsableOperativo;
+  topSucursales: TopItem[];
+  topResponsables: TopItem[];
+  filas: EntradaConsolidada[];
+}
+
+/**
+ * Faltantes por proceso: para cada hito del proceso, las filas del universo
+ * que NO lo tienen registrado. Universo = `filas` (ya filtradas por mes).
+ *
+ * Las etapas terminales (entregados/entrega) NO se incluyen como "faltante"
+ * separado — el backlog del mes los cubre con su propio bloque.
+ */
+export function faltantesPorProceso(
+  filas: EntradaConsolidada[],
+  proceso: ProcesoOperacional,
+): FaltanteHito[] {
+  const universo = filas.length;
+  const etapas = ETAPAS_POR_PROCESO[proceso].filter((e) => !e.esTerminal);
+  return etapas.map((e) => {
+    const sin: EntradaConsolidada[] = [];
+    let monto = 0;
+    for (const f of filas) {
+      const v = f[e.campo];
+      if (!(v instanceof Date)) {
+        sin.push(f);
+        monto += f.valorFactura ?? 0;
+      }
+    }
+    return {
+      id: e.id,
+      label: `Sin ${e.label.toLowerCase()}`,
+      campo: e.campo,
+      count: sin.length,
+      monto,
+      pct: universo > 0 ? (sin.length / universo) * 100 : 0,
+      owner: OWNER_POR_HITO[proceso][e.id] ?? "Vendedor",
+      topSucursales: topPorCampo(sin, "sucursal", 5),
+      topResponsables: topPorCampo(sin, "vendedor", 5),
+      filas: sin,
+    };
+  });
+}
+
+// ── Backlog facturados ───────────────────────────────────────────────────────
+
+export type ModoBacklog = "este_mes" | "acumulado";
+
+export interface AgrupadoBacklog {
+  key: string;
+  count: number;
+  monto: number;
+  agingMedio: number | null;
+}
+
+export interface BacklogStats {
+  count: number;
+  monto: number;
+  medianaAging: number | null;
+  porSucursal: AgrupadoBacklog[];
+  porResponsable: AgrupadoBacklog[];
+  /** "Cuello dominante" = último hito documental pendiente del caso. */
+  porCuello: { id: string; label: string; count: number; monto: number }[];
+  filas: EntradaConsolidada[];
+}
+
+/** Días desde la factura hasta `hoy` (positivo). null si no hay fFactura. */
+function agingDesdeFactura(f: EntradaConsolidada, hoy: Date): number | null {
+  if (!(f.fFactura instanceof Date)) return null;
+  return Math.max(0, Math.floor((hoy.getTime() - f.fFactura.getTime()) / MS_DIA_FAC));
+}
+
+/**
+ * "Cuello dominante" del backlog: el primer hito NO cumplido (en orden
+ * cronológico de etapas) entre los hitos no-terminales de Control de Negocio.
+ * Se usa como dimensión de agrupamiento porque es lo que destraba el caso.
+ */
+function cuelloDominante(f: EntradaConsolidada): { id: string; label: string } {
+  const etapas = ETAPAS_POR_PROCESO.control_negocio;
+  for (const e of etapas) {
+    if (e.esTerminal) continue;
+    if (!(f[e.campo] instanceof Date)) {
+      return { id: e.id, label: `Sin ${e.label.toLowerCase()}` };
+    }
+  }
+  return { id: "listo_pendiente_entrega", label: "Listo · pendiente de entrega" };
+}
+
+/**
+ * Backlog: filas facturadas y NO entregadas al corte (hoy). El universo `filas`
+ * ya viene filtrado por el caller — si modo "este_mes", llegan solo las del mes;
+ * si modo "acumulado", llegan TODAS las del cruce (sin filtro de mes).
+ */
+export function backlogFacturados(
+  filas: EntradaConsolidada[],
+  hoy: Date = new Date(),
+): BacklogStats {
+  const backlog = filas.filter((f) => f.fFactura instanceof Date && !f.entregado);
+  const monto = montoRetenido(backlog);
+  const agings: number[] = [];
+  const diasPorFila = new Map<EntradaConsolidada, number>();
+  for (const f of backlog) {
+    const a = agingDesdeFactura(f, hoy);
+    if (a != null) {
+      agings.push(a);
+      diasPorFila.set(f, a);
+    }
+  }
+  const medianaAging = medianaSimple(agings);
+
+  const porSucursal = topPorCampo(backlog, "sucursal", 8, (f) => diasPorFila.get(f) ?? null)
+    .map((t) => ({ key: t.key, count: t.count, monto: t.monto, agingMedio: t.medianaDias }));
+  const porResponsable = topPorCampo(backlog, "vendedor", 8, (f) => diasPorFila.get(f) ?? null)
+    .map((t) => ({ key: t.key, count: t.count, monto: t.monto, agingMedio: t.medianaDias }));
+
+  // Cuello dominante (por hito CN faltante en orden cronológico).
+  const cuelloAcc = new Map<string, { label: string; count: number; monto: number }>();
+  for (const f of backlog) {
+    const c = cuelloDominante(f);
+    const e = cuelloAcc.get(c.id) ?? { label: c.label, count: 0, monto: 0 };
+    e.count++;
+    e.monto += f.valorFactura ?? 0;
+    cuelloAcc.set(c.id, e);
+  }
+  const porCuello = Array.from(cuelloAcc, ([id, v]) => ({ id, ...v }))
+    .sort((a, b) => b.monto - a.monto || b.count - a.count);
+
+  return {
+    count: backlog.length,
+    monto,
+    medianaAging,
+    porSucursal,
+    porResponsable,
+    porCuello,
+    filas: backlog,
+  };
+}
+
+// ── Cierre y Cumplimiento ────────────────────────────────────────────────────
+
+export interface CierreCumplStats {
+  count: number;
+  /** Distribución por nivel de calidad de cierre. */
+  distribucion: Record<CalidadCierre | "no_evaluable", number>;
+  /** Casos con problema (inconsistente o huérfano) → topY $. */
+  problemaCount: number;
+  problemaMonto: number;
+  topSucursalesProblema: TopItem[];
+  topResponsablesProblema: TopItem[];
+  filasProblema: EntradaConsolidada[];
+}
+
+/**
+ * Cierre y Cumplimiento: opera sobre el universo (ya filtrado por mes de
+ * factura). Cuenta distribución por calidad, separa los casos "con problema"
+ * (inconsistente | huérfano) y los rankea por sucursal/responsable.
+ */
+export function cierreYCumplimientoStats(filas: EntradaConsolidada[]): CierreCumplStats {
+  const dist: Record<CalidadCierre | "no_evaluable", number> = {
+    correcto: 0,
+    inconsistente: 0,
+    huerfano: 0,
+    no_evaluable: 0,
+  };
+  const problema: EntradaConsolidada[] = [];
+  for (const f of filas) {
+    const c = f.ejeCalidadCierre ?? "no_evaluable";
+    dist[c]++;
+    if (c === "inconsistente" || c === "huerfano") problema.push(f);
+  }
+  return {
+    count: filas.length,
+    distribucion: dist,
+    problemaCount: problema.length,
+    problemaMonto: montoRetenido(problema),
+    topSucursalesProblema: topPorCampo(problema, "sucursal", 5),
+    topResponsablesProblema: topPorCampo(problema, "vendedor", 5),
+    filasProblema: problema,
+  };
+}
+
