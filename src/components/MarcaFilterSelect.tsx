@@ -10,7 +10,7 @@ import { marcasOperacionalesDisponibles } from "@/lib/selectors/owner-operaciona
  * Selector GLOBAL de marca operacional (en el Header). Persiste la selección.
  * "Todas las marcas" = sin filtro (macro). Visible en todas las pantallas.
  */
-export function MarcaFilterSelect() {
+export function MarcaFilterSelect({ onHeader = false }: { onHeader?: boolean }) {
   const data = useExcelStore((s) => s.data);
   const marca = useMarcaFilter((s) => s.marca);
   const setMarca = useMarcaFilter((s) => s.setMarca);
@@ -25,16 +25,24 @@ export function MarcaFilterSelect() {
   return (
     <div className="hidden sm:flex items-center gap-1.5">
       <Tag
-        className={marca ? "size-3.5 text-[--color-accent]" : "size-3.5 text-[--color-fg-dim]"}
+        className={
+          onHeader
+            ? "size-3.5 text-white"
+            : marca
+              ? "size-3.5 text-[--color-accent]"
+              : "size-3.5 text-[--color-fg-dim]"
+        }
         strokeWidth={1.75}
       />
       <select
         value={marca ?? ""}
         onChange={(e) => setMarca(e.target.value || null)}
         className={
-          marca
-            ? "text-[12px] rounded-md border border-[--color-accent]/40 bg-[--color-accent]/[0.06] text-[--color-fg] font-medium px-2 py-1 focus:border-[--color-accent] outline-none"
-            : "text-[12px] rounded-md border border-[--color-border] bg-white text-[--color-fg-muted] px-2 py-1 focus:border-[--color-accent] outline-none"
+          onHeader
+            ? "rounded-md border border-white/50 bg-white/15 px-2 py-1 text-[12px] font-medium text-white outline-none focus:border-white"
+            : marca
+              ? "rounded-md border border-[--color-accent]/40 bg-[--color-accent]/[0.06] px-2 py-1 text-[12px] font-medium text-[--color-fg] outline-none focus:border-[--color-accent]"
+              : "rounded-md border border-[--color-border] bg-white px-2 py-1 text-[12px] text-[--color-fg-muted] outline-none focus:border-[--color-accent]"
         }
         title="Filtrar todo el sistema por marca operacional"
       >

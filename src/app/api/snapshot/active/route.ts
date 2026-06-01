@@ -16,8 +16,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Fuente } from "@prisma/client";
+import { gzipSync } from "node:zlib";
 
-// Stock master puede devolver varios MB de payload; subimos timeout.
+// Stock master puede devolver varios MB de payload; subimos timeout y comprimimos
+// la respuesta para evitar cortes del proxy/navegador durante la hidratación.
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
@@ -39,12 +41,17 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const id = searchParams.get("id");
+
   const snapshot = await prisma.snapshot.findFirst({
-    where: { fuente: fuenteRaw as Fuente, activo: true },
+    where: id
+      ? { id, fuente: fuenteRaw as Fuente }
+      : { fuente: fuenteRaw as Fuente, activo: true },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
       nombre: true,
+      tamano: true,
       fechaCorte: true,
       fuente: true,
       payload: true,
@@ -62,5 +69,14 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  return NextResponse.json(snapshot);
+  const json = JSON.stringify(snapshot);
+  return new NextResponse(gzipSync(json), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Encoding": "gzip",
+      "Cache-Control": "no-store",
+      Vary: "Accept-Encoding",
+    },
+  });
 }

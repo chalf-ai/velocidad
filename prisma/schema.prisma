@@ -21,11 +21,15 @@ model User {
   passwordHash String?
   rol          Rol      @default(OPERACIONES)
   activo       Boolean  @default(true)
+  telefono     String?  // WhatsApp (+56912345678) — usado por el agente
+  marcas       String[] // marcas que gestiona este usuario (ej: ["KIA MOTORS","MG"])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  snapshots  Snapshot[]
-  gestiones  GestionVIN[]
+  snapshots   Snapshot[]
+  gestiones   GestionVIN[]
+  alertaLogs  AlertaLog[]
+  alertaConfs AlertaConfig[]
 }
 
 enum Rol {
@@ -126,4 +130,44 @@ model HistorialGestion {
   createdAt     DateTime   @default(now())
 
   @@index([gestionId])
+}
+
+// ─────────────────────────────────────────────
+// AGENTE WHATSAPP — configuración y log de alertas
+// ─────────────────────────────────────────────
+
+model AlertaConfig {
+  id          String     @id @default(cuid())
+  tipo        AlertaTipo
+  activo      Boolean    @default(true)
+  horaEnvio   String     @default("08:00") // HH:MM hora Chile
+  diasSemana  Int[]      @default([1, 2, 3, 4, 5]) // 1=lunes … 7=domingo
+  userId      String?    // null = aplica a todos los usuarios con teléfono
+  user        User?      @relation(fields: [userId], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model AlertaLog {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  tipo      AlertaTipo
+  vin       String?    // VIN relacionado (si aplica)
+  mensaje   String     @db.Text // texto enviado
+  enviado   Boolean    @default(false)
+  errorMsg  String?    // mensaje de error si falló el envío
+  waMsgId   String?    // ID del mensaje en WhatsApp
+  createdAt DateTime   @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+enum AlertaTipo {
+  BRIEFING_DIARIO
+  FECHA_COMPROMISO_VENCIDA
+  CASO_SIN_MOVIMIENTO
+  PRIORIDAD_CRITICA
+  MENSAJE_ENTRANTE
 }

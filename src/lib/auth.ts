@@ -34,6 +34,10 @@ declare module "next-auth" {
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  secret:
+    process.env.AUTH_SECRET ??
+    process.env.NEXTAUTH_SECRET ??
+    (process.env.NODE_ENV === "development" ? "local-dev-secret-change-me" : undefined),
   providers: [
     Credentials({
       name: "credentials",
@@ -88,6 +92,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 días
+    maxAge: 8 * 60 * 60, // 8 horas
   },
 });

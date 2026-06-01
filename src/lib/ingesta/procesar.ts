@@ -1,7 +1,7 @@
 /**
  * DISPATCHER DE INGESTA · detecta el tipo de cada Excel, llama al parser EXISTENTE
- * correcto, actualiza el store de datos (useExcelStore) y registra metadatos
- * (useIngestaStore). 100% cliente.
+ * correcto, actualiza el store de datos (useExcelStore), registra metadatos
+ * (useIngestaStore) y persiste snapshots oficiales para todos los usuarios.
  *
  * Reglas de validación (del usuario):
  *   - NUNCA bloquear por fecha, archivo viejo ni fuente faltante.
@@ -30,6 +30,11 @@ import {
   limpiarTodo as limpiarTodoHistorico,
 } from "../historico/cargar-archivos-cliente";
 import { useHistoricoStore } from "../historico/store-cliente";
+import {
+  postSnapshot,
+  serializeStockPayload,
+  type FuenteSnapshot,
+} from "../snapshot-client";
 
 export interface IngestaResultado {
   archivoNombre: string;
@@ -61,6 +66,30 @@ const contarVins = (vins: (string | null | undefined)[]): number => {
   }
   return set.size;
 };
+
+async function persistirSnapshot(args: {
+  file: File;
+  fuente: FuenteSnapshot;
+  payload: unknown;
+  registros: number;
+  fechaCorte?: Date | null;
+}): Promise<string | null> {
+  try {
+    await postSnapshot({
+      nombre: args.file.name,
+      tamano: args.file.size,
+      fechaCorte: args.fechaCorte ?? null,
+      fuente: args.fuente,
+      payload: args.payload,
+      registros: args.registros,
+    });
+    return null;
+  } catch (err) {
+    const detalle = err instanceof Error ? err.message : String(err);
+    console.error(`[snapshot] ${args.fuente} persistencia falló:`, detalle);
+    return `No se persistió en servidor; otros usuarios no verán este corte. Detalle: ${detalle}`;
+  }
+}
 
 /**
  * Procesa UN archivo: detecta, parsea, actualiza stores. Nunca lanza: cualquier
@@ -113,6 +142,14 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
         if (rep.fechasInvalidas) adv.push(`${rep.fechasInvalidas} fechas inválidas`);
         if (rep.marcasSinMapeo.length) adv.push(`${rep.marcasSinMapeo.length} marcas sin mapeo`);
         if (rep.fechaCorteExcel == null) adv.push("Sin fecha de corte detectada");
+        const persistencia = await persistirSnapshot({
+          file,
+          fuente: "BASE_STOCK",
+          payload: serializeStockPayload(parsed),
+          registros: rep.totalVehiculos,
+          fechaCorte: rep.fechaCorteExcel,
+        });
+        if (persistencia) adv.push(persistencia);
         const meta: IngestaMeta = {
           fuenteId: "stock",
           archivoNombre: file.name,
@@ -147,6 +184,14 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
         if (parsed.report.vinsDuplicados.length) adv.push(`${parsed.report.vinsDuplicados.length} VIN duplicados`);
         const fechaCorte = maxDate(parsed.registros.map((r) => r.fechaFactura));
         const vins = contarVins(parsed.registros.map((r) => r.vin));
+        const persistencia = await persistirSnapshot({
+          file,
+          fuente: "FNE",
+          payload: parsed,
+          registros: parsed.report.filasProcesadas,
+          fechaCorte,
+        });
+        if (persistencia) adv.push(persistencia);
         aplicarMeta({ fuenteId: "fne", archivoNombre: file.name, archivoSize: file.size, fechaCarga: new Date(), fechaCorte, registros: parsed.report.filasProcesadas, vins, advertencias: adv });
         return { ...base, fuenteId: "fne", ok: true, reemplazo, registros: parsed.report.filasProcesadas, vins, fechaCorte, advertencias: adv };
       }
@@ -160,6 +205,14 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
         if (parsed.report.filasOmitidas) adv.push(`${parsed.report.filasOmitidas} filas omitidas`);
         const fechaCorte = maxDate(parsed.registros.map((r) => r.fechaVenta));
         const vins = contarVins(parsed.registros.map((r) => r.vinResuelto));
+        const persistencia = await persistirSnapshot({
+          file,
+          fuente: "SALDOS",
+          payload: parsed,
+          registros: parsed.report.filasProcesadas,
+          fechaCorte,
+        });
+        if (persistencia) adv.push(persistencia);
         aplicarMeta({ fuenteId: "saldos", archivoNombre: file.name, archivoSize: file.size, fechaCarga: new Date(), fechaCorte, registros: parsed.report.filasProcesadas, vins, advertencias: adv });
         return { ...base, fuenteId: "saldos", ok: true, reemplazo, registros: parsed.report.filasProcesadas, vins, fechaCorte, advertencias: adv };
       }
@@ -171,6 +224,14 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
         const adv: string[] = [];
         if (parsed.report.filasOmitidas) adv.push(`${parsed.report.filasOmitidas} filas sin ID`);
         const fechaCorte = maxDate(parsed.registros.map((r) => r.fechaCreacion));
+        const persistencia = await persistirSnapshot({
+          file,
+          fuente: "PROVISIONES",
+          payload: parsed,
+          registros: parsed.report.filasProcesadas,
+          fechaCorte,
+        });
+        if (persistencia) adv.push(persistencia);
         aplicarMeta({ fuenteId: "provisiones", archivoNombre: file.name, archivoSize: file.size, fechaCarga: new Date(), fechaCorte, registros: parsed.report.filasProcesadas, vins: null, advertencias: adv });
         return { ...base, fuenteId: "provisiones", ok: true, reemplazo, registros: parsed.report.filasProcesadas, vins: null, fechaCorte, advertencias: adv };
       }
@@ -183,16 +244,32 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
           parsed.kind === "ROMA" ? excel.logisticaRoma != null : excel.logisticaSTLI != null;
         let fechaCorte: Date | null = null;
         let vins = 0;
+        const adv: string[] = [];
         if (parsed.kind === "ROMA" && parsed.roma) {
           excel.setLogisticaRoma(parsed.roma);
           fechaCorte = maxDate(parsed.roma.flatMap((r) => [r.fLlegadaSucursal, r.fFactura, r.fSolicitud]));
           vins = contarVins(parsed.roma.map((r) => r.vin));
+          const persistencia = await persistirSnapshot({
+            file,
+            fuente: "LOGISTICA_ROMA",
+            payload: parsed.roma,
+            registros: parsed.report.filasProcesadas,
+            fechaCorte,
+          });
+          if (persistencia) adv.push(persistencia);
         } else if (parsed.stli) {
           excel.setLogisticaSTLI(parsed.stli);
           fechaCorte = maxDate(parsed.stli.flatMap((r) => [r.fDespacho, r.fSolicitudBodega, r.fIngresoApc]));
           vins = contarVins(parsed.stli.map((r) => r.vin));
+          const persistencia = await persistirSnapshot({
+            file,
+            fuente: "LOGISTICA_STLI",
+            payload: parsed.stli,
+            registros: parsed.report.filasProcesadas,
+            fechaCorte,
+          });
+          if (persistencia) adv.push(persistencia);
         }
-        const adv: string[] = [];
         const omit = parsed.report.filasTotales - parsed.report.filasProcesadas;
         if (omit > 0) adv.push(`${omit} filas sin VIN`);
         aplicarMeta({ fuenteId, archivoNombre: file.name, archivoSize: file.size, fechaCarga: new Date(), fechaCorte, registros: parsed.report.filasProcesadas, vins, advertencias: adv });

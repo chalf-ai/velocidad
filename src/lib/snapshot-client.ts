@@ -87,6 +87,7 @@ export interface SnapshotMeta {
   id: string;
   nombre: string;
   fuente: FuenteSnapshot;
+  fechaCorte: string | null;
   registros: number;
   activo: boolean;
   createdAt: string;
@@ -155,6 +156,7 @@ export async function postSnapshot(args: PostSnapshotArgs): Promise<SnapshotMeta
 export interface ActiveSnapshotResult<T = unknown> {
   id: string;
   nombre: string;
+  tamano: number;
   fechaCorte: string | null;
   fuente: FuenteSnapshot;
   registros: number;
@@ -169,8 +171,10 @@ export interface ActiveSnapshotResult<T = unknown> {
  */
 export async function fetchActiveSnapshot<T = unknown>(
   fuente: FuenteSnapshot,
+  id?: string,
 ): Promise<ActiveSnapshotResult<T> | null> {
-  const res = await fetch(`/api/snapshot/active?fuente=${fuente}`, {
+  const qs = id ? `fuente=${fuente}&id=${id}` : `fuente=${fuente}`;
+  const res = await fetch(`/api/snapshot/active?${qs}`, {
     credentials: "include",
   });
   if (res.status === 404) return null;

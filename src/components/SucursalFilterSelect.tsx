@@ -19,7 +19,7 @@ import { filtrarPorMarcaOwnerUOriginador } from "@/lib/selectors/owner-operacion
  * universo, la sucursal se limpia automáticamente para evitar combinaciones
  * vacías (ej. GEELY + sucursal Kia).
  */
-export function SucursalFilterSelect() {
+export function SucursalFilterSelect({ onHeader = false }: { onHeader?: boolean } = {}) {
   const data = useExcelStore((s) => s.data);
   const marca = useMarcaFilter((s) => s.marca);
   const sucursal = useSucursalFilter((s) => s.sucursal);
@@ -53,16 +53,24 @@ export function SucursalFilterSelect() {
   return (
     <div className="hidden sm:flex items-center gap-1.5">
       <MapPin
-        className={sucursal ? "size-3.5 text-[--color-accent]" : "size-3.5 text-[--color-fg-dim]"}
+        className={
+          onHeader
+            ? "size-3.5 text-white"
+            : sucursal
+              ? "size-3.5 text-[--color-accent]"
+              : "size-3.5 text-[--color-fg-dim]"
+        }
         strokeWidth={1.75}
       />
       <select
         value={sucursal ?? ""}
         onChange={(e) => setSucursal(e.target.value || null)}
         className={
-          sucursal
-            ? "text-[12px] rounded-md border border-[--color-accent]/40 bg-[--color-accent]/[0.06] text-[--color-fg] font-medium px-2 py-1 focus:border-[--color-accent] outline-none"
-            : "text-[12px] rounded-md border border-[--color-border] bg-white text-[--color-fg-muted] px-2 py-1 focus:border-[--color-accent] outline-none"
+          onHeader
+            ? "rounded-md border border-white/50 bg-white/15 px-2 py-1 text-[12px] font-medium text-white outline-none focus:border-white"
+            : sucursal
+              ? "text-[12px] rounded-md border border-[--color-accent]/40 bg-[--color-accent]/[0.06] text-[--color-fg] font-medium px-2 py-1 focus:border-[--color-accent] outline-none"
+              : "text-[12px] rounded-md border border-[--color-border] bg-white text-[--color-fg-muted] px-2 py-1 focus:border-[--color-accent] outline-none"
         }
         title={
           marca

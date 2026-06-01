@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 import {
   AlertTriangle,
   Bug,
@@ -24,7 +26,9 @@ import {
   TestTube2,
   Trophy,
   Truck,
-  Upload,
+  LogOut,
+  UserCircle2,
+  Users,
   Warehouse,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -90,7 +94,6 @@ const NAV_TESORERIA: NavItem[] = [
   { href: "/alertas", label: "Alertas", icon: AlertTriangle },
 ];
 
-
 const NAV_TEC: NavItem[] = [
   { href: "/ingesta", label: "Ingesta Operacional", icon: PackageCheck },
   { href: "/validacion", label: "Validación", icon: ClipboardCheck },
@@ -104,7 +107,7 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
 
   return (
     <div>
-      <div className="px-3 mb-1.5 text-[10px] uppercase tracking-[0.14em] text-[--color-sidebar-fg-dim] font-semibold">
+      <div className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[--color-fg-dim]">
         {title}
       </div>
       <div className="space-y-px">
@@ -126,14 +129,14 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
               <div
                 key={item.href}
                 aria-disabled="true"
-                className="flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] text-[--color-sidebar-fg-dim] cursor-default"
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] text-[--color-fg-dim] cursor-default"
               >
                 <Icon
                   className="size-[15px] shrink-0 opacity-60"
                   strokeWidth={1.75}
                 />
                 <span className="truncate flex-1">{item.label}</span>
-                <span className="text-[9px] uppercase tracking-[0.1em] px-1.5 py-0.5 rounded bg-[--color-sidebar-bg-hover] text-[--color-sidebar-fg-dim]">
+                <span className="text-[9px] uppercase tracking-[0.1em] px-1.5 py-0.5 rounded bg-[--color-bg-elev-2] text-[--color-fg-dim]">
                   Pronto
                 </span>
               </div>
@@ -145,21 +148,18 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
               key={item.href}
               href={item.href}
               className={cn(
-                "group relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition",
+                "group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] transition",
                 active
-                  ? "bg-[--color-accent-dim] text-[--color-accent] font-semibold ring-1 ring-inset ring-[--color-accent]/30"
-                  : "text-[--color-sidebar-fg-muted] hover:text-[--color-sidebar-fg] hover:bg-[--color-sidebar-bg-hover]",
+                  ? "bg-[#3358e8] font-medium text-white"
+                  : "text-[--color-fg-muted] hover:bg-[--color-bg-elev-2] hover:text-[--color-fg]",
               )}
             >
-              {active && (
-                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-[--color-accent]" />
-              )}
               <Icon
                 className={cn(
                   "size-[15px] shrink-0 transition",
                   active
-                    ? "text-[--color-accent]"
-                    : "text-[--color-sidebar-fg-dim] group-hover:text-[--color-sidebar-fg-muted]",
+                    ? "text-white"
+                    : "text-[--color-fg-dim] group-hover:text-[--color-fg-muted]",
                 )}
                 strokeWidth={1.75}
               />
@@ -173,61 +173,81 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
 }
 
 export function Sidebar() {
-  const pathname = usePathname();
+  const { data: session } = useSession();
+  const email = session?.user?.email ?? "usuario@pompeyo.cl";
+  const isAdmin = session?.user?.rol === "ADMIN";
+  const [logoutModalOpen, setLogoutModalOpen] = useState(false);
+
+  const navTec: NavItem[] = [
+    ...NAV_TEC,
+    ...(isAdmin
+      ? [{ href: "/usuarios", label: "Gestión de usuarios", icon: Users }]
+      : []),
+  ];
 
   return (
-    <aside className="w-60 shrink-0 bg-[--color-sidebar-bg] border-r border-[--color-sidebar-border] flex flex-col">
-      {/* Brand */}
-      <Link
-        href="/"
-        className="px-5 pt-5 pb-4 flex items-center gap-3 hover:opacity-90 transition"
-      >
-        <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-white shadow-[0_4px_14px_-6px_rgba(255,255,255,0.45)]">
-          <Image
-            src="/pompeyo-menu-icon.png"
-            alt="Pompeyo Carrasco"
-            width={40}
-            height={40}
-            priority
-            className="size-8"
-          />
-        </div>
-        <div className="leading-tight">
-          <div className="text-[13px] font-semibold tracking-tight text-white">
-            Stock Command
-          </div>
-          <div className="text-[10px] uppercase tracking-[0.12em] text-[--color-sidebar-fg-dim]">
-            Pompeyo Carrasco
-          </div>
-        </div>
-      </Link>
-
-      <div className="mx-3 h-px bg-[--color-sidebar-border] mb-3" />
-
-      {/* Nav */}
-      <nav className="flex-1 px-2.5 space-y-5 overflow-y-auto pb-4">
+    <aside className="sticky top-0 flex h-full w-60 shrink-0 flex-col border-r border-[--color-border] bg-white">
+      <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 pb-4 pt-4">
         <NavSection title="Ejecutivo" items={NAV_EXEC} />
         <NavSection title="Marcas" items={NAV_MARCAS} />
         <NavSection title="Operaciones" items={NAV_OPERACIONES} />
         <NavSection title="Tesorería" items={NAV_TESORERIA} />
-        <NavSection title="Técnico" items={NAV_TEC} />
+        <NavSection title="Técnico" items={navTec} />
       </nav>
 
-      {/* Upload pinned bottom */}
-      <div className="px-2.5 pb-4 pt-3 border-t border-[--color-sidebar-border]">
-        <Link
-          href="/"
-          className={cn(
-            "flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition",
-            pathname === "/" || pathname === "/cargar"
-              ? "bg-[--color-accent] text-white"
-              : "text-[--color-sidebar-fg-muted] hover:text-white hover:bg-[--color-sidebar-bg-hover]",
-          )}
-        >
-          <Upload className="size-[15px]" strokeWidth={1.75} />
-          <span>Cargar archivo</span>
-        </Link>
+      <div className="border-t border-[--color-border] px-2.5 pt-3 pb-4">
+        <div className="rounded-md border border-[--color-border] bg-[--color-bg-elev-1] p-1.5">
+          <button
+            type="button"
+            onClick={() => setLogoutModalOpen(true)}
+            className="flex w-full items-center gap-2 px-1.5 py-1.5 text-left transition hover:bg-[--color-bg-elev-2] rounded-md"
+          >
+            <UserCircle2 className="size-4 text-[--color-fg-dim]" strokeWidth={1.75} />
+            <span className="flex-1 truncate text-[12px] text-[--color-fg-muted]" title={email}>
+              {email}
+            </span>
+          </button>
+        </div>
       </div>
+
+      {logoutModalOpen && <LogoutModal email={email} onClose={() => setLogoutModalOpen(false)} />}
     </aside>
+  );
+}
+
+function LogoutModal({ email, onClose }: { email: string; onClose: () => void }) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] grid place-items-center bg-[#101828]/35 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xs rounded-xl border border-[--color-border] bg-white p-4 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="text-[14px] font-medium text-[--color-fg]">¿Cerrar sesión?</p>
+        <p className="mt-1 text-[12px] text-[--color-fg-muted] truncate" title={email}>
+          {email}
+        </p>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-[--color-border] px-3 py-1.5 text-[13px] text-[--color-fg-muted] hover:bg-[--color-bg-elev-2]"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            className="inline-flex items-center gap-1.5 rounded-md bg-[#3358e8] px-3 py-1.5 text-[13px] font-medium text-white hover:brightness-110"
+          >
+            <LogOut className="size-[14px]" strokeWidth={1.75} />
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
