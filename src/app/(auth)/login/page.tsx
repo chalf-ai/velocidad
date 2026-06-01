@@ -145,7 +145,7 @@ function LoginForm() {
       <button
         type="submit"
         disabled={loading}
-        className="relative w-full overflow-hidden rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all disabled:opacity-60"
+        className="relative w-full overflow-hidden rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all disabled:cursor-not-allowed disabled:[background:none] disabled:bg-[--color-accent-dim] disabled:text-[--color-accent] disabled:shadow-none"
         style={{
           background:
             "linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hi) 100%)",

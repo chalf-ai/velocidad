@@ -4,7 +4,6 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  Activity,
   AlertTriangle,
   Bug,
   CalendarClock,
@@ -16,11 +15,14 @@ import {
   Banknote,
   ClipboardList,
   Gauge,
+  GitBranch,
   Layers,
   Link2,
   PackageCheck,
   Receipt,
+  ScrollText,
   TestTube2,
+  Trophy,
   Truck,
   Upload,
   Warehouse,
@@ -32,10 +34,13 @@ interface NavItem {
   label: string;
   icon: typeof LayoutDashboard;
   exactQuery?: string;
+  /** Si true, no navega: render gris con badge "Pronto". */
+  comingSoon?: boolean;
 }
 
 const NAV_EXEC: NavItem[] = [
   { href: "/centro-accion", label: "Centro de Acción", icon: Gauge },
+  { href: "/score-gerencial", label: "Score Gerencial", icon: Trophy },
   { href: "/dashboard", label: "Sistema de Velocidad Operacional", icon: LayoutDashboard },
   { href: "/stock", label: "Stock Explorer", icon: Warehouse },
   { href: "/lineas", label: "Líneas de crédito", icon: CreditCard },
@@ -50,7 +55,28 @@ const NAV_MARCAS: NavItem[] = [
   { href: "/usados", label: "Usados · unidad operacional", icon: Car },
 ];
 
-const NAV_OPS: NavItem[] = [
+const NAV_OPERACIONES: NavItem[] = [
+  {
+    href: "/operaciones/control-de-negocio",
+    label: "Control de Negocio",
+    icon: ScrollText,
+  },
+  {
+    href: "/operaciones/logistica",
+    label: "Logística",
+    icon: Truck,
+  },
+  {
+    href: "/operaciones/causa-raiz",
+    label: "Causa Raíz",
+    icon: GitBranch,
+    comingSoon: true,
+  },
+];
+
+// "Tesorería" — antes era "Operacional". La ruta /velocidad-operacional queda
+// fuera del menú (sigue viva por URL directa para auditoría comparativa).
+const NAV_TESORERIA: NavItem[] = [
   { href: "/facturados-no-entregados", label: "Facturados no entregados", icon: Truck },
   { href: "/vu-en-fne", label: "Usados pendientes de recuperación", icon: Link2 },
   {
@@ -62,8 +88,8 @@ const NAV_OPS: NavItem[] = [
   { href: "/tescar", label: "TESCAR", icon: TestTube2 },
   { href: "/vencimientos", label: "Vencimientos", icon: CalendarClock },
   { href: "/alertas", label: "Alertas", icon: AlertTriangle },
-  { href: "/velocidad-operacional", label: "Tiempos Operacionales", icon: Activity },
 ];
+
 
 const NAV_TEC: NavItem[] = [
   { href: "/ingesta", label: "Ingesta Operacional", icon: PackageCheck },
@@ -95,6 +121,25 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
             active = pathMatch && !currentQs;
           }
 
+          if (item.comingSoon) {
+            return (
+              <div
+                key={item.href}
+                aria-disabled="true"
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] text-[--color-sidebar-fg-dim] cursor-default"
+              >
+                <Icon
+                  className="size-[15px] shrink-0 opacity-60"
+                  strokeWidth={1.75}
+                />
+                <span className="truncate flex-1">{item.label}</span>
+                <span className="text-[9px] uppercase tracking-[0.1em] px-1.5 py-0.5 rounded bg-[--color-sidebar-bg-hover] text-[--color-sidebar-fg-dim]">
+                  Pronto
+                </span>
+              </div>
+            );
+          }
+
           return (
             <Link
               key={item.href}
@@ -102,18 +147,18 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
               className={cn(
                 "group relative flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition",
                 active
-                  ? "bg-[--color-sidebar-bg-active] text-white"
+                  ? "bg-[--color-accent-dim] text-[--color-accent] font-semibold ring-1 ring-inset ring-[--color-accent]/30"
                   : "text-[--color-sidebar-fg-muted] hover:text-[--color-sidebar-fg] hover:bg-[--color-sidebar-bg-hover]",
               )}
             >
               {active && (
-                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-[--color-accent-hi]" />
+                <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-[--color-accent]" />
               )}
               <Icon
                 className={cn(
                   "size-[15px] shrink-0 transition",
                   active
-                    ? "text-[--color-accent-hi]"
+                    ? "text-[--color-accent]"
                     : "text-[--color-sidebar-fg-dim] group-hover:text-[--color-sidebar-fg-muted]",
                 )}
                 strokeWidth={1.75}
@@ -163,7 +208,8 @@ export function Sidebar() {
       <nav className="flex-1 px-2.5 space-y-5 overflow-y-auto pb-4">
         <NavSection title="Ejecutivo" items={NAV_EXEC} />
         <NavSection title="Marcas" items={NAV_MARCAS} />
-        <NavSection title="Operacional" items={NAV_OPS} />
+        <NavSection title="Operaciones" items={NAV_OPERACIONES} />
+        <NavSection title="Tesorería" items={NAV_TESORERIA} />
         <NavSection title="Técnico" items={NAV_TEC} />
       </nav>
 

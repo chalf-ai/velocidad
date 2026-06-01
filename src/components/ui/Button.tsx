@@ -17,6 +17,25 @@ const VARIANT: Record<Variant, string> = {
     "bg-[--color-danger] text-white hover:brightness-110 border border-transparent",
 };
 
+/**
+ * Estado `disabled` por variante — usa tono accent o severity visible en
+ * lugar de `opacity-50` (que apagaba el botón hasta volverlo ilegible
+ * sobre fondos blancos). Cada variante mantiene un par bg/text con
+ * contraste AA y comunica claramente que está bloqueado.
+ */
+const DISABLED: Record<Variant, string> = {
+  primary:
+    "disabled:bg-[--color-accent-dim] disabled:text-[--color-accent] disabled:border-transparent disabled:shadow-none",
+  secondary:
+    "disabled:bg-[--color-bg-elev-3] disabled:text-[--color-fg-dim] disabled:border-[--color-border]",
+  outline:
+    "disabled:bg-[--color-bg-elev-1] disabled:text-[--color-fg-dim] disabled:border-[--color-border]",
+  ghost:
+    "disabled:bg-[--color-bg-elev-1] disabled:text-[--color-fg-dim]",
+  danger:
+    "disabled:bg-[--color-danger]/15 disabled:text-[--color-danger] disabled:border-transparent",
+};
+
 const SIZE: Record<Size, string> = {
   sm: "h-7 px-2.5 text-[12px] gap-1.5",
   md: "h-9 px-3.5 text-[13px] gap-2",
@@ -32,8 +51,9 @@ export const Button = React.forwardRef<
       ref={ref}
       className={cn(
         "inline-flex items-center justify-center rounded-lg font-medium transition",
-        "disabled:opacity-50 disabled:cursor-not-allowed",
+        "disabled:cursor-not-allowed",
         VARIANT[variant],
+        DISABLED[variant],
         SIZE[size],
         className,
       )}

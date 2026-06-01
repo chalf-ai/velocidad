@@ -40,7 +40,12 @@ import {
   type VerdadFisicaVIN,
 } from "@/lib/caso-unificado";
 import { calcularScore } from "@/lib/selectors/score";
-import { construirCaso, esMaximaAlertaDe, factoresCriticosDe } from "@/lib/gestion/caso";
+import {
+  construirCaso,
+  diasDesdeFacturaDe,
+  esMaximaAlertaDe,
+  factoresCriticosDe,
+} from "@/lib/gestion/caso";
 import { PresionOperacional, NivelPill } from "@/components/PresionOperacional";
 import { RazonesScore, ComponentesBars } from "@/components/RazonesScore";
 import { MesaGestionCaso } from "@/components/MesaGestionCaso";
@@ -210,8 +215,16 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
       {/* ── 2 · PRESIÓN OPERACIONAL (bloque principal del caso) ── */}
       <div>
         <PresionOperacional score={scoreVivo} />
-        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-2">
           <ResumenKpi label="Capital retenido" valor={fin.capitalRetenido > 0 ? fmtCLPCompact(fin.capitalRetenido) : "—"} tono={fin.capitalRetenido > 0 ? "danger" : "muted"} />
+          {/* Días retenido desde fFactura (FNE oficial o saldos vehiculo como proxy). */}
+          {(() => {
+            const dr = diasDesdeFacturaDe(vu);
+            const txt = dr == null ? "Sin fecha factura" : `${dr}d`;
+            const tono: "danger" | "muted" | undefined =
+              dr != null && dr > 60 ? "danger" : dr == null ? "muted" : undefined;
+            return <ResumenKpi label="Días retenido" valor={txt} tono={tono} />;
+          })()}
           <ResumenKpi label="Días detenido" valor={casoVivo.aging > 0 ? `${casoVivo.aging}d` : "—"} tono={casoVivo.aging > 180 ? "danger" : undefined} />
           <ResumenKpi label="Owner" valor={ownerDom ?? "—"} />
           <ResumenKpi label="Score logístico" valor={casoVivo.logistica != null ? `${casoVivo.logistica.score}/100` : "s/d"} />

@@ -46,6 +46,8 @@ const CARDS: CardDef[] = [
   { id: "provisiones", label: "Provisiones", desc: "No facturadas / facturadas", icon: ClipboardList },
   { id: "logistica_romia", label: "Logística ROMIA", desc: "SCHIAPPACASSE + KAR-LOGISTICS (modelo nuevo)", icon: Truck, subs: ["romia_schiapp", "romia_kar"] },
   { id: "logistica", label: "Logística (legacy)", desc: "ROMA (agenda) + STLI (bodega) · fallback", icon: Truck, subs: ["logistica_roma", "logistica_stli"] },
+  // Universo documental histórico — alimenta la Vista Histórica /velocidad-operacional.
+  { id: "actas", label: "Actas (histórico)", desc: "Universo documental · alimenta Vista Histórica", icon: PackageCheck },
   { id: "tescar", label: "TESCAR", desc: "Demos TEST CARS + BDR (con Stock)", icon: TestTube2 },
 ];
 
@@ -138,7 +140,7 @@ export default function IngestaPage() {
         <button
           onClick={() => inputRef.current?.click()}
           disabled={procesando}
-          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[--color-accent] text-white text-[13px] font-medium px-4 py-2 hover:opacity-90 transition disabled:opacity-50"
+          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[--color-accent] text-white text-[13px] font-medium px-4 py-2 hover:opacity-90 transition disabled:bg-[--color-accent-dim] disabled:text-[--color-accent] disabled:cursor-not-allowed disabled:ring-1 disabled:ring-inset disabled:ring-[--color-accent]/30"
         >
           <UploadCloud className="size-4" /> Subir archivos
         </button>

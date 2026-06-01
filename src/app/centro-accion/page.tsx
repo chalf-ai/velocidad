@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
 import {
   AlertOctagon,
+  AlertTriangle,
   ArrowRight,
   Banknote,
   ChevronDown,
@@ -32,12 +33,17 @@ import { useGestionStore } from "@/lib/gestion/store";
 import { type GestionVIN } from "@/lib/gestion/types";
 import {
   construirCaso,
+  diasDesdeFacturaDe,
+  diasMaxCreditoPompeyo,
   esMaximaAlertaDe,
+  esVinGestionableHoy,
+  evalCompromiso,
   factoresCriticosDe,
   resumirLogistica,
   type LogisticaCasoResumen,
 } from "@/lib/gestion/caso";
 import { useExcelStore } from "@/lib/store";
+import { GestionInline } from "@/components/GestionInline";
 import { UploadLogisticaButton } from "@/components/UploadLogisticaButton";
 import { FichaOperacionalVIN } from "@/components/FichaOperacionalVIN";
 import {
@@ -47,7 +53,7 @@ import {
   type LogisticaOperacionVIN,
 } from "@/lib/logistica/modelo";
 import { cn } from "@/lib/cn";
-import { fmtCLPCompact, fmtNum } from "@/lib/format";
+import { fmtCLP, fmtCLPCompact, fmtNum } from "@/lib/format";
 import {
   FUENTE_CAPITAL_LABEL,
   buildVehiculosUnificados,
@@ -58,6 +64,9 @@ import {
   type ScoreVIN,
   type Severidad,
 } from "@/lib/selectors/score";
+
+/** Tramos T3+ (>30 días) según `StatusDPS` — para alertas de saldos viejos. */
+const TRAMOS_T3PLUS = new Set(["T3", "T4", "T5", "T6", "T7"]);
 
 type TabId =
   | "criticos"
@@ -264,8 +273,25 @@ export default function CentroAccionPage() {
 }
 
 function CentroAccionInner() {
-  const { data, fne, saldos } = useDatosFiltrados();
+  const { data, fne, saldos, provisiones } = useDatosFiltrados();
   const [tab, setTab] = useState<TabId>("criticos");
+  // Toggles de secciones inline gestionables del hero ejecutivo (cards 1–8).
+  const [showCajaAtrapada, setShowCajaAtrapada] = useState(false);
+  const cajaAtrapadaRef = useRef<HTMLDivElement>(null);
+  const [showMaximaAlerta, setShowMaximaAlerta] = useState(false);
+  const maximaAlertaRef = useRef<HTMLDivElement>(null);
+  const [showCp7d, setShowCp7d] = useState(false);
+  const cp7dRef = useRef<HTMLDivElement>(null);
+  const [showSeguimientos, setShowSeguimientos] = useState(false);
+  const seguimientosRef = useRef<HTMLDivElement>(null);
+  const [showFne7d, setShowFne7d] = useState(false);
+  const fne7dRef = useRef<HTMLDivElement>(null);
+  const [showSaldosAutos, setShowSaldosAutos] = useState(false);
+  const saldosAutosRef = useRef<HTMLDivElement>(null);
+  const [showBonos, setShowBonos] = useState(false);
+  const bonosRef = useRef<HTMLDivElement>(null);
+  const [showProvNoFact, setShowProvNoFact] = useState(false);
+  const provNoFactRef = useRef<HTMLDivElement>(null);
   const [vinExpanded, setVinExpanded] = useState<string | null>(null);
   const gestionMap = useGestionStore((s) => s.byVin);
 
@@ -304,23 +330,147 @@ function CentroAccionInner() {
   const capitalUrgente = urgentes.reduce((s, x) => s + x.vu.capitalComprometido, 0);
 
   // ── LOGÍSTICA · VIN vivos con bloqueo logístico (cola dedicada) ──────────
-  // Solo VIN vivos (conScore = activos), enriquecidos por cruce de VIN contra
-  // el merge logístico. El histórico no entra (no está en conScore).
+  // Solo VIN VIVOS GESTIONABLES HOY (esVinGestionableHoy = enStockActivo || enFNE).
+  // No incluye VINs que solo aparecen en saldos pendientes (ej. entregados con
+  // cobranza histórica): un bloqueo logístico sobre un auto ya entregado es
+  // cumplimiento histórico, no gestión viva.
+  //
+  // Filtro quirúrgico adicional: el bloqueo "auto_listo_no_solicitado" (card
+  // "Auto en bodega sin solicitud de despacho") SOLO aplica si el auto ya
+  // está vendido/facturado/FNE. Un auto en bodega disponible — sin venta —
+  // NO es bloqueo de caja hoy: es stock comercial normal. Por eso filtramos
+  // ese tipo de bloqueo del array `resumen.bloqueos` cuando no hay venta.
+  // Esto cascada automáticamente a `logStats` (que itera bloqueos), a las
+  // 6 cards de Bloqueos Logísticos y al comando "BLOQUEO LOGÍSTICO".
   const logisticaPorVin = useExcelStore((s) => s.logisticaPorVin);
   const logCasos = useMemo(() => {
     const out: { x: (typeof conScore)[number]; op: LogisticaOperacionVIN; resumen: LogisticaCasoResumen }[] = [];
     if (!logisticaPorVin) return out;
     for (const x of conScore) {
+      if (!esVinGestionableHoy(x.vu)) continue; // ← excluye saldos sin stock ni FNE
       const op = logisticaPorVin.get(x.vu.vinLimpio);
       if (!op) continue;
       const resumen = resumirLogistica(op);
-      if (resumen.bloqueos.length === 0) continue;
-      out.push({ x, op, resumen });
+      // "vendido o FNE": tiene venta registrada (APC) o está facturado no
+      // entregado. Cubre los dos escenarios donde "auto en bodega sin
+      // solicitud" es legítimamente un bloqueo de caja.
+      const vendidoOFNE = x.vu.enFNE || x.vu.enHistoricoVenta;
+      // Filtros contextuales sobre los bloqueos que la regla pura no puede
+      // resolver (necesita el VU, no solo la operación logística):
+      //   · auto_listo_no_solicitado → SOLO si está vendido o en FNE (auto
+      //     en bodega disponible sin venta es stock comercial normal).
+      //   · transito_prolongado → NO aplica si el auto ya está en FNE. Un
+      //     auto facturado físicamente ya tiene que estar en la sucursal
+      //     (se factura contra recepción). Si aparece "en tránsito" es
+      //     higiene de datos (falta cerrar fLlegadaSucursal), no tránsito
+      //     real. El bloqueo real de esos casos es otro (llegado_no_entregado
+      //     o inscripcion_pendiente).
+      const bloqueosFiltrados = resumen.bloqueos.filter((b) => {
+        if (b === "auto_listo_no_solicitado" && !vendidoOFNE) return false;
+        if (b === "transito_prolongado" && x.vu.enFNE) return false;
+        return true;
+      });
+      if (bloqueosFiltrados.length === 0) continue;
+      out.push({
+        x,
+        op,
+        resumen:
+          bloqueosFiltrados.length === resumen.bloqueos.length
+            ? resumen
+            : { ...resumen, bloqueos: bloqueosFiltrados },
+      });
     }
     out.sort((a, b) => a.resumen.score - b.resumen.score); // peor score primero
     return out;
   }, [conScore, logisticaPorVin]);
   const logisticaCriticos = useMemo(() => logCasos.map((c) => c.x), [logCasos]);
+
+  // ── CRÉDITOS POMPEYO > 7d (card ejecutiva del hero) ───────────────────────
+  //
+  // Regla correcta (Junio 2026): un VIN entra si tiene al menos un saldo
+  // CP con `fechaVenta` > 7 días atrás. La fecha viene de SaldoRegistro
+  // (subTipo "credito_pompeyo"). NO se usa `maxAging(vu)` porque ese es
+  // aging operacional del VIN, no edad del crédito.
+  const creditosPompeyo7d = useMemo(
+    () =>
+      conScore.filter((x) => {
+        if (x.vu.creditoPompeyo <= 0) return false;
+        const dias = diasMaxCreditoPompeyo(x.vu);
+        return dias !== null && dias > 7;
+      }),
+    [conScore],
+  );
+  const montoCreditosPompeyo7d = creditosPompeyo7d.reduce(
+    (s, x) => s + x.vu.creditoPompeyo,
+    0,
+  );
+
+  // ── FNE > 7d ──────────────────────────────────────────────────────────────
+  // Facturados no entregados con más de 7 días desde fFactura.
+  // `enFNE === true` implica facturado no entregado por construcción del FNE.
+  const fne7d = useMemo(
+    () =>
+      conScore.filter(
+        (x) => x.vu.enFNE && (x.vu.fneDiasFactura ?? 0) > 7,
+      ),
+    [conScore],
+  );
+  const montoFne7d = fne7d.reduce((s, x) => s + x.vu.capitalComprometido, 0);
+
+  // ── Saldos autos > 30 d (T3+) ─────────────────────────────────────────────
+  // Sobre los SaldoRegistro raw del store. categoria=vehiculo + statusDPS T3..T7.
+  const saldosAutos30d = useMemo(() => {
+    const regs = saldos?.registros ?? [];
+    return regs.filter(
+      (r) => r.categoria === "vehiculo" && TRAMOS_T3PLUS.has(r.statusDPS),
+    );
+  }, [saldos]);
+  const montoSaldosAutos30d = saldosAutos30d.reduce(
+    (s, r) => s + r.saldoXDocumentar,
+    0,
+  );
+
+  // ── Bonos / comisiones > 30 d (T3+) ───────────────────────────────────────
+  const bonos30d = useMemo(() => {
+    const regs = saldos?.registros ?? [];
+    return regs.filter(
+      (r) => r.categoria === "bono_comision" && TRAMOS_T3PLUS.has(r.statusDPS),
+    );
+  }, [saldos]);
+  const montoBonos30d = bonos30d.reduce((s, r) => s + r.saldoXDocumentar, 0);
+
+  // ── Provisiones no facturadas > 30 d ──────────────────────────────────────
+  const provNoFact30d = useMemo(() => {
+    const regs = provisiones?.registros ?? [];
+    return regs.filter(
+      (p) => p.estado === "no_facturada" && (p.agingDias ?? 0) > 30,
+    );
+  }, [provisiones]);
+  const montoProvNoFact30d = provNoFact30d.reduce(
+    (s, p) => s + p.montoProvision,
+    0,
+  );
+
+  // ── SEGUIMIENTOS ATRASADOS (card ejecutiva del hero) ──────────────────────
+  //
+  // Casos con `gestion.fechaCompromiso` ya pasada y `estadoGestion` ≠ resuelto/cancelado.
+  // Usa `evalCompromiso()` que parsea YYYY-MM-DD vs hoy.
+  const seguimientosAtrasados = useMemo(() => {
+    const out: (typeof conScore)[number][] = [];
+    for (const x of conScore) {
+      const g = gestionMap[x.vu.vinLimpio];
+      if (!g) continue;
+      const estado = g.estadoGestion;
+      if (estado === "resuelto" || estado === "cancelado") continue;
+      const c = evalCompromiso(g.fechaCompromiso);
+      if (c.estado === "vencido") out.push(x);
+    }
+    return out;
+  }, [conScore, gestionMap]);
+  const montoSeguimientosAtrasados = seguimientosAtrasados.reduce(
+    (s, x) => s + x.vu.capitalComprometido,
+    0,
+  );
 
   // Stats por tipo de bloqueo (para las cards del bloque "Bloqueos logísticos").
   const logStats = useMemo(() => {
@@ -497,50 +647,478 @@ function CentroAccionInner() {
         </div>
       )}
 
-      {/* Caja atrapada total · vs · Máxima alerta */}
-      <div className="grid grid-cols-1 md:grid-cols-[1.25fr_1fr] gap-4">
-        <div className="surface top-strip strip-danger bg-white px-7 py-6">
+      {/* Grilla ejecutiva — 8 cards (2 filas de 4), todas clickables al detalle */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {/* 1 · Caja atrapada hoy → cola gestionable inline (los 44 atrapados) */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowCajaAtrapada(true);
+            requestAnimationFrame(() =>
+              cajaAtrapadaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-danger bg-white px-6 py-5 text-left"
+        >
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-danger] font-semibold">
             Caja atrapada hoy
           </div>
-          <div className="display text-[48px] mt-2 leading-none text-[--color-danger]">
+          <div className="display text-[36px] mt-2 leading-none text-[--color-danger]">
             {fmtCLPCompact(totalAtrapado)}
           </div>
           <div className="text-[13px] text-[--color-fg-muted] mt-2">
             <span className="text-[--color-fg] font-semibold">
               {fmtNum(atrapados.length)} operaciones
             </span>{" "}
-            con capital detenido operacionalmente
+            con capital detenido
           </div>
-          <div className="text-[11px] text-[--color-fg-dim] mt-2 leading-snug">
-            Total sin doble conteo. Los comandos de abajo son lentes que pueden solaparse (un VIN
-            puede estar en varios).
+          <div className="inline-flex items-center gap-1 text-[12px] text-[--color-danger] font-medium mt-3">
+            Ver cola <ArrowRight className="size-3.5" />
           </div>
-        </div>
+        </button>
 
+        {/* 2 · Máxima alerta → cola gestionable inline */}
         <button
-          onClick={() => selCmd("criticos")}
-          className={cn(
-            "surface surface-hover top-strip strip-operativo bg-white px-7 py-6 text-left",
-            tab === "criticos" && "ring-2 ring-[--color-accent]/30 border-[--color-accent]",
-          )}
+          type="button"
+          onClick={() => {
+            setShowMaximaAlerta(true);
+            requestAnimationFrame(() =>
+              maximaAlertaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-operativo bg-white px-6 py-5 text-left"
         >
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-accent] font-semibold">
             Máxima alerta
           </div>
-          <div className="display text-[34px] mt-2 leading-none text-[--color-fg]">
+          <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
             {fmtNum(urgentes.length)} casos
           </div>
           <div className="text-[13px] text-[--color-fg-muted] mt-2">
-            con 2+ problemas críticos juntos ·{" "}
-            <span className="text-[--color-accent] font-semibold">{fmtCLPCompact(capitalUrgente)}</span>{" "}
+            2+ problemas críticos ·{" "}
+            <span className="text-[--color-accent] font-semibold">
+              {fmtCLPCompact(capitalUrgente)}
+            </span>{" "}
             en juego
           </div>
           <div className="inline-flex items-center gap-1 text-[12px] text-[--color-accent] font-medium mt-3">
             Atacar primero <ArrowRight className="size-3.5" />
           </div>
         </button>
+
+        {/* 3 · Créditos Pompeyo >7d → cola gestionable inline (con factura >7d) */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowCp7d(true);
+            requestAnimationFrame(() =>
+              cp7dRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-danger bg-white px-6 py-5 text-left"
+        >
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-danger] font-semibold">
+            Créditos Pompeyo &gt;7d
+          </div>
+          <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
+            {fmtNum(creditosPompeyo7d.length)} casos
+          </div>
+          <div className="text-[13px] text-[--color-fg-muted] mt-2">
+            <span className="text-[--color-danger] font-semibold">
+              {fmtCLPCompact(montoCreditosPompeyo7d)}
+            </span>{" "}
+            en juego
+          </div>
+          <div className="inline-flex items-center gap-1 text-[12px] text-[--color-danger] font-medium mt-3">
+            Ver cola CP <ArrowRight className="size-3.5" />
+          </div>
+        </button>
+
+        {/* 4 · Seguimientos atrasados → toggle de sección inline debajo */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowSeguimientos(true);
+            requestAnimationFrame(() =>
+              seguimientosRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-warning bg-white px-6 py-5 text-left"
+        >
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-warning] font-semibold">
+            Seguimientos atrasados
+          </div>
+          <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
+            {fmtNum(seguimientosAtrasados.length)} casos
+          </div>
+          <div className="text-[13px] text-[--color-fg-muted] mt-2">
+            fecha compromiso vencida ·{" "}
+            <span className="text-[--color-warning] font-semibold">
+              {fmtCLPCompact(montoSeguimientosAtrasados)}
+            </span>{" "}
+            en juego
+          </div>
+          <div className="inline-flex items-center gap-1 text-[12px] text-[--color-warning] font-medium mt-3">
+            Ver cola <ArrowRight className="size-3.5" />
+          </div>
+        </button>
       </div>
+
+      {/* Segunda fila ejecutiva — 4 alertas adicionales (FNE, saldos, bonos, prov). */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {/* 5 · FNE >7d → toggle inline */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowFne7d(true);
+            requestAnimationFrame(() =>
+              fne7dRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-danger bg-white px-6 py-5 text-left"
+        >
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-danger] font-semibold">
+            FNE &gt;7d
+          </div>
+          <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
+            {fmtNum(fne7d.length)} casos
+          </div>
+          <div className="text-[13px] text-[--color-fg-muted] mt-2">
+            facturados sin entregar ·{" "}
+            <span className="text-[--color-danger] font-semibold">
+              {fmtCLPCompact(montoFne7d)}
+            </span>
+          </div>
+          <div className="inline-flex items-center gap-1 text-[12px] text-[--color-danger] font-medium mt-3">
+            Ver cola <ArrowRight className="size-3.5" />
+          </div>
+        </button>
+
+        {/* 6 · Saldos autos >30d (T3+) → toggle inline */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowSaldosAutos(true);
+            requestAnimationFrame(() =>
+              saldosAutosRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-warning bg-white px-6 py-5 text-left"
+        >
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-warning] font-semibold">
+            Saldos autos &gt;30d
+          </div>
+          <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
+            {fmtNum(saldosAutos30d.length)} saldos
+          </div>
+          <div className="text-[13px] text-[--color-fg-muted] mt-2">
+            tramos T3+ ·{" "}
+            <span className="text-[--color-warning] font-semibold">
+              {fmtCLPCompact(montoSaldosAutos30d)}
+            </span>
+          </div>
+          <div className="inline-flex items-center gap-1 text-[12px] text-[--color-warning] font-medium mt-3">
+            Ver detalle <ArrowRight className="size-3.5" />
+          </div>
+        </button>
+
+        {/* 7 · Bonos / comisiones >30d → toggle inline */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowBonos(true);
+            requestAnimationFrame(() =>
+              bonosRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-warning bg-white px-6 py-5 text-left"
+        >
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-warning] font-semibold">
+            Bonos / comis. &gt;30d
+          </div>
+          <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
+            {fmtNum(bonos30d.length)} saldos
+          </div>
+          <div className="text-[13px] text-[--color-fg-muted] mt-2">
+            tramos T3+ ·{" "}
+            <span className="text-[--color-warning] font-semibold">
+              {fmtCLPCompact(montoBonos30d)}
+            </span>
+          </div>
+          <div className="inline-flex items-center gap-1 text-[12px] text-[--color-warning] font-medium mt-3">
+            Ver detalle <ArrowRight className="size-3.5" />
+          </div>
+        </button>
+
+        {/* 8 · Provisiones no facturadas >30d → toggle inline */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowProvNoFact(true);
+            requestAnimationFrame(() =>
+              provNoFactRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            );
+          }}
+          className="surface surface-hover top-strip strip-warning bg-white px-6 py-5 text-left"
+        >
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-warning] font-semibold">
+            Prov. no fact. &gt;30d
+          </div>
+          <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
+            {fmtNum(provNoFact30d.length)} casos
+          </div>
+          <div className="text-[13px] text-[--color-fg-muted] mt-2">
+            sin facturar ·{" "}
+            <span className="text-[--color-warning] font-semibold">
+              {fmtCLPCompact(montoProvNoFact30d)}
+            </span>
+          </div>
+          <div className="inline-flex items-center gap-1 text-[12px] text-[--color-warning] font-medium mt-3">
+            Ver detalle <ArrowRight className="size-3.5" />
+          </div>
+        </button>
+      </div>
+
+      {/* Secciones inline gestionables · FNE >7d, Saldos autos, Bonos, Provisiones
+          Cada fila reusa GestionInline con la clave estándar:
+          - VIN limpio para autos
+          - SALDO-{cajón|nota|rowIndex} para saldos autos
+          - BONO-{factura|nota|rowIndex} para bonos/comisiones
+          - claveGestion (PROV-{id}) para provisiones */}
+      {showFne7d && (
+        <ColaGestionableInline
+          titulo="FNE >7d"
+          subtitulo="facturados sin entregar con >7 días desde factura"
+          tono="danger"
+          refContainer={fne7dRef}
+          onClose={() => setShowFne7d(false)}
+          filas={[...fne7d]
+            .sort((a, b) => b.vu.capitalComprometido - a.vu.capitalComprometido)
+            .map<FilaCola>((x) => ({
+              clave: x.vu.vinLimpio,
+              vin: x.vu.vinLimpio,
+              cliente: x.vu.cliente,
+              vendedor: x.vu.vendedor,
+              sucursal: x.vu.sucursal,
+              patente: x.vu.patente,
+              marca: x.vu.marca,
+              modelo: x.vu.modelo,
+              diasRetenido: x.vu.fneDiasFactura ?? null,
+              diasSublabel: "desde factura",
+              monto: x.vu.capitalComprometido,
+              tieneCp: x.vu.creditoPompeyo > 0,
+              montoCp: x.vu.creditoPompeyo,
+            }))}
+        />
+      )}
+
+      {showSaldosAutos && (
+        <ColaGestionableInline
+          titulo="Saldos autos >30d (T3+)"
+          subtitulo="saldos de vehículos en tramos T3 y superiores"
+          tono="warning"
+          refContainer={saldosAutosRef}
+          onClose={() => setShowSaldosAutos(false)}
+          filas={[...saldosAutos30d]
+            .sort((a, b) => b.saldoXDocumentar - a.saldoXDocumentar)
+            .map<FilaCola>((r) => {
+              const claveDoc =
+                r.vinResuelto ??
+                `SALDO-${r.cajonLimpio ?? r.cajon ?? r.numNota ?? r.rowIndex}`;
+              return {
+                clave: claveDoc,
+                vin: r.vinResuelto ?? null,
+                cliente: r.cliente,
+                vendedor: r.vendedor,
+                sucursal: r.sucursal,
+                patente: r.patente,
+                marca: r.marca,
+                modelo: r.modelo,
+                primario: r.cajonLimpio ?? r.cajon ?? `Fila ${r.rowIndex}`,
+                diasRetenido: r.diasArchivo ?? null,
+                diasSublabel: r.statusDPS,
+                monto: r.saldoXDocumentar,
+                tieneCp: r.cPompeyoCLP > 0,
+                montoCp: r.cPompeyoCLP,
+              };
+            })}
+        />
+      )}
+
+      {showBonos && (
+        <ColaGestionableInline
+          titulo="Bonos / comisiones >30d (T3+)"
+          subtitulo="facturas de bonos y comisiones en tramos T3+"
+          tono="warning"
+          refContainer={bonosRef}
+          onClose={() => setShowBonos(false)}
+          filas={[...bonos30d]
+            .sort((a, b) => b.saldoXDocumentar - a.saldoXDocumentar)
+            .map<FilaCola>((r) => {
+              const id = r.numeroFactura ?? r.numNota ?? r.rowIndex;
+              return {
+                clave: `BONO-${id}`,
+                vin: null,
+                cliente: r.cliente,
+                vendedor: r.vendedor,
+                sucursal: r.sucursal,
+                patente: null,
+                marca: r.marca,
+                modelo: r.subTipo,
+                primario: String(r.numeroFactura ?? r.numNota ?? `Fila ${r.rowIndex}`),
+                diasRetenido: r.diasArchivo ?? null,
+                diasSublabel: r.statusDPS,
+                monto: r.saldoXDocumentar,
+                tieneCp: false,
+              };
+            })}
+        />
+      )}
+
+      {showProvNoFact && (
+        <ColaGestionableInline
+          titulo="Provisiones no facturadas >30d"
+          subtitulo="provisiones operacionales sin facturar"
+          tono="warning"
+          refContainer={provNoFactRef}
+          onClose={() => setShowProvNoFact(false)}
+          filas={[...provNoFact30d]
+            .sort((a, b) => (b.agingDias ?? 0) - (a.agingDias ?? 0))
+            .map<FilaCola>((p) => ({
+              clave: p.claveGestion, // ya viene del parser: "PROV-{id}"
+              vin: null,
+              cliente: p.solicitante ?? p.razonSocial,
+              vendedor: p.solicitante,
+              sucursal: p.razonSocial,
+              patente: null,
+              marca: p.origen,
+              modelo: p.concepto,
+              primario: p.concepto ?? `Provisión ${p.id ?? p.rowIndex}`,
+              diasRetenido: p.agingDias ?? null,
+              diasSublabel: "sin facturar",
+              monto: p.montoProvision,
+              tieneCp: false,
+            }))}
+        />
+      )}
+
+      {/* Secciones inline gestionables · Cards 1, 2, 3 del hero. */}
+      {showCajaAtrapada && (
+        <ColaGestionableInline
+          titulo="Caja atrapada hoy"
+          subtitulo="capital detenido operacionalmente (universo dedupeado)"
+          tono="danger"
+          refContainer={cajaAtrapadaRef}
+          onClose={() => setShowCajaAtrapada(false)}
+          filas={[...atrapados]
+            .sort((a, b) => b.capitalComprometido - a.capitalComprometido)
+            .map<FilaCola>((vu) => ({
+              clave: vu.vinLimpio,
+              vin: vu.vinLimpio,
+              cliente: vu.cliente,
+              vendedor: vu.vendedor,
+              sucursal: vu.sucursal,
+              patente: vu.patente,
+              marca: vu.marca,
+              modelo: vu.modelo,
+              diasRetenido: diasDesdeFacturaDe(vu),
+              diasSublabel: "desde factura",
+              monto: vu.capitalComprometido,
+              tieneCp: vu.creditoPompeyo > 0,
+              montoCp: vu.creditoPompeyo,
+            }))}
+        />
+      )}
+
+      {showMaximaAlerta && (
+        <ColaGestionableInline
+          titulo="Máxima alerta"
+          subtitulo="2+ factores críticos en el mismo VIN (o judicial)"
+          tono="accent"
+          refContainer={maximaAlertaRef}
+          onClose={() => setShowMaximaAlerta(false)}
+          filas={[...urgentes]
+            .sort((a, b) => b.vu.capitalComprometido - a.vu.capitalComprometido)
+            .map<FilaCola>((x) => ({
+              clave: x.vu.vinLimpio,
+              vin: x.vu.vinLimpio,
+              cliente: x.vu.cliente,
+              vendedor: x.vu.vendedor,
+              sucursal: x.vu.sucursal,
+              patente: x.vu.patente,
+              marca: x.vu.marca,
+              modelo: x.vu.modelo,
+              diasRetenido: diasDesdeFacturaDe(x.vu),
+              diasSublabel: "desde factura",
+              monto: x.vu.capitalComprometido,
+              tieneCp: x.vu.creditoPompeyo > 0,
+              montoCp: x.vu.creditoPompeyo,
+            }))}
+        />
+      )}
+
+      {showCp7d && (
+        <ColaGestionableInline
+          titulo="Créditos Pompeyo >7d"
+          subtitulo="CP con factura > 7 días"
+          tono="danger"
+          refContainer={cp7dRef}
+          onClose={() => setShowCp7d(false)}
+          filas={[...creditosPompeyo7d]
+            .sort((a, b) => b.vu.creditoPompeyo - a.vu.creditoPompeyo)
+            .map<FilaCola>((x) => ({
+              clave: x.vu.vinLimpio,
+              vin: x.vu.vinLimpio,
+              cliente: x.vu.cliente,
+              vendedor: x.vu.vendedor,
+              sucursal: x.vu.sucursal,
+              patente: x.vu.patente,
+              marca: x.vu.marca,
+              modelo: x.vu.modelo,
+              diasRetenido: diasMaxCreditoPompeyo(x.vu),
+              diasSublabel: "desde factura CP",
+              monto: x.vu.creditoPompeyo,
+              tieneCp: true,
+              montoCp: x.vu.creditoPompeyo,
+            }))}
+        />
+      )}
+
+      {/* Sección inline · Seguimientos atrasados (cola gestionable estándar). */}
+      {showSeguimientos && (
+        <ColaGestionableInline
+          titulo="Seguimientos atrasados"
+          subtitulo="fecha compromiso vencida · gestión no resuelta"
+          tono="warning"
+          refContainer={seguimientosRef}
+          onClose={() => setShowSeguimientos(false)}
+          filas={[...seguimientosAtrasados]
+            .sort((a, b) => {
+              const da = evalCompromiso(gestionMap[a.vu.vinLimpio]?.fechaCompromiso ?? null).dias;
+              const db = evalCompromiso(gestionMap[b.vu.vinLimpio]?.fechaCompromiso ?? null).dias;
+              return db - da;
+            })
+            .map<FilaCola>((x) => {
+              const g = gestionMap[x.vu.vinLimpio];
+              const c = evalCompromiso(g?.fechaCompromiso ?? null);
+              return {
+                clave: x.vu.vinLimpio,
+                vin: x.vu.vinLimpio,
+                cliente: x.vu.cliente,
+                vendedor: g?.responsable ?? x.vu.vendedor,
+                sucursal: x.vu.sucursal,
+                patente: x.vu.patente,
+                marca: x.vu.marca,
+                modelo: x.vu.modelo,
+                diasRetenido: c.dias,
+                diasSublabel: "vencido hace",
+                monto: x.vu.capitalComprometido,
+                tieneCp: x.vu.creditoPompeyo > 0,
+                montoCp: x.vu.creditoPompeyo,
+              };
+            })}
+        />
+      )}
 
       {/* Ingesta logística — opcional, enriquece la cola con cruce por VIN */}
       <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-[--color-border] bg-[--color-bg-elev-1]/40 px-4 py-2.5">
@@ -1460,5 +2038,383 @@ function GestionEstadoMini({ vin }: { vin: string }) {
         </span>
       )}
     </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cola gestionable inline — mismo patrón visual que /facturados-no-entregados
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Tabla rica con columnas estándar del sistema:
+//   CLIENTE · SUCURSAL (con vendedor) | VIN · PATENTE | MARCA · MODELO |
+//   DÍAS RETENIDO (con sublabel) | VALOR (formato $X.XXX) | ALERTA |
+//   C. POMPEYO | GESTIÓN (inline persistente)
+//
+// + Filtros temporales (Todos / ≤3d / 4-7d / 8-15d / 16-30d / >30d)
+// + Franja lateral roja para críticos (>30d)
+// + Click en fila expande FichaOperacionalVIN inline (cuando hay VIN real)
+//
+// Para colas sin VIN (saldos / bonos / provisiones), las columnas VIN/marca/
+// modelo se rellenan con la mejor info doc disponible. La gestión se persiste
+// con la clave estándar (`SALDO-…`, `BONO-…`, `PROV-…`).
+
+type TramoDias = "all" | "t0_3" | "t4_7" | "t8_15" | "t16_30" | "t30";
+
+const TRAMO_LABEL: Record<TramoDias, string> = {
+  all: "Todos",
+  t0_3: "≤3 días",
+  t4_7: "4-7 días",
+  t8_15: "8-15 días",
+  t16_30: "16-30 días",
+  t30: "Más de 30 días",
+};
+
+interface FilaCola {
+  clave: string;          // gestionKey — VIN o "PREFIJO-ID"
+  vin?: string | null;    // VIN limpio para expandir FichaOperacionalVIN (si aplica)
+  cliente?: string | null;
+  vendedor?: string | null;
+  sucursal?: string | null;
+  patente?: string | null;
+  marca?: string | null;
+  modelo?: string | null;
+  /** Texto principal cuando la cola es no-VIN (saldos/bonos/prov). */
+  primario?: string;
+  diasRetenido?: number | null;
+  /** Sub-label debajo de los días — ej. "desde factura", "compromiso vencido". */
+  diasSublabel?: string;
+  monto: number;
+  /** ¿Tiene crédito Pompeyo? Para badge C.P. */
+  tieneCp?: boolean;
+  /** Monto del CP (si aplica) — solo para mostrar en el badge. */
+  montoCp?: number;
+}
+
+function clasificarTramo(d: number | null | undefined): TramoDias {
+  if (d == null) return "all";
+  if (d <= 3) return "t0_3";
+  if (d <= 7) return "t4_7";
+  if (d <= 15) return "t8_15";
+  if (d <= 30) return "t16_30";
+  return "t30";
+}
+
+function alertaPorDias(d: number | null | undefined): {
+  texto: string | null;
+  tono: "danger" | "warning" | "muted" | null;
+} {
+  if (d == null) return { texto: null, tono: null };
+  if (d > 30) return { texto: "Crítico · >30d", tono: "danger" };
+  if (d > 15) return { texto: "Atrasado · >15d", tono: "warning" };
+  if (d > 7) return { texto: "Atención · >7d", tono: "muted" };
+  return { texto: null, tono: null };
+}
+
+function ColaGestionableInline({
+  titulo,
+  subtitulo,
+  tono,
+  filas,
+  refContainer,
+  onClose,
+}: {
+  titulo: string;
+  subtitulo?: string;
+  tono: "danger" | "warning" | "accent";
+  /** El monto total se computa internamente sumando `filas[].monto`. */
+  filas: FilaCola[];
+  refContainer: React.RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+}) {
+  const [tramo, setTramo] = useState<TramoDias>("all");
+  const [vinExpandido, setVinExpandido] = useState<string | null>(null);
+
+  const stripClass =
+    tono === "danger" ? "strip-danger" : tono === "warning" ? "strip-warning" : "strip-operativo";
+  const colorClass =
+    tono === "danger"
+      ? "text-[--color-danger]"
+      : tono === "warning"
+        ? "text-[--color-warning]"
+        : "text-[--color-accent]";
+
+  // Filtro temporal
+  const filtradas = useMemo(() => {
+    if (tramo === "all") return filas;
+    return filas.filter((f) => clasificarTramo(f.diasRetenido) === tramo);
+  }, [filas, tramo]);
+
+  // Counts por tramo
+  const counts = useMemo(() => {
+    const c: Record<TramoDias, number> = {
+      all: filas.length, t0_3: 0, t4_7: 0, t8_15: 0, t16_30: 0, t30: 0,
+    };
+    for (const f of filas) {
+      const t = clasificarTramo(f.diasRetenido);
+      if (t !== "all") c[t]++;
+    }
+    return c;
+  }, [filas]);
+
+  const montoFiltrado = useMemo(
+    () => filtradas.reduce((s, f) => s + f.monto, 0),
+    [filtradas],
+  );
+
+  const slice = filtradas.slice(0, 50);
+
+  return (
+    <div ref={refContainer} className={cn("surface bg-white px-6 py-5 top-strip space-y-3", stripClass)}>
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className={cn("text-[10.5px] uppercase tracking-[0.14em] font-semibold", colorClass)}>
+            {titulo}
+          </div>
+          <div className="text-[14px] font-semibold text-[--color-fg] mt-0.5">
+            {fmtNum(filtradas.length)} {filtradas.length === 1 ? "caso" : "casos"}
+            {tramo !== "all" && (
+              <span className="text-[12px] text-[--color-fg-muted] font-normal">
+                {" "}de {fmtNum(filas.length)}
+              </span>
+            )}
+            {montoFiltrado > 0 && (
+              <>
+                {" · "}
+                <span className={colorClass}>{fmtCLP(montoFiltrado)}</span>
+              </>
+            )}
+            {subtitulo && (
+              <span className="text-[12px] text-[--color-fg-muted] font-normal"> · {subtitulo}</span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[12px] text-[--color-fg-muted] hover:text-[--color-fg] underline"
+        >
+          Cerrar
+        </button>
+      </div>
+
+      {/* Filtros temporales */}
+      <div className="flex flex-wrap gap-1.5">
+        {(Object.keys(TRAMO_LABEL) as TramoDias[]).map((t) => {
+          const n = counts[t];
+          const activo = tramo === t;
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTramo(t)}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11.5px] font-medium ring-1 ring-inset transition",
+                activo
+                  ? "bg-[--color-accent-dim] text-[--color-accent] ring-[--color-accent]"
+                  : "ring-[--color-border] text-[--color-fg-muted] hover:text-[--color-fg] hover:bg-[--color-bg-elev-1]",
+              )}
+            >
+              {TRAMO_LABEL[t]}
+              <span
+                className={cn(
+                  "text-[10.5px] tabular-nums rounded px-1",
+                  activo
+                    ? "bg-white text-[--color-accent]"
+                    : "bg-[--color-bg-elev-2] text-[--color-fg-muted]",
+                )}
+              >
+                {fmtNum(n)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tabla rica */}
+      {filtradas.length === 0 ? (
+        <div className="text-[12.5px] text-[--color-fg-muted] italic py-4">
+          No hay casos en este tramo.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead className="text-[10.5px] uppercase tracking-wider text-[--color-fg-muted]">
+              <tr className="border-b border-[--color-border]">
+                <th className="text-left py-2 font-semibold">Cliente · Sucursal</th>
+                <th className="text-left py-2 font-semibold">VIN · Patente</th>
+                <th className="text-left py-2 font-semibold">Marca · Modelo</th>
+                <th className="text-right py-2 font-semibold">Días retenido</th>
+                <th className="text-right py-2 font-semibold">Valor</th>
+                <th className="text-left py-2 font-semibold">Alerta</th>
+                <th className="text-left py-2 font-semibold">C. Pompeyo</th>
+                <th className="text-left py-2 font-semibold pl-3">Gestión</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[--color-border-soft]">
+              {slice.map((f) => {
+                const al = alertaPorDias(f.diasRetenido);
+                const sevClass =
+                  al.tono === "danger"
+                    ? "shadow-[inset_3px_0_0_var(--color-danger)]"
+                    : al.tono === "warning"
+                      ? "shadow-[inset_3px_0_0_var(--color-warning)]"
+                      : "";
+                const expandido = !!f.vin && vinExpandido === f.vin;
+                const puedeExpandir = !!f.vin;
+                return (
+                  <Fragment key={f.clave}>
+                    <tr
+                      className={cn(
+                        "align-top hover:bg-[--color-bg-elev-1] transition",
+                        sevClass,
+                        puedeExpandir && "cursor-pointer",
+                      )}
+                      onClick={() => {
+                        if (puedeExpandir && f.vin) {
+                          setVinExpandido(expandido ? null : f.vin);
+                        }
+                      }}
+                    >
+                      {/* Cliente · Sucursal (+ vendedor abajo) */}
+                      <td className="py-2 pl-3">
+                        <div className="font-medium text-[--color-fg] truncate max-w-[260px]" title={f.cliente ?? ""}>
+                          {f.cliente ?? f.primario ?? "—"}
+                        </div>
+                        <div className="text-[10.5px] text-[--color-fg-muted] mt-0.5 truncate max-w-[260px]">
+                          {f.sucursal ?? "—"}
+                          {f.vendedor && (
+                            <span className="text-[--color-fg-dim]"> · {f.vendedor}</span>
+                          )}
+                        </div>
+                      </td>
+                      {/* VIN · Patente */}
+                      <td className="py-2">
+                        <div className="mono whitespace-nowrap">{f.vin ?? f.primario ?? "—"}</div>
+                        <div className="text-[10.5px] text-[--color-fg-dim] mt-0.5">{f.patente ?? "—"}</div>
+                      </td>
+                      {/* Marca · Modelo */}
+                      <td className="py-2">
+                        <div className="font-medium">{f.marca ?? "—"}</div>
+                        <div className="text-[10.5px] text-[--color-fg-muted] mt-0.5 truncate max-w-[200px]">
+                          {f.modelo ?? ""}
+                        </div>
+                      </td>
+                      {/* Días retenido */}
+                      <td className="py-2 text-right">
+                        {f.diasRetenido == null ? (
+                          <span className="text-[--color-fg-muted] text-[12px]">—</span>
+                        ) : (
+                          <>
+                            <div
+                              className={cn(
+                                "font-semibold tabular-nums text-[14px]",
+                                al.tono === "danger"
+                                  ? "text-[--color-danger]"
+                                  : al.tono === "warning"
+                                    ? "text-[--color-warning]"
+                                    : "text-[--color-fg]",
+                              )}
+                            >
+                              {f.diasRetenido}d
+                            </div>
+                            {f.diasSublabel && (
+                              <div className="text-[10.5px] text-[--color-fg-dim] mt-0.5">
+                                {f.diasSublabel}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </td>
+                      {/* Valor */}
+                      <td className="py-2 text-right tabular-nums font-medium">
+                        {fmtCLP(f.monto)}
+                      </td>
+                      {/* Alerta */}
+                      <td className="py-2">
+                        {al.texto ? (
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1 ring-inset",
+                              al.tono === "danger"
+                                ? "bg-[--color-danger]/10 text-[--color-danger] ring-[--color-danger]/30"
+                                : al.tono === "warning"
+                                  ? "bg-[--color-warning]/10 text-[--color-warning] ring-[--color-warning]/30"
+                                  : "bg-[--color-bg-elev-2] text-[--color-fg-muted] ring-[--color-border]",
+                            )}
+                          >
+                            <AlertTriangle className="size-3" />
+                            {al.texto}
+                          </span>
+                        ) : (
+                          <span className="text-[--color-fg-dim] text-[11px]">—</span>
+                        )}
+                      </td>
+                      {/* C. Pompeyo */}
+                      <td className="py-2">
+                        {f.tieneCp ? (
+                          <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1 ring-inset bg-[--color-danger]/10 text-[--color-danger] ring-[--color-danger]/30">
+                            Con C.P.
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-semibold ring-1 ring-inset bg-[--color-success]/10 text-[--color-success] ring-[--color-success]/30">
+                            Sin C.P.
+                          </span>
+                        )}
+                      </td>
+                      {/* Gestión — regla "VIN con V corta":
+                          - HAY VIN  → botón que abre/cierra la FichaOperacionalVIN
+                                       completa (mismo lugar transversal de gestión).
+                          - NO VIN   → popover GestionInline con la clave doc
+                                       (SALDO-/BONO-/PROV-) como fallback. */}
+                      <td className="py-2 pl-3">
+                        {puedeExpandir && f.vin ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setVinExpandido(expandido ? null : f.vin!);
+                            }}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] font-semibold ring-1 ring-inset transition",
+                              expandido
+                                ? "bg-[--color-accent-dim] text-[--color-accent] ring-[--color-accent]"
+                                : "bg-white text-[--color-accent] ring-[--color-accent]/30 hover:bg-[--color-accent-dim]",
+                            )}
+                          >
+                            {expandido ? "Cerrar caso" : "Abrir caso"}
+                            {expandido ? (
+                              <ChevronDown className="size-3" />
+                            ) : (
+                              <ChevronRight className="size-3" />
+                            )}
+                          </button>
+                        ) : (
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <GestionInline vin={f.clave} variant="trigger" />
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                    {expandido && f.vin && (
+                      <tr>
+                        <td colSpan={8} className="bg-[--color-bg-elev-1] px-3 py-3">
+                          <FichaOperacionalVIN vin={f.vin} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          {filtradas.length > 50 && (
+            <div className="text-[11px] text-[--color-fg-muted] mt-2 italic">
+              Mostrando 50 de {fmtNum(filtradas.length)} · ordenados por monto desc
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
