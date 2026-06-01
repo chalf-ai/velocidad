@@ -178,6 +178,77 @@ export function factoresCriticosDe(vu: VehiculoUnificado): FactorCritico[] {
 }
 
 /**
+ * Días desde la fecha de factura del crédito Pompeyo más antiguo del VIN.
+ *
+ * Busca el saldo con `subTipo === "credito_pompeyo"` y `cPompeyoCLP > 0`
+ * más viejo (mayor cantidad de días). Si no existe ningún saldo CP con
+ * fecha registrada, devuelve null.
+ *
+ * El propósito es responder "¿este VIN tiene un CP con factura > 7d?" sin
+ * depender del aging del VIN en general (que es el estado del flujo
+ * operacional, no la edad del crédito).
+ */
+export function diasMaxCreditoPompeyo(
+  vu: VehiculoUnificado,
+  hoy: Date = new Date(),
+): number | null {
+  const baseMs = hoy.getTime();
+  let max: number | null = null;
+  for (const s of vu.saldosDetalle ?? []) {
+    if (s.subTipo !== "credito_pompeyo") continue;
+    if (s.cPompeyoCLP <= 0) continue;
+    if (!s.fechaVenta) continue;
+    const dias = Math.floor((baseMs - s.fechaVenta.getTime()) / 86_400_000);
+    if (max === null || dias > max) max = dias;
+  }
+  return max;
+}
+
+/**
+ * Días desde la factura del VIN (mejor referencia disponible).
+ *
+ * Prioriza `fneDiasFactura` (oficial de FNE), si no usa la `fechaVenta`
+ * más antigua entre los saldos vehículo del VIN como proxy. Devuelve null
+ * si no hay ninguna referencia.
+ */
+export function diasDesdeFacturaDe(
+  vu: VehiculoUnificado,
+  hoy: Date = new Date(),
+): number | null {
+  if (vu.fneDiasFactura != null) return vu.fneDiasFactura;
+  const baseMs = hoy.getTime();
+  let max: number | null = null;
+  for (const s of vu.saldosDetalle ?? []) {
+    if (s.categoria !== "vehiculo") continue;
+    if (!s.fechaVenta) continue;
+    const dias = Math.floor((baseMs - s.fechaVenta.getTime()) / 86_400_000);
+    if (max === null || dias > max) max = dias;
+  }
+  return max;
+}
+
+/**
+ * ¿El VIN es gestionable HOY para bloqueos operacionales en vivo?
+ *
+ * Más estricto que `esOperacionalActivo` (que incluye `enSaldos`): un VIN
+ * que ya está entregado pero quedó con saldo pendiente sigue contando como
+ * "operacional activo", pero NO debería aparecer en colas de gestión
+ * logística viva — eso ya pasó. Para Bloqueos logísticos / Bloqueo vivo
+ * solo cuentan los que físicamente están en piso o aún facturados sin
+ * entregar.
+ *
+ * Reglas:
+ *  - `enStockActivo`: VIN vivo en stock (en piso).
+ *  - `enFNE`: facturado pero todavía no entregado al cliente.
+ *
+ * NO entran: VINs que solo aparecen en saldos (cobranza histórica), ya
+ * entregados con saldo pendiente, ni VINs solo en histórico de ventas.
+ */
+export function esVinGestionableHoy(vu: VehiculoUnificado): boolean {
+  return vu.enStockActivo || vu.enFNE;
+}
+
+/**
  * ¿El VIN está en MÁXIMA ALERTA? Judicial cuenta por sí solo; el resto necesita
  * coincidencia de 2+ factores críticos. Puro, derivado de VehiculoUnificado.
  */
