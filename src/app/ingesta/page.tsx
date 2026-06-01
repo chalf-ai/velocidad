@@ -30,7 +30,9 @@ import {
 import { FUENTE_LABEL } from "@/lib/parser/detectar-fuente";
 
 interface CardDef {
-  id: FuenteId | "logistica";
+  /** ID lógico de la card. Los agrupados ("logistica", "logistica_romia")
+   *  no son FuenteId reales — se resuelven vía `subs`. */
+  id: FuenteId | "logistica" | "logistica_romia";
   label: string;
   desc: string;
   icon: typeof Warehouse;
@@ -42,7 +44,10 @@ const CARDS: CardDef[] = [
   { id: "fne", label: "FNE", desc: "Facturados no entregados (ROMA)", icon: Truck },
   { id: "saldos", label: "Saldos / SALVING", desc: "FUSION BD 3.0", icon: Receipt },
   { id: "provisiones", label: "Provisiones", desc: "No facturadas / facturadas", icon: ClipboardList },
-  { id: "logistica", label: "Logística", desc: "ROMA (agenda) + STLI (bodega)", icon: Truck, subs: ["logistica_roma", "logistica_stli"] },
+  { id: "logistica_romia", label: "Logística ROMIA", desc: "SCHIAPPACASSE + KAR-LOGISTICS (modelo nuevo)", icon: Truck, subs: ["romia_schiapp", "romia_kar"] },
+  { id: "logistica", label: "Logística (legacy)", desc: "ROMA (agenda) + STLI (bodega) · fallback", icon: Truck, subs: ["logistica_roma", "logistica_stli"] },
+  // Universo documental histórico — alimenta la Vista Histórica /velocidad-operacional.
+  { id: "actas", label: "Actas (histórico)", desc: "Universo documental · alimenta Vista Histórica", icon: PackageCheck },
   { id: "tescar", label: "TESCAR", desc: "Demos TEST CARS + BDR (con Stock)", icon: TestTube2 },
 ];
 
@@ -135,7 +140,7 @@ export default function IngestaPage() {
         <button
           onClick={() => inputRef.current?.click()}
           disabled={procesando}
-          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[--color-accent] text-white text-[13px] font-medium px-4 py-2 hover:opacity-90 transition disabled:opacity-50"
+          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[--color-accent] text-white text-[13px] font-medium px-4 py-2 hover:opacity-90 transition disabled:bg-[--color-accent-dim] disabled:text-[--color-accent] disabled:cursor-not-allowed disabled:ring-1 disabled:ring-inset disabled:ring-[--color-accent]/30"
         >
           <UploadCloud className="size-4" /> Subir archivos
         </button>
@@ -306,7 +311,17 @@ function FuenteCard({
               const m = metas[s];
               return (
                 <div key={s} className="flex items-center justify-between gap-2 text-[11.5px]">
-                  <span className="text-[--color-fg-muted]">{s === "logistica_roma" ? "ROMA" : "STLI"}</span>
+                  <span className="text-[--color-fg-muted]">
+                    {s === "logistica_roma"
+                      ? "ROMA"
+                      : s === "logistica_stli"
+                        ? "STLI"
+                        : s === "romia_schiapp"
+                          ? "SCHIAPP"
+                          : s === "romia_kar"
+                            ? "KAR"
+                            : s}
+                  </span>
                   {m ? (
                     <span className="mono text-[--color-fg]">
                       {fmtNum(m.registros)} reg{m.fechaCorte ? ` · ${fmtDate(m.fechaCorte)}` : ""}

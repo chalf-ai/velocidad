@@ -6,25 +6,33 @@ import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
 import { useExcelStore } from "@/lib/store";
 import { parseLogisticaFile } from "@/lib/parser/logistica";
+import { parseRomiaFile } from "@/lib/parser/romia-logistica";
 import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
 
 const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
 
 /**
- * Uploader de los 2 archivos logísticos (Logistica.xlsx + Diciembre-Mayo ROMA).
- * Un solo input: detecta automáticamente cuál es y lo enruta al slot correcto.
- * Se cargan aparte; sin ellos el Centro de Acción funciona igual (sin logística).
+ * Uploader de archivos logísticos. Detecta automáticamente el tipo:
+ *   - SCHIAPPACASSE / KAR-LOGISTICS  → modelo NUEVO ROMIA (prioridad)
+ *   - Logistica.xlsx                  → modelo VIEJO STLI (fallback)
+ *   - Diciembre-Mayo ROMA.xlsx        → modelo VIEJO ROMA (fallback)
+ * Multi-file: aceptable subir varios en una sola operación.
+ * Sin ninguno, el Centro de Acción funciona igual (sin dimensión logística).
  */
 export function UploadLogisticaButton({ compact = false }: { compact?: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const {
     logisticaRoma,
     logisticaSTLI,
+    romiaSchiapp,
+    romiaKar,
     logisticaLoading,
     logisticaError,
     setLogisticaRoma,
     setLogisticaSTLI,
+    setRomiaSchiapp,
+    setRomiaKar,
     setLogisticaLoading,
     setLogisticaError,
     clearLogistica,
@@ -42,6 +50,26 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
     setLogisticaError(null);
     try {
       for (const file of files) {
+        // 1) Intentar ROMIA primero (modelo nuevo). Si el archivo no es SCHIAPP
+        // ni KAR, parseRomiaFile lanza — cae al catch interno para probar legacy.
+        let manejadoComoRomia = false;
+        try {
+          const r = await parseRomiaFile(file);
+          if (r.bodega === "SCHIAPP") setRomiaSchiapp(r.filas);
+          else if (r.bodega === "KAR") setRomiaKar(r.filas);
+          manejadoComoRomia = true;
+          // No persistimos snapshots ROMIA aún (enum DB no soporta) — se hará en
+          // próxima iteración cuando agreguemos ROMIA_SCHIAPP/ROMIA_KAR al schema.
+          console.info(
+            `[romia] ${r.bodega} cargado · ${r.filas.length} VINs · hojas: ${r.report.hojasProcesadas.join(", ")}`,
+          );
+        } catch {
+          // No es ROMIA — caemos a legacy.
+        }
+
+        if (manejadoComoRomia) continue;
+
+        // 2) Fallback legacy (Logistica.xlsx / Diciembre-Mayo ROMA)
         const parsed = await parseLogisticaFile(file);
         if (parsed.kind === "ROMA" && parsed.roma) {
           setLogisticaRoma(parsed.roma);
@@ -90,16 +118,23 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
     }
   };
 
-  const cargados = (logisticaRoma ? 1 : 0) + (logisticaSTLI ? 1 : 0);
+  const cargados =
+    (logisticaRoma ? 1 : 0) +
+    (logisticaSTLI ? 1 : 0) +
+    (romiaSchiapp ? 1 : 0) +
+    (romiaKar ? 1 : 0);
   const resumen =
     cargados > 0
       ? [
-          logisticaRoma ? `ROMA ${fmtNum(logisticaRoma.length)}` : null,
-          logisticaSTLI ? `STLI ${fmtNum(logisticaSTLI.length)}` : null,
+          romiaSchiapp ? `SCHIAPP ${fmtNum(romiaSchiapp.length)}` : null,
+          romiaKar ? `KAR ${fmtNum(romiaKar.length)}` : null,
+          logisticaSTLI ? `STLI ${fmtNum(logisticaSTLI.length)} (legacy)` : null,
+          logisticaRoma ? `ROMA ${fmtNum(logisticaRoma.length)} (legacy)` : null,
         ]
           .filter(Boolean)
           .join(" · ")
       : null;
+  const tieneRomia = !!(romiaSchiapp || romiaKar);
 
   if (compact) {
     return (
@@ -141,10 +176,10 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
       <div className="flex items-center gap-4">
         <div
           className={`size-10 rounded-xl grid place-items-center shrink-0 ${
-            cargados === 2 ? "bg-[--color-success-dim]" : "bg-[--color-bg-elev-2]"
+            tieneRomia ? "bg-[--color-success-dim]" : "bg-[--color-bg-elev-2]"
           }`}
         >
-          {cargados === 2 ? (
+          {tieneRomia ? (
             <CheckCircle2 className="size-5 text-[--color-success]" />
           ) : (
             <Truck className="size-5 text-[--color-fg-muted]" />
@@ -152,12 +187,12 @@ export function UploadLogisticaButton({ compact = false }: { compact?: boolean }
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-[13px] font-medium text-[--color-fg]">
-            Logística <span className="text-[--color-fg-dim]">(Logistica.xlsx + ROMA · opcional)</span>
+            Logística <span className="text-[--color-fg-dim]">(SCHIAPP + KAR · nuevo · legacy opcional)</span>
           </div>
           <div className="text-[12px] text-[--color-fg-muted] mt-0.5 truncate">
             {resumen
-              ? `Cargado: ${resumen}${cargados < 2 ? " · falta el otro archivo" : ""}`
-              : "Sin esto, el Centro de Acción funciona igual (sin dimensión logística)."}
+              ? `Cargado: ${resumen}`
+              : "Subí SCHIAPPCASSE y/o KAR-LOGISTICS. Los archivos viejos (Logistica.xlsx + Diciembre-Mayo ROMA) siguen aceptándose como fallback temporal."}
           </div>
           {logisticaError && (
             <div className="text-[12px] text-[--color-danger] mt-1">{logisticaError}</div>

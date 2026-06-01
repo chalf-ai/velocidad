@@ -13,21 +13,29 @@ import {
   type LogisticaRomaRow,
   type LogisticaStliRow,
 } from "./logistica/construir";
+import type { RomiaRow } from "./logistica/romia-tipos";
 import { limpiarVIN } from "./parser/venta-apc";
 
-/** Reconstruye el merge logístico por VIN con el stock/FNE vigentes. */
+/** Reconstruye el merge logístico por VIN con el stock/FNE vigentes.
+ *  Acepta opcionalmente filas ROMIA (SCHIAPP+KAR) — modelo nuevo, prioridad
+ *  sobre el legacy. Si no hay ninguna fuente, retorna null. */
 function buildLogisticaPorVin(
   roma: LogisticaRomaRow[] | null,
   stli: LogisticaStliRow[] | null,
   data: ParsedExcel | null,
   fne: ParsedFNE | null,
+  romiaSchiapp: RomiaRow[] | null = null,
+  romiaKar: RomiaRow[] | null = null,
 ): Map<string, LogisticaOperacionVIN> | null {
-  if (!roma && !stli) return null;
+  if (!roma && !stli && !romiaSchiapp && !romiaKar) return null;
   const stockVins = new Set<string>();
   if (data) for (const v of data.vehiculos) { const k = limpiarVIN(v.vin); if (k) stockVins.add(k); }
   const fneVins = new Set<string>();
   if (fne) for (const r of fne.registros) { const k = limpiarVIN(r.vin); if (k) fneVins.add(k); }
-  return construirLogisticaPorVin(roma ?? [], stli ?? [], { stockVins, fneVins });
+  const romia: RomiaRow[] = [];
+  if (romiaSchiapp) romia.push(...romiaSchiapp);
+  if (romiaKar) romia.push(...romiaKar);
+  return construirLogisticaPorVin(roma ?? [], stli ?? [], { stockVins, fneVins, romia });
 }
 
 interface StoreState {
@@ -44,9 +52,14 @@ interface StoreState {
   provisiones: ParsedProvisiones | null;
 
   /** Logística — agenda del vendedor (ROMA) y ejecución de bodega (STLI), se
-   *  cargan aparte. `logisticaPorVin` es el merge derivado por VIN normalizado. */
+   *  cargan aparte. `logisticaPorVin` es el merge derivado por VIN normalizado.
+   *  Coexisten con el modelo nuevo ROMIA (SCHIAPP/KAR) — ver `romiaSchiapp/kar`. */
   logisticaRoma: LogisticaRomaRow[] | null;
   logisticaSTLI: LogisticaStliRow[] | null;
+  /** Filas ROMIA SCHIAPPACASSE — modelo nuevo, prioridad sobre legacy. */
+  romiaSchiapp: RomiaRow[] | null;
+  /** Filas ROMIA KAR-LOGISTICS — modelo nuevo, prioridad sobre legacy. */
+  romiaKar: RomiaRow[] | null;
   logisticaPorVin: Map<string, LogisticaOperacionVIN> | null;
 
   loading: boolean;
@@ -66,6 +79,8 @@ interface StoreState {
   setProvisiones: (provisiones: ParsedProvisiones) => void;
   setLogisticaRoma: (roma: LogisticaRomaRow[]) => void;
   setLogisticaSTLI: (stli: LogisticaStliRow[]) => void;
+  setRomiaSchiapp: (rows: RomiaRow[]) => void;
+  setRomiaKar: (rows: RomiaRow[]) => void;
   clearLogistica: () => void;
 
   setLoading: (b: boolean) => void;
@@ -93,6 +108,8 @@ export const useExcelStore = create<StoreState>((set) => ({
   provisiones: null,
   logisticaRoma: null,
   logisticaSTLI: null,
+  romiaSchiapp: null,
+  romiaKar: null,
   logisticaPorVin: null,
   loading: false,
   fneLoading: false,
@@ -113,7 +130,7 @@ export const useExcelStore = create<StoreState>((set) => ({
       fne: s.fne
         ? { ...s.fne, registros: enriquecerFNEUsados(s.fne.registros, data.vehiculos) }
         : s.fne,
-      logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, s.logisticaSTLI, data, s.fne),
+      logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, s.logisticaSTLI, data, s.fne, s.romiaSchiapp, s.romiaKar),
     })),
   // Al cargar FNE, lo enriquece contra el stock y recalcula el merge logístico.
   setFNE: (fne) =>
@@ -125,20 +142,34 @@ export const useExcelStore = create<StoreState>((set) => ({
         fne: fneEnriquecido,
         fneError: null,
         fneLoading: false,
-        logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, s.logisticaSTLI, s.data, fneEnriquecido),
+        logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, s.logisticaSTLI, s.data, fneEnriquecido, s.romiaSchiapp, s.romiaKar),
       };
     }),
   setLogisticaRoma: (roma) =>
     set((s) => ({
       logisticaRoma: roma,
-      logisticaPorVin: buildLogisticaPorVin(roma, s.logisticaSTLI, s.data, s.fne),
+      logisticaPorVin: buildLogisticaPorVin(roma, s.logisticaSTLI, s.data, s.fne, s.romiaSchiapp, s.romiaKar),
       logisticaError: null,
       logisticaLoading: false,
     })),
   setLogisticaSTLI: (stli) =>
     set((s) => ({
       logisticaSTLI: stli,
-      logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, stli, s.data, s.fne),
+      logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, stli, s.data, s.fne, s.romiaSchiapp, s.romiaKar),
+      logisticaError: null,
+      logisticaLoading: false,
+    })),
+  setRomiaSchiapp: (rows) =>
+    set((s) => ({
+      romiaSchiapp: rows,
+      logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, s.logisticaSTLI, s.data, s.fne, rows, s.romiaKar),
+      logisticaError: null,
+      logisticaLoading: false,
+    })),
+  setRomiaKar: (rows) =>
+    set((s) => ({
+      romiaKar: rows,
+      logisticaPorVin: buildLogisticaPorVin(s.logisticaRoma, s.logisticaSTLI, s.data, s.fne, s.romiaSchiapp, rows),
       logisticaError: null,
       logisticaLoading: false,
     })),
@@ -146,6 +177,8 @@ export const useExcelStore = create<StoreState>((set) => ({
     set({
       logisticaRoma: null,
       logisticaSTLI: null,
+      romiaSchiapp: null,
+      romiaKar: null,
       logisticaPorVin: null,
       logisticaError: null,
       logisticaLoading: false,

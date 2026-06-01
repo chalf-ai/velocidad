@@ -17,11 +17,14 @@ import {
   Banknote,
   ClipboardList,
   Gauge,
+  GitBranch,
   Layers,
   Link2,
   PackageCheck,
   Receipt,
+  ScrollText,
   TestTube2,
+  Trophy,
   Truck,
   LogOut,
   UserCircle2,
@@ -35,10 +38,13 @@ interface NavItem {
   label: string;
   icon: typeof LayoutDashboard;
   exactQuery?: string;
+  /** Si true, no navega: render gris con badge "Pronto". */
+  comingSoon?: boolean;
 }
 
 const NAV_EXEC: NavItem[] = [
   { href: "/centro-accion", label: "Centro de Acción", icon: Gauge },
+  { href: "/score-gerencial", label: "Score Gerencial", icon: Trophy },
   { href: "/dashboard", label: "Sistema de Velocidad Operacional", icon: LayoutDashboard },
   { href: "/stock", label: "Stock Explorer", icon: Warehouse },
   { href: "/lineas", label: "Líneas de crédito", icon: CreditCard },
@@ -53,7 +59,28 @@ const NAV_MARCAS: NavItem[] = [
   { href: "/usados", label: "Usados · unidad operacional", icon: Car },
 ];
 
-const NAV_OPS: NavItem[] = [
+const NAV_OPERACIONES: NavItem[] = [
+  {
+    href: "/operaciones/control-de-negocio",
+    label: "Control de Negocio",
+    icon: ScrollText,
+  },
+  {
+    href: "/operaciones/logistica",
+    label: "Logística",
+    icon: Truck,
+  },
+  {
+    href: "/operaciones/causa-raiz",
+    label: "Causa Raíz",
+    icon: GitBranch,
+    comingSoon: true,
+  },
+];
+
+// "Tesorería" — antes era "Operacional". La ruta /velocidad-operacional queda
+// fuera del menú (sigue viva por URL directa para auditoría comparativa).
+const NAV_TESORERIA: NavItem[] = [
   { href: "/facturados-no-entregados", label: "Facturados no entregados", icon: Truck },
   { href: "/vu-en-fne", label: "Usados pendientes de recuperación", icon: Link2 },
   {
@@ -95,6 +122,25 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
             active = pathMatch;
           } else {
             active = pathMatch && !currentQs;
+          }
+
+          if (item.comingSoon) {
+            return (
+              <div
+                key={item.href}
+                aria-disabled="true"
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] text-[--color-fg-dim] cursor-default"
+              >
+                <Icon
+                  className="size-[15px] shrink-0 opacity-60"
+                  strokeWidth={1.75}
+                />
+                <span className="truncate flex-1">{item.label}</span>
+                <span className="text-[9px] uppercase tracking-[0.1em] px-1.5 py-0.5 rounded bg-[--color-bg-elev-2] text-[--color-fg-dim]">
+                  Pronto
+                </span>
+              </div>
+            );
           }
 
           return (
@@ -144,7 +190,8 @@ export function Sidebar() {
       <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 pb-4 pt-4">
         <NavSection title="Ejecutivo" items={NAV_EXEC} />
         <NavSection title="Marcas" items={NAV_MARCAS} />
-        <NavSection title="Operacional" items={NAV_OPS} />
+        <NavSection title="Operaciones" items={NAV_OPERACIONES} />
+        <NavSection title="Tesorería" items={NAV_TESORERIA} />
         <NavSection title="Técnico" items={navTec} />
       </nav>
 

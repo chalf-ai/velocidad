@@ -542,7 +542,7 @@ function DashboardInner() {
         <div className="mt-5 grid grid-cols-2 lg:grid-cols-5 gap-4">
           <NaturalezaCard
             index={1}
-            href="/stock?naturaleza=retail"
+            href={naturalezaHref("retail", marcaActiva)}
             label="En línea"
             description="En línea de crédito y disponible operacionalmente."
             capital={nat("retail")?.capital ?? 0}
@@ -552,7 +552,7 @@ function DashboardInner() {
           />
           <NaturalezaCard
             index={2}
-            href="/stock?naturaleza=operativo"
+            href={naturalezaHref("operativo", marcaActiva)}
             label="Facturados no entregados"
             description="VN + VU facturados pero todavía no entregados al cliente."
             capital={operativo?.capital ?? 0}
@@ -562,7 +562,7 @@ function DashboardInner() {
           />
           <NaturalezaCard
             index={3}
-            href="/stock?naturaleza=puente"
+            href={naturalezaHref("puente", marcaActiva)}
             label="Capital puente"
             description="VPP recibido + CPD usados fuera de línea, todavía no pagados."
             capital={puente?.capital ?? 0}
@@ -572,7 +572,7 @@ function DashboardInner() {
           />
           <NaturalezaCard
             index={4}
-            href="/stock?naturaleza=atrapado"
+            href={naturalezaHref("atrapado", marcaActiva)}
             label="Capital pagado"
             description="Caja propia desembolsada esperando rotar. Sin judiciales."
             capital={atrapado?.capital ?? 0}
@@ -582,7 +582,7 @@ function DashboardInner() {
           />
           <NaturalezaCard
             index={5}
-            href="/stock?naturaleza=judicial"
+            href={naturalezaHref("judicial", marcaActiva)}
             label="Judiciales"
             description="Stock en proceso judicial — situación legal distinta."
             capital={judicial?.capital ?? 0}
@@ -2515,6 +2515,19 @@ function HeroKPI({
   return (
     <div className={cn("surface top-strip bg-white px-6 pt-7 pb-6", stripClass)}>{inner}</div>
   );
+}
+
+/**
+ * Construye el href de una NaturalezaCard preservando el filtro global de
+ * marca operacional activo. Sin marca activa devuelve el href "limpio".
+ *
+ * Fix del bug donde el universo del Stock Explorer no respetaba el filtro
+ * de marca al navegar desde una NaturalezaCard del Bloque B.
+ */
+function naturalezaHref(naturaleza: string, marca: string | null): string {
+  const params = new URLSearchParams({ naturaleza });
+  if (marca) params.set("marcaOriginadora", marca);
+  return `/stock?${params.toString()}`;
 }
 
 function NaturalezaCard({

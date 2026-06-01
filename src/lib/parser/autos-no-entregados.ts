@@ -9,8 +9,11 @@
  * Notas importantes:
  * - PatenteVpp existe pero NO se usa como fuente de VPP. El VPP sigue
  *   viviendo en Base_Stock vía Vehiculo.esVPPComprometido.
- * - entrega_auto viene 100% null en el archivo actual (por definición,
- *   son autos no entregados). No se hace dropping basado en eso.
+ * - `entrega_auto` puede venir poblada cuando la base es completa (incluye
+ *   entregados históricos). El parser marca cada registro con `entregado:bool`
+ *   pero NO descarta filas: la base completa se conserva en el store. Filtrar
+ *   por `entregado=false` ocurre en `cruzarFNEConStock` antes de cualquier
+ *   cálculo de pipeline operacional.
  */
 
 import * as XLSX from "xlsx";
@@ -67,6 +70,64 @@ function toEtapa(v: unknown): EtapaFNE {
   return (valid as number[]).includes(n) ? (n as EtapaFNE) : 0;
 }
 
+/**
+ * Detecta si la fila representa un auto YA entregado al cliente.
+ *
+ * Regla canónica oficial (decidida con Operaciones tras revisar "Actas al
+ * 28 de Mayo.xlsx" donde la columna `entrega_auto_txt` está 100% poblada):
+ *
+ *   entregado = (entrega_auto_txt.trim() === "Cargado")
+ *
+ * "Cargado" significa que el acta de entrega fue cargada en el sistema —
+ * o sea, el auto ya fue entregado al cliente. Cualquier otro valor (incluido
+ * "No Cargado", vacíos, nulos o variantes) deja el registro en el universo
+ * FNE operativo.
+ *
+ * Red de seguridad: si por alguna razón `entrega_auto_txt` no marca entrega
+ * pero `fecha_patente_entregada` sí tiene fecha física de entrega, también
+ * lo marcamos entregado (fuente=fecha_patente_entregada). Esto cubre archivos
+ * mal poblados sin alterar el comportamiento principal.
+ *
+ * Devuelve los 4 campos derivados que viven en cada `AutoNoEntregado`.
+ */
+function detectarEntregado(
+  entregaAutoTxt: string | null,
+  fechaPatenteEntregada: Date | null,
+): {
+  entregado: boolean;
+  fechaEntregaReal: Date | null;
+  estadoEntregaOriginal: string | null;
+  fuenteEntrega: "entrega_auto_txt" | "fecha_patente_entregada" | "ninguna";
+} {
+  const txtNorm = (entregaAutoTxt ?? "").trim();
+  if (txtNorm === "Cargado") {
+    return {
+      entregado: true,
+      fechaEntregaReal: fechaPatenteEntregada,
+      estadoEntregaOriginal: entregaAutoTxt,
+      fuenteEntrega: "entrega_auto_txt",
+    };
+  }
+
+  // Defensivo: si quedaron filas con fecha de entrega física pero entrega_auto_txt
+  // sin "Cargado", las consideramos entregadas igual (red de seguridad).
+  if (fechaPatenteEntregada !== null) {
+    return {
+      entregado: true,
+      fechaEntregaReal: fechaPatenteEntregada,
+      estadoEntregaOriginal: entregaAutoTxt,
+      fuenteEntrega: "fecha_patente_entregada",
+    };
+  }
+
+  return {
+    entregado: false,
+    fechaEntregaReal: null,
+    estadoEntregaOriginal: entregaAutoTxt,
+    fuenteEntrega: "ninguna",
+  };
+}
+
 export function parseAutosNoEntregados(ws: XLSX.WorkSheet): ParsedFNE["registros"] {
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
     defval: null,
@@ -78,6 +139,10 @@ export function parseAutosNoEntregados(ws: XLSX.WorkSheet): ParsedFNE["registros
     const r = rows[i];
     const vin = toStr(r["Vin"]);
     if (!vin) continue;
+
+    const entregaAutoTxt = toStr(r["entrega_auto_txt"]);
+    const fechaPatenteEntregada = toDate(r["fecha_patente_entregada"]);
+    const entregaInfo = detectarEntregado(entregaAutoTxt, fechaPatenteEntregada);
 
     registros.push({
       id: toNumOrNull(r["ID"]),
@@ -103,11 +168,17 @@ export function parseAutosNoEntregados(ws: XLSX.WorkSheet): ParsedFNE["registros
       patentesAdministracion: toDate(r["patentes_administracion"]),
       fechaPatenteEnviada: toDate(r["fecha_patente_enviada"]),
       fechaPatenteRecibida: toDate(r["fecha_patente_recibida"]),
-      fechaPatenteEntregada: toDate(r["fecha_patente_entregada"]),
+      fechaPatenteEntregada,
 
       patenteVpp: toStr(r["PatenteVpp"]),
       etapa: toEtapa(r["etapa"]),
-      entregaAutoTxt: toStr(r["entrega_auto_txt"]),
+      entregaAutoTxt,
+
+      // Split histórico vs operativo
+      entregado: entregaInfo.entregado,
+      fechaEntregaReal: entregaInfo.fechaEntregaReal,
+      estadoEntregaOriginal: entregaInfo.estadoEntregaOriginal,
+      fuenteEntrega: entregaInfo.fuenteEntrega,
 
       rowIndex: i + 2, // +2: 1 por header, 1 porque xlsx es 1-indexed
     });
@@ -140,6 +211,14 @@ export async function parseFNEFile(file: File): Promise<ParsedFNE> {
   for (const r of registros) counts.set(r.vin, (counts.get(r.vin) ?? 0) + 1);
   const vinsDuplicados = [...counts.entries()].filter(([, n]) => n > 1).map(([v]) => v);
 
+  // Conteo de la separación operativo/histórico — visible en report para auditoría.
+  let entregadosCount = 0;
+  let noEntregadosCount = 0;
+  for (const r of registros) {
+    if (r.entregado) entregadosCount++;
+    else noEntregadosCount++;
+  }
+
   return {
     registros,
     report: {
@@ -151,6 +230,8 @@ export async function parseFNEFile(file: File): Promise<ParsedFNE> {
       filasOmitidas: filasTotales - registros.length,
       vinsDuplicados,
       durMs: Math.round(performance.now() - t0),
+      entregadosCount,
+      noEntregadosCount,
     },
   };
 }

@@ -25,7 +25,10 @@ export type FuenteTipo =
   | "provisiones"
   | "logistica_roma"
   | "logistica_stli"
+  | "romia_schiapp"
+  | "romia_kar"
   | "tescar"
+  | "actas"
   | "desconocido";
 
 export interface FuenteDeteccion {
@@ -57,13 +60,33 @@ export const FUENTE_LABEL: Record<FuenteTipo, string> = {
   fne: "FNE · facturados no entregados",
   saldos: "Saldos / SALVING",
   provisiones: "Provisiones",
-  logistica_roma: "Logística ROMA (agenda)",
-  logistica_stli: "Logística STLI (bodega)",
+  logistica_roma: "Logística ROMA (agenda · legacy)",
+  logistica_stli: "Logística STLI (bodega · legacy)",
+  romia_schiapp: "Logística ROMIA · SCHIAPPACASSE",
+  romia_kar: "Logística ROMIA · KAR-LOGISTICS",
   tescar: "Control TestCars / TESCAR",
+  actas: "Actas (universo documental · histórico)",
   desconocido: "Archivo no reconocido",
 };
 
-export function detectarFuente(wb: WorkBook): FuenteDeteccion {
+/**
+ * Regex que detecta nombres de archivos Actas. Casos típicos:
+ *   "Actas al 28 de Mayo.xlsx", "Actas al 26-05-2026_503.xlsx",
+ *   "ACTAS_2026_05.xlsx", "Acta_individual.xlsx".
+ *
+ * Usa lookbehind/lookahead de letras (no `\b`) porque `\b` considera el
+ * guion bajo como letra y rompe en nombres como "Acta_individual".
+ *
+ * NO matchea "ActasReporteFinal" (sin separador) ni "Autos no entregados".
+ */
+export const RE_NOMBRE_ACTAS = /(?<![a-z])actas?(?![a-z])/i;
+
+/**
+ * @param wb workbook ya leído (al menos `sheetRows: 1`).
+ * @param archivoNombre nombre del archivo original (opcional, sirve para
+ *   diferenciar Actas de FNE que comparten la columna `entrega_auto_txt`).
+ */
+export function detectarFuente(wb: WorkBook, archivoNombre?: string): FuenteDeteccion {
   const hojas = wb.SheetNames;
   const cols = new Map<string, Set<string>>();
   for (const n of hojas) cols.set(n, columnasDeHoja(wb.Sheets[n]));
@@ -89,6 +112,24 @@ export function detectarFuente(wb: WorkBook): FuenteDeteccion {
   if (tieneHoja("Base_Stock"))
     return out("stock", "Base_Stock", 'Hoja "Base_Stock" presente (Excel maestro de stock).');
 
+  // 1.5) ROMIA SCHIAPPACASSE — hojas únicas "DIRECCIONES" / "Listado laminado"
+  //      (no aparecen en KAR ni en archivos legacy). Modelo logístico nuevo.
+  if (tieneHoja("DIRECCIONES") || tieneHoja("Listado laminado"))
+    return out(
+      "romia_schiapp",
+      tieneHoja("DIRECCIONES") ? "DIRECCIONES" : "Listado laminado",
+      'Hojas características SCHIAPPACASSE ("DIRECCIONES" / "Listado laminado").',
+    );
+
+  // 1.6) ROMIA KAR-LOGISTICS — hojas únicas "CODIGO DESPACHO" / "Compras Marca"
+  //      ("Compras Marca" con S final, distinto de "Compra Marca" del SCHIAPP).
+  if (tieneHoja("CODIGO DESPACHO") || tieneHoja("Compras Marca"))
+    return out(
+      "romia_kar",
+      tieneHoja("CODIGO DESPACHO") ? "CODIGO DESPACHO" : "Compras Marca",
+      'Hojas características KAR-LOGISTICS ("CODIGO DESPACHO" / "Compras Marca").',
+    );
+
   // 2) SALDOS / SALVING — hoja "FUSION BD 3.0" o columnas CATEGORIA + Saldo x Documentar.
   const hSaldos = tieneHoja("FUSION BD 3.0")
     ? "FUSION BD 3.0"
@@ -106,6 +147,24 @@ export function detectarFuente(wb: WorkBook): FuenteDeteccion {
   // 5) PROVISIONES — montoProvision, o Concepto + saldo + EstadoAjuste.
   const hProv = hojaCon("montoProvision") ?? hojaCon("Concepto", "saldo", "EstadoAjuste");
   if (hProv) return out("provisiones", hProv, "Columnas de provisiones (montoProvision).");
+
+  // 5.5) ACTAS (histórico) — nombre del archivo contiene "actas" + columnas
+  //      Vin + entrega_auto_txt. Debe ir ANTES que FNE porque FNE también
+  //      tiene esas dos columnas. La firma combinada (filename + columna)
+  //      es la regla aprobada en la propuesta v3.
+  if (archivoNombre && RE_NOMBRE_ACTAS.test(archivoNombre)) {
+    const hActas =
+      hojaCon("Vin", "entrega_auto_txt", "FechaFactura") ??
+      hojaCon("Vin", "entrega_auto_txt", "FechaVenta") ??
+      hojaCon("Vin", "entrega_auto_txt");
+    if (hActas) {
+      return out(
+        "actas",
+        hActas,
+        "Filename matchea Actas + columnas Vin/entrega_auto_txt (universo documental histórico).",
+      );
+    }
+  }
 
   // 6) FNE — Vin + (Nombre_Cliente | entrega_auto_txt | etapa+ValorFactura).
   const hFne =

@@ -5,6 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Calendar, ChevronDown, Check, Loader2 } from "lucide-react";
 import { MarcaFilterSelect } from "@/components/MarcaFilterSelect";
+import { SucursalFilterSelect } from "@/components/SucursalFilterSelect";
 import { useExcelStore } from "@/lib/store";
 import {
   fetchActiveSnapshot,
@@ -165,6 +166,7 @@ export function Header() {
 
       <div className="ml-auto flex shrink-0 items-center gap-3.5">
         <MarcaFilterSelect onHeader />
+        <SucursalFilterSelect onHeader />
       </div>
     </header>
   );

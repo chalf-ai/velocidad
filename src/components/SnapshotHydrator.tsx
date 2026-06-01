@@ -125,9 +125,34 @@ export function SnapshotHydrator() {
     }
 
     // FNE
+    // Snapshots viejos no tienen el flag `entregado` (se introdujo con el split
+    // histórico/operativo). Normalizamos: si viene undefined ⇒ false. Idempotente:
+    // snapshots nuevos vienen con el flag explícito y no se tocan.
     if (!store.fne) {
       void hidratarSeguro<ParsedFNE>("FNE", (snap) => {
-        const parsed = reviveDates(snap.payload);
+        const revived = reviveDates(snap.payload);
+        // Si vino un snapshot viejo SIN flag entregado, lo derivamos en runtime
+        // aplicando la regla canónica actual: entrega_auto_txt === "Cargado".
+        // Idempotente cuando el snapshot ya trae el flag explícito.
+        const registros = (revived.registros ?? []).map((r) => {
+          const entregaTxtNorm = (r.entregaAutoTxt ?? "").trim();
+          const derivado = r.entregado === true || entregaTxtNorm === "Cargado";
+          return {
+            ...r,
+            entregado: derivado,
+            fechaEntregaReal: r.fechaEntregaReal ?? (derivado ? r.fechaPatenteEntregada ?? null : null),
+            estadoEntregaOriginal: r.estadoEntregaOriginal ?? r.entregaAutoTxt ?? null,
+            fuenteEntrega: r.fuenteEntrega ?? (derivado ? "entrega_auto_txt" : "ninguna"),
+          };
+        });
+        const reportNormalizado = {
+          ...revived.report,
+          entregadosCount:
+            revived.report?.entregadosCount ?? registros.filter((r) => r.entregado).length,
+          noEntregadosCount:
+            revived.report?.noEntregadosCount ?? registros.filter((r) => !r.entregado).length,
+        };
+        const parsed = { ...revived, registros, report: reportNormalizado };
         useExcelStore.getState().setFNE(parsed);
         setMetaFromSnapshot({
           fuenteId: "fne",
