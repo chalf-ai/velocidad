@@ -24,6 +24,7 @@ import {
   filtrarPorMarcaOwnerUOriginador,
   normalizarMarcaOperacional,
 } from "./selectors/owner-operacional";
+import { filtrarPorSucursal, useSucursalFilter } from "./sucursal-filtro";
 
 const STORAGE_KEY = "stock-command-center:marca-filtro:v1";
 
@@ -67,32 +68,41 @@ export const useMarcaFilter = create<MarcaFiltroState>((set, get) => ({
 }));
 
 /**
- * Datos del store filtrados por la marca operacional global.
- * Sustituye a `useExcelStore()` en los módulos que deben respetar el filtro.
- * Con marca = null devuelve los objetos originales (macro intacto).
+ * Datos del store filtrados por marca operacional Y sucursal globales.
+ *
+ * Compone ambos filtros en cascada:
+ *   1. Marca operacional (con dimensión owner+originador para vehículos).
+ *   2. Sucursal literal (campo `sucursal: string | null`).
+ *
+ * Con ambos en null devuelve los datos sin tocar (macro intacto). Con uno o
+ * los dos seteados, filtra primero por marca y luego por sucursal sobre el
+ * resultado. Las provisiones que no tienen sucursal explícita quedan fuera
+ * del filtro por sucursal (igual a passthrough — pasan tal cual).
  */
 export function useDatosFiltrados() {
   const marca = useMarcaFilter((s) => s.marca);
+  const sucursal = useSucursalFilter((s) => s.sucursal);
   const data = useExcelStore((s) => s.data);
   const fne = useExcelStore((s) => s.fne);
   const saldos = useExcelStore((s) => s.saldos);
   const provisiones = useExcelStore((s) => s.provisiones);
 
   return useMemo(() => {
-    if (!marca) return { data, fne, saldos, provisiones };
-    const objetivo = normalizarMarcaOperacional(marca);
-    return {
-      data: data
+    if (!marca && !sucursal) return { data, fne, saldos, provisiones };
+
+    // ── Paso 1: aplicar filtro de marca (si hay) ─────────────────────────────
+    let dataF = data;
+    let fneF = fne;
+    let saldosF = saldos;
+    let provisionesF = provisiones;
+
+    if (marca) {
+      const objetivo = normalizarMarcaOperacional(marca);
+      dataF = data
         ? {
             ...data,
-            // DOBLE DIMENSIÓN: trae el stock de la marca por owner (gestión) U
-            // originador (capital). Así filtrar "KIA" recupera el capital puente
-            // que KIA originó (VU/BU gestionados por USADOS) sin que desaparezca.
-            // Las vistas de stock retail se auto-protegen por categoría.
             vehiculos: filtrarPorMarcaOwnerUOriginador(data.vehiculos, marca),
             lineas: filtrarLineasPorMarcaOperacional(data.lineas, marca),
-            // Registry suplementario (Venta APC + Financiado): se filtra para que
-            // el universo unificado y los cruces NO arrastren VINs de otras marcas.
             vinsExtra: data.vinsExtra
               ? new Map(
                   [...data.vinsExtra].filter(
@@ -101,14 +111,34 @@ export function useDatosFiltrados() {
                 )
               : data.vinsExtra,
           }
-        : null,
-      fne: fne ? { ...fne, registros: filtrarPorMarcaOperacional(fne.registros, marca) } : null,
-      saldos: saldos
+        : null;
+      fneF = fne ? { ...fne, registros: filtrarPorMarcaOperacional(fne.registros, marca) } : null;
+      saldosF = saldos
         ? { ...saldos, registros: filtrarPorMarcaOperacional(saldos.registros, marca) }
-        : null,
-      provisiones: provisiones
+        : null;
+      provisionesF = provisiones
         ? { ...provisiones, registros: filtrarPorMarcaOperacional(provisiones.registros, marca) }
-        : null,
-    };
-  }, [marca, data, fne, saldos, provisiones]);
+        : null;
+    }
+
+    // ── Paso 2: aplicar filtro de sucursal sobre el resultado anterior ───────
+    if (sucursal) {
+      dataF = dataF
+        ? {
+            ...dataF,
+            vehiculos: filtrarPorSucursal(dataF.vehiculos, sucursal),
+            // `lineas` y `vinsExtra` no tienen sucursal — pasan tal cual.
+          }
+        : null;
+      fneF = fneF ? { ...fneF, registros: filtrarPorSucursal(fneF.registros, sucursal) } : null;
+      saldosF = saldosF
+        ? { ...saldosF, registros: filtrarPorSucursal(saldosF.registros, sucursal) }
+        : null;
+      // Provisiones no tienen `sucursal` propia → passthrough (filtrarPorSucursal
+      // sobre objetos sin el campo retorna tal cual cuando el filtro no matchea
+      // a ninguno; mantenemos el array completo para no perder universo).
+    }
+
+    return { data: dataF, fne: fneF, saldos: saldosF, provisiones: provisionesF };
+  }, [marca, sucursal, data, fne, saldos, provisiones]);
 }

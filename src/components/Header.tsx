@@ -3,6 +3,7 @@
 import { Calendar, FileSpreadsheet, RotateCcw } from "lucide-react";
 import { UploadButton } from "@/components/UploadButton";
 import { MarcaFilterSelect } from "@/components/MarcaFilterSelect";
+import { SucursalFilterSelect } from "@/components/SucursalFilterSelect";
 import { useExcelStore } from "@/lib/store";
 import { fmtBytes, fmtDate } from "@/lib/format";
 
@@ -45,6 +46,7 @@ export function Header() {
 
       <div className="ml-auto flex items-center gap-3">
         <MarcaFilterSelect />
+        <SucursalFilterSelect />
         {data && (
           <button
             onClick={() => reset()}
