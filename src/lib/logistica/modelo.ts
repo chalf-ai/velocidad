@@ -329,6 +329,10 @@ export interface LogisticaOperacionVIN {
   tipoSolicitud: string | null;
 
   // Hitos (timestamps; null = no ocurrido / no informado)
+  /** Compra Marca · fecha en que la marca asigna el vehículo a Pompeyo.
+   *  Origen: ROMIA SCHIAPP/KAR (columna "Compra Marca" / "Fecha Compra Marca").
+   *  OPCIONAL para no romper consumidores legacy — null cuando solo hay ROMA/STLI. */
+  fCompraMarca?: Date | null;
   fSolicitudVendedor: Date | null;
   fRespuestaLogistica: Date | null;
   fIngresoApc: Date | null;

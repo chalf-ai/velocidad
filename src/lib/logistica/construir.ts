@@ -259,6 +259,7 @@ function buildOne(
     modelo: x?.modelo ?? r?.modelo ?? null,
     sucursalDestino: x?.sucursalDestino ?? s?.sucursalDestino ?? r?.sucursal ?? null,
     tipoSolicitud: x?.tipoSolicitud ?? s?.tipoSolicitud ?? null,
+    fCompraMarca: x?.fCompraMarca ?? null,
     fSolicitudVendedor,
     fRespuestaLogistica,
     fIngresoApc,
