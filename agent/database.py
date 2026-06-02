@@ -130,30 +130,40 @@ async def get_alertas_stock(marcas: Optional[list[str]] = None) -> list[dict]:
 
 
 async def get_fne_resumen() -> dict:
-    """Resumen FNE: total, detenidos >15d, aging buckets."""
+    """Resumen FNE: total, detenidos >15d, aging buckets.
+    diasDesdeVenta se calcula en SQL desde fechaVenta (no existe como campo en el payload).
+    Solo registros con entregado != true (universo operativo).
+    """
     pool = await get_pool()
     row = await pool.fetchrow(
         """
+        WITH fne AS (
+            SELECT
+                elem,
+                CASE
+                    WHEN (elem->>'fechaVenta') IS NOT NULL AND (elem->>'fechaVenta') NOT IN ('null','')
+                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz))::int
+                    ELSE NULL
+                END AS dias
+            FROM "Snapshot",
+                 jsonb_array_elements(payload->'registros') AS elem
+            WHERE fuente = 'FNE' AND activo = true
+              AND (elem->>'entregado') IS DISTINCT FROM 'true'
+        )
         SELECT
             COUNT(*)::int AS total_fne,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '0-3'  THEN 1 END)::int AS bucket_0_3,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '4-7'  THEN 1 END)::int AS bucket_4_7,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '8-15' THEN 1 END)::int AS bucket_8_15,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '16+'  THEN 1 END)::int AS bucket_16_mas,
-            COUNT(CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL
-                        AND (elem->>'diasDesdeVenta') != 'null'
-                        AND (elem->>'diasDesdeVenta')::int > 15 THEN 1 END)::int AS detenidos_mas_15,
+            COUNT(CASE WHEN dias <= 3              THEN 1 END)::int AS bucket_0_3,
+            COUNT(CASE WHEN dias BETWEEN 4 AND 7   THEN 1 END)::int AS bucket_4_7,
+            COUNT(CASE WHEN dias BETWEEN 8 AND 15  THEN 1 END)::int AS bucket_8_15,
+            COUNT(CASE WHEN dias > 15              THEN 1 END)::int AS bucket_16_mas,
+            COUNT(CASE WHEN dias > 15              THEN 1 END)::int AS detenidos_mas_15,
             ROUND(COALESCE(SUM(
-                CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL
-                          AND (elem->>'diasDesdeVenta') != 'null'
-                          AND (elem->>'diasDesdeVenta')::int > 15
+                CASE WHEN dias > 15
                           AND (elem->>'valorFactura') IS NOT NULL
                           AND (elem->>'valorFactura') NOT IN ('null','0','')
                 THEN (elem->>'valorFactura')::numeric ELSE 0 END
             ), 0) / 1000000, 1)::float AS capital_detenido_mm
-        FROM "Snapshot",
-             jsonb_array_elements(payload->'registros') AS elem
-        WHERE fuente = 'FNE' AND activo = true
+        FROM fne
         """,
     )
     return dict(row) if row else {}
@@ -175,6 +185,19 @@ async def get_fne_detalle(marcas: Optional[list[str]] = None) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch(
         """
+        WITH fne AS (
+            SELECT
+                elem,
+                CASE
+                    WHEN (elem->>'fechaVenta') IS NOT NULL AND (elem->>'fechaVenta') NOT IN ('null','')
+                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz))::int
+                    ELSE NULL
+                END AS dias
+            FROM "Snapshot",
+                 jsonb_array_elements(payload->'registros') AS elem
+            WHERE fuente = 'FNE' AND activo = true
+              AND (elem->>'entregado') IS DISTINCT FROM 'true'
+        )
         SELECT
             elem->>'vin'            AS vin,
             elem->>'sucursal'       AS sucursal,
@@ -182,9 +205,14 @@ async def get_fne_detalle(marcas: Optional[list[str]] = None) -> list[dict]:
             elem->>'vendedor'       AS vendedor,
             CASE WHEN (elem->>'valorFactura') IS NOT NULL AND (elem->>'valorFactura') NOT IN ('null','0','')
                  THEN ROUND((elem->>'valorFactura')::numeric / 1000000, 2)::float ELSE 0 END AS valor_mm,
-            CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL AND (elem->>'diasDesdeVenta') != 'null'
-                 THEN (elem->>'diasDesdeVenta')::int ELSE NULL END AS dias,
-            elem->>'agingBucket'    AS aging,
+            dias,
+            CASE
+                WHEN dias IS NULL THEN 'sin_fecha'
+                WHEN dias <= 3    THEN '0-3'
+                WHEN dias <= 7    THEN '4-7'
+                WHEN dias <= 15   THEN '8-15'
+                ELSE '16+'
+            END AS aging,
             -- Estado entrega derivado de señales de patente
             CASE
               WHEN (elem->>'fechaPatenteRecibida') IS NOT NULL AND (elem->>'fechaPatenteRecibida') != 'null'
@@ -210,15 +238,8 @@ async def get_fne_detalle(marcas: Optional[list[str]] = None) -> list[dict]:
             (elem->>'solEntrega') = 'true'             AS tiene_sol_entrega,
             elem->>'fechaPatenteRecibida'              AS patente_recibida,
             elem->>'fechaPatenteEnviada'               AS patente_enviada
-        FROM "Snapshot",
-             jsonb_array_elements(payload->'registros') AS elem
-        WHERE fuente = 'FNE' AND activo = true
-          AND (elem->>'entregado') IS DISTINCT FROM 'true'
-        ORDER BY
-            CASE
-              WHEN (elem->>'diasDesdeVenta') IS NOT NULL AND (elem->>'diasDesdeVenta') != 'null'
-              THEN (elem->>'diasDesdeVenta')::int ELSE 0
-            END DESC
+        FROM fne
+        ORDER BY COALESCE(dias, 0) DESC
         """,
     )
     return [dict(r) for r in rows]
@@ -239,9 +260,18 @@ async def get_fne_por_vin(vin: str) -> Optional[dict]:
                  THEN ROUND((elem->>'valorFactura')::numeric / 1000000, 2)::float ELSE 0 END AS valor_mm,
             elem->>'fechaVenta'                     AS fecha_venta,
             elem->>'fechaFactura'                   AS fecha_factura,
-            CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL AND (elem->>'diasDesdeVenta') != 'null'
-                 THEN (elem->>'diasDesdeVenta')::int ELSE NULL END AS dias,
-            elem->>'agingBucket'                    AS aging,
+            CASE
+                WHEN (elem->>'fechaVenta') IS NOT NULL AND (elem->>'fechaVenta') NOT IN ('null','')
+                THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz))::int
+                ELSE NULL
+            END AS dias,
+            CASE
+                WHEN (elem->>'fechaVenta') IS NULL OR (elem->>'fechaVenta') IN ('null','') THEN 'sin_fecha'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz)) <= 3   THEN '0-3'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz)) <= 7   THEN '4-7'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz)) <= 15  THEN '8-15'
+                ELSE '16+'
+            END AS aging,
             (elem->>'autorizacionEntrega') = 'true' AS tiene_autorizacion,
             (elem->>'solEntrega') = 'true'          AS tiene_sol_entrega,
             (elem->>'solicitarInscripcion') = 'true' AS solicito_inscripcion,
