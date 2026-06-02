@@ -109,6 +109,27 @@ async def health():
     return {"status": "ok", "service": "velocidad-agent"}
 
 
+@app.get("/debug/estado")
+async def debug_estado():
+    """Diagnóstico general: usuarios, snapshots activos."""
+    pool = await db.get_pool()
+    try:
+        usuarios = await pool.fetch(
+            'SELECT rol, COUNT(*) as total, COUNT(CASE WHEN telefono IS NOT NULL THEN 1 END) as con_tel '
+            'FROM "User" WHERE activo=true GROUP BY rol ORDER BY rol'
+        )
+        snapshots = await pool.fetch(
+            'SELECT fuente, activo, "fechaCorte", registros, "createdAt" '
+            'FROM "Snapshot" ORDER BY "createdAt" DESC LIMIT 10'
+        )
+        return {
+            "usuarios_por_rol": [dict(r) for r in usuarios],
+            "snapshots_recientes": [dict(r) for r in snapshots],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/debug/user/{telefono}")
 async def debug_user(telefono: str):
     """Diagnóstico: busca usuario por teléfono — muestra query raw y resultado."""
