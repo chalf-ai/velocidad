@@ -143,6 +143,28 @@ async def ver_capital_consolidado(telefono: str) -> str:
 
 
 @tool
+async def ver_capital_por_marca(telefono: str) -> str:
+    """
+    Capital de stock desglosado por marca: total, Propio, FloorPlan, inmovilizados y judiciales.
+    Para GERENTE_GENERAL y ADMIN muestra todo el grupo.
+    Llamar cuando piden 'capital por marca', 'cómo está cada marca', 'desglose por gerencia',
+    'cuánto tiene KIA', 'cuál marca tiene más capital', o cualquier breakdown por marca.
+    """
+    return await t.capital_por_marca(telefono)
+
+
+@tool
+async def ver_saldos_t3_detalle(telefono: str) -> str:
+    """
+    Lista completa de saldos vehículo en tramos T3-T7 (más de 30 días sin cobrar).
+    Muestra cada caso con VIN/cajón, marca, monto, días, cliente y financiera.
+    Llamar cuando piden 'detalle de saldos T3', 'cuáles son los saldos vencidos',
+    'dame los saldos por cobrar', 'quiero ver los T3', o cualquier drill-down de saldos.
+    """
+    return await t.detalle_saldos_t3(telefono)
+
+
+@tool
 async def ver_accionables(telefono: str) -> str:
     """
     Casos accionables rápidos sin gestión reciente: CP vencidos, saldos T3+,
@@ -166,6 +188,8 @@ LANGCHAIN_TOOLS = [
     analisis_capital,
     ver_capital,
     ver_capital_consolidado,
+    ver_capital_por_marca,
+    ver_saldos_t3_detalle,
     ver_accionables,
     ver_fne,
     ver_lineas_credito,

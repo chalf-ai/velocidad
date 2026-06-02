@@ -842,3 +842,86 @@ async def capital_accionable(telefono: str) -> str:
         return "Sin accionables rápidos pendientes. Todo gestionado."
 
     return "\n".join(lines)
+
+
+# ── Capital por marca — drill-down ejecutivo ──────────────────────────────────
+
+async def capital_por_marca(telefono: str) -> str:
+    """Capital de stock desglosado por marca. Para GERENTE_GENERAL ve todo el grupo."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") in ROLES_VISION_GLOBAL
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    datos = await db.get_capital_por_marca(marcas)
+    if not datos:
+        return "No hay datos de stock disponibles."
+
+    total_mm = sum(d.get("capital_mm") or 0 for d in datos)
+    total_vins = sum(d.get("unidades") or 0 for d in datos)
+
+    lines = [f"*Capital por marca* — ${total_mm:.1f}M · {total_vins} VINs\n"]
+
+    for d in datos:
+        propio = d.get("propio_mm") or 0
+        fp = d.get("floorplan_mm") or 0
+        inmov = d.get("inmovilizados") or 0
+        jud = d.get("judiciales") or 0
+        alertas = []
+        if inmov:
+            alertas.append(f"{inmov} >180d")
+        if jud:
+            alertas.append(f"{jud} jud.")
+        sufijo = f"  ⚠️ {', '.join(alertas)}" if alertas else ""
+        lines.append(
+            f"• *{d['marca']}*  ${d.get('capital_mm',0):.1f}M  "
+            f"({d.get('unidades',0)} VINs)  "
+            f"Propio ${propio:.1f}M · FP ${fp:.1f}M{sufijo}"
+        )
+
+    return "\n".join(lines)
+
+
+# ── Detalle saldos T3+ ────────────────────────────────────────────────────────
+
+async def detalle_saldos_t3(telefono: str) -> str:
+    """Lista completa de saldos vehículo en tramos T3-T7 (>30 días)."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") in ROLES_VISION_GLOBAL
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    datos = await db.get_saldos_t3_detalle(marcas)
+    if not datos:
+        return "Sin saldos T3+ activos."
+
+    total_mm = sum(d.get("saldo_mm") or 0 for d in datos)
+    lines = [f"*Saldos T3+ ({len(datos)} casos · ${total_mm:.1f}M)*\n"]
+
+    # Agrupar por tramo para darle estructura
+    por_tramo: dict[str, list] = {}
+    for d in datos:
+        por_tramo.setdefault(d.get("tramo", "?"), []).append(d)
+
+    for tramo in ["T3", "T4", "T5", "T6", "T7"]:
+        casos = por_tramo.get(tramo, [])
+        if not casos:
+            continue
+        mm = sum(c.get("saldo_mm") or 0 for c in casos)
+        lines.append(f"*{tramo} ({len(casos)} · ${mm:.1f}M):*")
+        for c in casos[:8]:
+            cliente = f" · {c['cliente']}" if c.get("cliente") else ""
+            fin = f" · {c['financiera']}" if c.get("financiera") else ""
+            dias = c.get("dias", 0)
+            lines.append(
+                f"  • {c.get('vin_o_cajon','?')}  {c.get('marca','')}  "
+                f"${c.get('saldo_mm',0):.2f}M  {dias}d{cliente}{fin}"
+            )
+        if len(casos) > 8:
+            lines.append(f"  _...y {len(casos)-8} más_")
+
+    return "\n".join(lines)
