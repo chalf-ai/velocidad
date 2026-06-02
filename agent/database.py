@@ -743,6 +743,47 @@ async def get_provisiones_accionables(marcas: Optional[list[str]] = None) -> lis
 
 # ── Contexto temporal de un VIN ───────────────────────────────────────────────
 
+async def get_provisiones_detalle(marcas: Optional[list[str]] = None, solo_abiertas: bool = True) -> list[dict]:
+    """
+    Lista completa de provisiones con ID (claveGestion), marca, concepto, montos y aging.
+    solo_abiertas=True devuelve solo no_facturadas (universo activo).
+    """
+    pool = await get_pool()
+    marca_filter = "AND elem->>'origen' = ANY($1::text[])" if marcas else ""
+    estado_filter = "AND elem->>'estado' = 'no_facturada'" if solo_abiertas else ""
+    params = [marcas] if marcas else []
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            elem->>'claveGestion'   AS id_provision,
+            elem->>'origen'         AS marca,
+            elem->>'concepto'       AS concepto,
+            elem->>'periodo'        AS periodo,
+            elem->>'solicitante'    AS solicitante,
+            elem->>'razonSocial'    AS razon_social,
+            elem->>'estado'         AS estado,
+            elem->>'estadoAjuste'   AS estado_ajuste,
+            elem->>'agingBucket'    AS aging_bucket,
+            CASE WHEN (elem->>'agingDias') IS NOT NULL AND (elem->>'agingDias') != 'null'
+                 THEN (elem->>'agingDias')::int ELSE 0 END AS dias,
+            CASE WHEN (elem->>'montoProvision') IS NOT NULL AND (elem->>'montoProvision') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'montoProvision')::numeric / 1000000, 3)::float ELSE 0 END AS monto_mm,
+            CASE WHEN (elem->>'saldo') IS NOT NULL AND (elem->>'saldo') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'saldo')::numeric / 1000000, 3)::float ELSE 0 END AS saldo_mm
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'PROVISIONES' AND activo = true
+          AND elem->>'area' = 'ventas'
+          {estado_filter}
+          {marca_filter}
+        ORDER BY (elem->>'agingDias')::int DESC NULLS LAST
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_contexto_temporal_vin(vin: str) -> dict:
     """
     Calcula cuántos snapshots BASE_STOCK han pasado desde el último cambio en el VIN

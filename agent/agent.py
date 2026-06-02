@@ -143,6 +143,17 @@ async def ver_capital_consolidado(telefono: str) -> str:
 
 
 @tool
+async def ver_provisiones_detalle(telefono: str) -> str:
+    """
+    Lista completa de provisiones no facturadas con su ID (PROV-XXX), marca, concepto,
+    monto, saldo pendiente y antigüedad en días. Agrupadas por marca.
+    Llamar cuando piden 'detalle de provisiones', 'ID de provisiones', 'lista de provisiones',
+    'cuáles son las provisiones abiertas', o cualquier drill-down de provisiones.
+    """
+    return await t.detalle_provisiones(telefono)
+
+
+@tool
 async def ver_capital_por_marca(telefono: str) -> str:
     """
     Capital de stock desglosado por marca: total, Propio, FloorPlan, inmovilizados y judiciales.
@@ -188,6 +199,7 @@ LANGCHAIN_TOOLS = [
     analisis_capital,
     ver_capital,
     ver_capital_consolidado,
+    ver_provisiones_detalle,
     ver_capital_por_marca,
     ver_saldos_t3_detalle,
     ver_accionables,

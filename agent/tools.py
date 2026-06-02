@@ -844,6 +844,45 @@ async def capital_accionable(telefono: str) -> str:
     return "\n".join(lines)
 
 
+# ── Detalle provisiones ───────────────────────────────────────────────────────
+
+async def detalle_provisiones(telefono: str) -> str:
+    """Lista completa de provisiones no facturadas con ID, marca, concepto, monto y aging."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") in ROLES_VISION_GLOBAL
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    datos = await db.get_provisiones_detalle(marcas, solo_abiertas=True)
+    if not datos:
+        return "Sin provisiones abiertas."
+
+    total_mm = sum(d.get("saldo_mm") or 0 for d in datos)
+    lines = [f"*Provisiones abiertas — {len(datos)} · ${total_mm:.1f}M*\n"]
+
+    # Agrupar por marca
+    por_marca: dict[str, list] = {}
+    for d in datos:
+        por_marca.setdefault(d.get("marca") or "Sin marca", []).append(d)
+
+    for marca, items in sorted(por_marca.items(), key=lambda x: -sum(i.get("saldo_mm", 0) for i in x[1])):
+        mm = sum(i.get("saldo_mm") or 0 for i in items)
+        lines.append(f"*{marca}* — {len(items)} · ${mm:.1f}M")
+        for p in items:
+            critico = " 🔴" if (p.get("dias") or 0) > 90 else ""
+            ajuste = f" ⚠️ {p['estado_ajuste']}" if p.get("estado_ajuste") else ""
+            lines.append(
+                f"  `{p.get('id_provision','?')}` "
+                f"{p.get('concepto','?')}  "
+                f"${p.get('saldo_mm',0):.2f}M  "
+                f"{p.get('dias',0)}d{critico}{ajuste}"
+            )
+
+    return "\n".join(lines)
+
+
 # ── Capital por marca — drill-down ejecutivo ──────────────────────────────────
 
 async def capital_por_marca(telefono: str) -> str:
