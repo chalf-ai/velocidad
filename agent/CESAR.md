@@ -1,272 +1,209 @@
 # César — Agente de Gestión de Capital Inmovilizado
 
-César es el asistente de gestión de capital de trabajo de Pompeyo Carrasco.
-Vive en WhatsApp. Su misión es una sola: **reducir el capital inmovilizado** identificando qué está parado, cuánto cuesta tenerlo parado, y qué acción concreta lo libera.
+> **Si vas a modificar el agente, empieza leyendo este archivo y `indicadores.py`.**
+> La lógica de negocio vive en `indicadores.py`. La infraestructura vive en los demás archivos.
 
 ---
 
 ## Misión
 
-El capital de trabajo se inmoviliza en cuatro conceptos:
+César reduce el capital de trabajo inmovilizado de Pompeyo Carrasco vía WhatsApp.
+Su trabajo no es reportar — es diagnosticar, clasificar y presionar el cierre de casos accionables.
 
-| Concepto | Fuente de datos | Cuándo duele |
+El capital se inmoviliza en **4 conceptos**:
+
+| Concepto | Fuente DB | Cuándo duele |
 |---|---|---|
-| **Stock** | BASE_STOCK | Propio >60d, FloorPlan acumulando interés |
-| **FNE** | FNE | Vendido no entregado >7d |
-| **Saldos** | SALDOS | Cobros pendientes en T3+ (>30d) |
-| **Provisiones** | PROVISIONES | Incentivos sin facturar >90d |
-
-César consolida los cuatro en una sola vista y clasifica cada peso parado como **accionable rápido**, **accionable medio**, o **bloqueado**. No reporta — gestiona.
+| Stock | `Snapshot[BASE_STOCK]` | Propio >90d, FloorPlan acumulando interés, B/Judicial sin resolución |
+| FNE | `Snapshot[FNE]` | Vendido no entregado — el dinero no llega hasta la entrega |
+| Saldos | `Snapshot[SALDOS]` | Cobros pendientes en T3+ (>30d) |
+| Provisiones | `Snapshot[PROVISIONES]` | Incentivos de marca sin facturar >90d |
 
 ---
 
-## Score Gerencial (0–100)
+## Mapa de archivos
 
-Cuatro indicadores con pesos fijos. El score sube cuando se recupera capital.
+```
+agent/
+├── CESAR.md          ← estás aquí — documentación y contexto para próximas sesiones
+├── indicadores.py    ← FUENTE DE VERDAD del negocio: umbrales, KPIs, lógica de gestión
+├── agent.py          ← LangGraph + GPT-4o: system prompt, tools registradas, checkpointer
+├── tools.py          ← 21 tools de negocio que usan database.py
+├── database.py       ← queries asyncpg sobre PostgreSQL (mismo DB que Next.js)
+├── webhook.py        ← FastAPI: recibe WhatsApp, despacha mensajes, endpoints de debug
+├── cron.py           ← APScheduler: briefing 09:00 + seguimiento 15:00 (L-V)
+├── config.py         ← Pydantic Settings: env vars
+├── whatsapp.py       ← cliente Meta Graph API v20.0
+└── mcp_server.py     ← expone tools como MCP server (para Claude Desktop)
+```
 
-| Indicador | Peso | Meta | Fuente del umbral |
+---
+
+## Las 21 tools de César
+
+### Resumen y diagnóstico
+| Tool | Cuándo la usa César |
+|---|---|
+| `get_briefing` | Al iniciar la conversación o pedir resumen del día |
+| `ver_capital_consolidado` | "¿cómo estamos?", resumen financiero, capital total |
+| `ver_capital_por_marca` | Desglose ejecutivo por marca (GERENTE_GENERAL ve todo) |
+| `analisis_capital` | Tendencia histórica — mejora/empeora vs semanas anteriores |
+| `ver_capital` | Capital de stock desglosado Propio/FP/Financiado |
+| `ver_accionables` | Casos sin gestión reciente + preguntas de seguimiento |
+| `ver_alarmas` | Casos urgentes: vencidos, críticos, sin movimiento |
+| `ver_alertas_stock` | Inmovilizados >180d, pagados >60d, judiciales, Stock B |
+| `ver_lineas_credito` | Líneas por marca con semáforo de ocupación |
+
+### FNE — Facturados No Entregados
+| Tool | Cuándo la usa César |
+|---|---|
+| `ver_fne` | Resumen FNE con aging buckets |
+| `ver_fne_detalle` | Lista completa agrupada por estado del pipeline de patente |
+| `ver_fne_vin` | Pipeline checklist de un VIN específico en FNE |
+
+### Saldos y Provisiones
+| Tool | Cuándo la usa César |
+|---|---|
+| `ver_saldos_t3_detalle` | Lista completa de saldos T3-T7 por tramo |
+| `ver_provisiones_detalle` | Todas las provisiones con ID (PROV-XXX), marca, aging |
+
+### Gestión de VINs
+| Tool | Cuándo la usa César |
+|---|---|
+| `get_detalle_vin` | Ficha VIN: estado, prioridad, historial, contexto temporal |
+| `ver_vin_360` | Vista cruzada de un VIN en stock + FNE + saldos + gestión |
+| `update_estado` | Cambiar estadoGestion (ABIERTO/EN_CURSO/ESPERANDO/RESUELTO/CANCELADO) |
+| `update_prioridad` | Cambiar prioridad (BAJA/MEDIA/ALTA/CRITICA) |
+| `reasignar` | Cambiar responsable del caso |
+| `guardar_comentario` | Agregar comentario + auditoría en HistorialGestion |
+| `guardar_proxima_accion` | Definir próxima acción concreta |
+
+---
+
+## Lógica de negocio clave (todo en `indicadores.py`)
+
+### Score Gerencial (0–100)
+Cuatro indicadores con pesos fijos. El score mejora cuando se recupera capital.
+
+| Indicador | Peso | Meta | Modificar en |
 |---|---|---|---|
-| Stock propio ≤5% del valorizado | 40 | ≤5% | `indicadores.py → SCORE_GERENCIAL["stock_propio"]` |
-| Provisiones no facturadas >90d = 0 | 40 | 0 casos | `indicadores.py → SCORE_GERENCIAL["provisiones_90d"]` |
-| Crédito Pompeyo >15d = 0 | 10 | 0 casos | `indicadores.py → SCORE_GERENCIAL["cp_15d"]` |
-| Saldos vehículo T3+ ≤15% | 10 | ≤15% | `indicadores.py → SCORE_GERENCIAL["saldos_t3"]` |
+| Stock propio ≤5% del valorizado | 40 | ≤5% | `SCORE_GERENCIAL["stock_propio"]` |
+| Provisiones no facturadas >90d = 0 | 40 | 0 casos | `SCORE_GERENCIAL["provisiones_90d"]` |
+| Crédito Pompeyo >15d = 0 | 10 | 0 casos | `SCORE_GERENCIAL["cp_15d"]` |
+| Saldos vehículo T3+ ≤15% | 10 | ≤15% | `SCORE_GERENCIAL["saldos_t3"]` |
 
-**Para cambiar un umbral:** editar `agent/indicadores.py`, sección `SCORE_GERENCIAL`. El scoring es lineal entre `meta` y `max`.
+### Tipos de stock — tres flujos distintos
 
----
+| Tipo | Gestión | Umbral alerta | Umbral crítico |
+|---|---|---|---|
+| Stock A | Comercial: precio, promoción, transferencia | 90d | 180d |
+| Stock B | Operacional: reparación, taller, plazo de salida | 30d | 60d |
+| Judicial | Legal: solo seguimiento, NO acciones comerciales | 30d | 90d |
 
-## Personalidad y comportamiento
+Los umbrales están en `LOGICA_STOCK_AB`. Las acciones y preguntas de seguimiento también.
 
-César es directo, sin rodeos, orientado a acción. No reporta datos — diagnostica y presiona el cierre.
+### Accionabilidad
+Cada peso parado tiene velocidad: `rapido` (esta semana) / `medio` (1-2 semanas) / `bloqueado`.
+Ver `ACCIONABILIDAD` en `indicadores.py` para todas las reglas.
 
-**Lo que hace:**
-- Abre cada conversación con el estado del capital: cuánto hay parado y dónde
-- Clasifica qué es accionable hoy, esta semana, o está bloqueado
-- Cuando un caso accionable lleva días sin comentario, pregunta directamente: *"¿Cobraste ese CP? Deja el comentario."*
-- Cuando un gerente comenta un VIN, notifica al responsable por WhatsApp
-- Recuerda el contexto de la conversación y hace seguimiento entre sesiones
-
-**Lo que NO hace:**
-- No inventa datos. Si no tiene acceso a algo, dice exactamente qué puede ver y qué no.
-- No reporta sin diagnosticar. Un número sin acción no sirve.
-- No ignora casos crónicos. Si algo lleva 4+ semanas igual, lo dice explícitamente.
-
----
-
-## Arquitectura
-
-```
-WhatsApp (usuario)
-      ↓
-  webhook.py          ← FastAPI, recibe y despacha mensajes
-      ↓
-  agent.py (César)    ← LangGraph ReAct + GPT-4o
-      ↓
-  ┌──────────────────────────────────────────────────┐
-  │  Tools de dominio (tools.py)                     │
-  │                                                  │
-  │  ver_capital_consolidado()   ← cuadro completo   │
-  │  ver_accionables()           ← clasificados      │
-  │  get_detalle_vin()           ← con contexto      │
-  │                               temporal           │
-  │  guardar_comentario()        ← + hook escalada   │
-  │  [ver_fne, ver_saldos,                           │
-  │   ver_provisiones, ...]                          │
-  └──────────────────────────────────────────────────┘
-      ↓
-  database.py         ← asyncpg directo sobre PostgreSQL
-      ↓
-  PostgreSQL (Railway)
-  ├── Snapshot (BASE_STOCK, FNE, SALDOS, PROVISIONES)
-  ├── GestionVIN + HistorialGestion
-  └── User, AlertaLog, AlertaConfig
-
-  Checkpointer LangGraph (PostgreSQL) ← historial de conversación por usuario
-  Store LangGraph (PostgreSQL)        ← memoria persistente: alertas, preferencias
-```
-
----
-
-## Flujo de un mensaje
-
-```
-1. Usuario escribe por WhatsApp
-2. webhook.py recibe, llama agent.chat(telefono, mensaje)
-3. César carga:
-   a. Historial de conversación (checkpointer, últimos 50 mensajes)
-   b. Memoria del usuario (store: alertas personalizadas, preferencias)
-   c. Perfil del usuario (rol, marcas asignadas)
-4. GPT-4o decide qué tool(s) llamar
-5. Tool consulta database.py → PostgreSQL
-6. César formula respuesta con diagnóstico + acción concreta
-7. send_text() → WhatsApp
-```
-
----
-
-## Memoria por usuario
-
-César tiene dos capas de memoria:
-
-### Corto plazo — historial de conversación
-- Guardado por el checkpointer de LangGraph en PostgreSQL
-- `thread_id` = teléfono del usuario
-- Ventana: últimos 50 mensajes
-- Se pierde al truncar → no apto para instrucciones permanentes
-
-### Largo plazo — Store de LangGraph
-Persiste entre sesiones. Tres namespaces por usuario:
-
-| Namespace | Qué guarda | Ejemplo |
-|---|---|---|
-| `users/{tel}/alertas` | Reglas de notificación declaradas por el usuario | "avísame si KIA supera 180d" |
-| `users/{tel}/contexto` | Conocimiento acumulado | "el VIN ABC tiene problema legal con cliente Pérez" |
-| `users/{tel}/preferencias` | Cómo recibir la info | "primero FNE, no mostrar judiciales" |
-
-El usuario enseña a César diciendo:
-- *"Recuerda que..."* → César guarda en contexto
-- *"Avísame cuando..."* → César guarda en alertas, se evalúa en cada snapshot
-- *"Siempre muéstrame..."* → César guarda en preferencias
-
----
-
-## Hook de escalada
-
-Cuando un usuario con rol GERENTE, GERENTE_GENERAL o DIRECTOR deja un comentario en un VIN:
-
-```
-1. agregar_comentario() detecta rol del usuario desde su email
-2. Si rol ≥ GERENTE → busca responsableEmail en GestionVIN
-3. Busca teléfono del responsable en tabla User
-4. Envía WhatsApp inmediato:
-   "🔔 [Nombre] (Gerente) comentó en VIN *XYZ456*:
-    _'[comentario]'_
-    Responde o actualiza el caso."
-5. Registra en AlertaLog tipo COMENTARIO_GERENCIA
-```
+### Seguimiento proactivo
+Cuando un caso accionable lleva N días sin comentario, César pregunta directamente.
+Los textos están en `SEGUIMIENTO_PROACTIVO`. Modificar ahí para cambiar el tono o el contenido.
 
 ---
 
 ## Contexto temporal de un VIN
 
-Cada vez que César consulta un VIN incluye automáticamente:
-
-```python
-{
-  "semanas_en_gestion": 6,          # semanas desde GestionVIN.createdAt
-  "snapshots_sin_cambio": 4,        # snapshots BASE_STOCK desde último update
-  "es_cronico": True,               # snapshotsSinCambio >= INACTIVIDAD["snapshots_sin_cambio_cronico"]
-  "ultimo_comentario_gerencia": {
-    "texto": "debe resolverse esta semana",
-    "usuario": "Carlos García",
-    "rol": "GERENTE",
-    "hace_dias": 14
-  }
-}
-```
-
-**Fórmula de snapshots sin cambio:**
-```sql
-SELECT COUNT(*) FROM "Snapshot"
-WHERE fuente = 'BASE_STOCK'
-  AND "createdAt" > (SELECT "updatedAt" FROM "GestionVIN" WHERE vin = $1)
-```
-No requiere campo nuevo en la DB — se calcula en tiempo real.
+Cada VIN consultado incluye automáticamente:
+- `semanas_en_gestion` — desde `GestionVIN.createdAt`
+- `snapshots_sin_cambio` — snapshots BASE_STOCK desde último update (calculado en SQL, sin campo nuevo)
+- `es_cronico` — True si ≥4 snapshots sin cambio
+- `ultimo_comentario_gerencia` — último comentario de GERENTE/DIRECTOR/GERENTE_GENERAL con días de antigüedad
 
 ---
 
-## Seguimiento proactivo
+## Crons diarios (L-V, hora Chile)
 
-César pregunta activamente cuando un caso accionable no tiene gestión reciente.
-Los textos de las preguntas están en `indicadores.py → SEGUIMIENTO_PROACTIVO`.
+| Hora | Job | Destinatarios | Contenido |
+|---|---|---|---|
+| 09:00 | `briefing_diario` | Todos los usuarios con teléfono | Resumen del día + alertas |
+| 15:00 | `seguimiento_tarde` | Solo GERENTE y JEFE_MARCA | Accionables sin gestión reciente |
 
-**Regla:** si un caso tiene `velocidad = "rapido"` y su VIN no tiene comentario en los últimos `INACTIVIDAD["dias_seguimiento_sin_comentario"]` días → César incluye la pregunta en el briefing o en la respuesta cuando se menciona el VIN.
-
-**Ejemplo:**
-```
-VIN ABC123 · CP >15d · $4.2M · sin comentario hace 4 días
-César: "¿Cobraste ese CP? Deja el comentario."
-```
+Cambiar horarios: variables `BRIEFING_HORA` y `SEGUIMIENTO_HORA` en Railway.
+El seguimiento **no envía** si no hay accionables pendientes.
 
 ---
 
-## Briefing diario (08:00 Chile, L-V)
+## Roles y visibilidad
 
-Estructura del briefing de César (en orden):
+| Rol | Ve marcas | Acceso |
+|---|---|---|
+| ADMIN | Todas | Todo |
+| DIRECTOR | Todas | Solo lectura |
+| GERENTE_GENERAL | Todas | Gestión + usuarios |
+| GERENTE | Solo sus marcas | KPIs de sus marcas |
+| JEFE_MARCA | Solo sus marcas | Operacional |
 
-```
-1. Score gerencial actual (0-100) y variación vs semana anterior
-2. Capital parado por concepto ($M totales)
-3. Accionables rápidos sin gestión → lista con pregunta de seguimiento
-4. Casos crónicos (4+ snapshots sin cambio)
-5. Alertas personalizadas del usuario (si tiene alguna disparada)
-6. Últimos comentarios de gerencia sin respuesta
-```
-
----
-
-## Cómo modificar indicadores
-
-**Cambiar un umbral del score gerencial:**
-```python
-# agent/indicadores.py → SCORE_GERENCIAL
-"stock_propio": {
-    "meta": 5.0,   # cambiar a 3.0 para ser más exigente
-    "max": 20.0,   # cambiar a 15.0 para penalizar antes
-}
-```
-
-**Agregar un nuevo tipo de accionable:**
-```python
-# agent/indicadores.py → ACCIONABILIDAD
-"mi_nuevo_caso": {
-    "concepto": "saldos",
-    "velocidad": "rapido",          # rapido | medio | bloqueado
-    "criterio": "...",
-    "accion": "Qué hacer concretamente",
-    "horizonte": "hoy",
-    "bloqueo": None,
-}
-
-# agent/indicadores.py → SEGUIMIENTO_PROACTIVO
-"mi_nuevo_caso": "Texto que César pregunta cuando no hay comentario en {dias}d.",
-```
-
-**Cambiar tramos de aging:**
-```python
-# agent/indicadores.py → AGING
-"fne": {
-    "verde":    (0, 3),   # cambiar el 3 a 5 para dar más tiempo
-    ...
-}
-```
+`ROLES_VISION_GLOBAL = {"ADMIN", "DIRECTOR", "GERENTE_GENERAL"}` en `tools.py`.
 
 ---
 
-## Variables de entorno
+## Hook de escalada (pendiente de activar)
 
-| Variable | Descripción |
-|---|---|
-| `DATABASE_URL` | PostgreSQL compartida con la app Next.js |
-| `OPENAI_API_KEY` | GPT-4o |
-| `WHATSAPP_ACCESS_TOKEN` | Meta Graph API |
-| `WHATSAPP_PHONE_NUMBER_ID` | ID del número Business |
-| `WHATSAPP_VERIFY_TOKEN` | Token de verificación del webhook |
-| `BRIEFING_HORA` | Hora del briefing diario (default: `08:00`) |
-| `AGENT_PORT` | Puerto del servidor (default: `8000`) |
+Cuando GERENTE/DIRECTOR/GERENTE_GENERAL comenta un VIN → notificar al responsable por WhatsApp.
+El código está comentado en `tools.py → agregar_comentario()`.
+Para activar: descomentar el bloque `# HOOK DE ESCALADA` y agregar `get_user_by_email` en `database.py`.
 
 ---
 
-## Deploy
+## Fuentes de datos — estructura JSONB
 
-Railway. Dockerfile en `agent/Dockerfile`. Health check en `/health`.
+Todos los datos viven en `Snapshot.payload` como JSONB según la fuente:
 
-```bash
-# Local
-cd agent
-pip install -r requirements.txt
-uvicorn agent.webhook:app --reload --port 8000
+| Fuente | Array | Campos clave |
+|---|---|---|
+| `BASE_STOCK` | `payload->'vehiculos'` | vin, marcaPompeyo, tipoStock, stockAB, diasStock, costoNeto, esJudicial, esStockB, pagado |
+| `FNE` | `payload->'registros'` | vin, valorFactura, diasDesdeVenta, agingBucket, estadoEntrega signals, pipeline patente |
+| `SALDOS` | `payload->'registros'` | categoria, subTipo, statusDPS, saldoXDocumentar, diasArchivo, vinResuelto |
+| `PROVISIONES` | `payload->'registros'` | claveGestion (ID), estado, agingDias, montoProvision, saldo, origen (marca) |
+| `BASE_STOCK` | `payload->'lineas'` | marca, autorizado, ocupado, libre, semaforo |
 
-# Ver logs en Railway
-railway logs --tail
-```
+---
+
+## Pendientes para próximas sesiones
+
+- [ ] `buscar_stock(marca, modelo, dias)` — búsqueda de VINs por criterio
+- [ ] `ver_sin_proxima_accion()` — VINs activos sin próxima acción definida
+- [ ] `buscar_saldo(cajon_o_vin)` — buscar saldo por cajón o VIN específico
+- [ ] LangGraph Store — memoria persistente por usuario (alertas, preferencias, contexto)
+- [ ] Hook de escalada activado — notificación push cuando gerencia comenta un VIN
+- [ ] Snapshot diff cron — detectar cambios entre reportes y notificar proactivamente
+- [ ] `ver_provisiones_facturadas()` — referencia histórica de las ya facturadas
+
+---
+
+## Variables de entorno (Railway)
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `DATABASE_URL` | — | PostgreSQL compartida con Next.js |
+| `OPENAI_API_KEY` | — | GPT-4o |
+| `WHATSAPP_ACCESS_TOKEN` | — | Meta Graph API |
+| `WHATSAPP_PHONE_NUMBER_ID` | — | ID del número Business |
+| `WHATSAPP_VERIFY_TOKEN` | — | Token verificación webhook |
+| `BRIEFING_HORA` | `09:00` | Hora briefing matutino |
+| `SEGUIMIENTO_HORA` | `15:00` | Hora seguimiento tarde |
+
+---
+
+## Cómo agregar una tool nueva
+
+1. Agregar query en `database.py`
+2. Agregar función en `tools.py` (usa `ROLES_VISION_GLOBAL` para filtro de marcas)
+3. Registrar en `agent.py` con `@tool` y descripción clara de cuándo usarla
+4. Agregar a `LANGCHAIN_TOOLS`
+5. Si tiene umbrales o lógica de negocio → definir en `indicadores.py` primero
+
+## Cómo modificar un indicador
+
+Solo tocar `indicadores.py`. Ningún otro archivo.
