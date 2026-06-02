@@ -130,6 +130,22 @@ async def debug_estado():
         return {"error": str(e)}
 
 
+@app.get("/debug/reset-pw-temp")
+async def debug_reset_pw():
+    """ONE-TIME: resetea password de christian.alfaro@pompeyo.cl a 123456. Eliminar después."""
+    pool = await db.get_pool()
+    try:
+        pw_hash = "$2b$10$6zBWbKgE6IWv9vzWWxcLDekZeEA5xchtJMYEuorZ4bg73EuiJsJKu"
+        result = await pool.fetchrow(
+            'UPDATE "User" SET "passwordHash" = $1 WHERE email = $2 RETURNING id, email, rol',
+            pw_hash,
+            "christian.alfaro@pompeyo.cl",
+        )
+        return {"ok": True, "usuario": dict(result) if result else None}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/debug/user/{telefono}")
 async def debug_user(telefono: str):
     """Diagnóstico: busca usuario por teléfono — muestra query raw y resultado."""
