@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = "pompeyo_velocidad_2025"
 
     # Agente
-    briefing_hora: str = "08:00"   # HH:MM, hora Chile (America/Santiago)
+    briefing_hora: str = "09:00"    # HH:MM, hora Chile — briefing matutino (todos)
+    seguimiento_hora: str = "15:00" # HH:MM, hora Chile — seguimiento tarde (GERENTE + JEFE_MARCA)
     agent_port: int = 8000
 
     model_config = {"env_file": ".env", "extra": "ignore"}
