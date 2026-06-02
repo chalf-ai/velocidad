@@ -131,8 +131,7 @@ async def get_alertas_stock(marcas: Optional[list[str]] = None) -> list[dict]:
 
 async def get_fne_resumen() -> dict:
     """Resumen FNE: total, detenidos >15d, aging buckets.
-    diasDesdeVenta se calcula en SQL desde fechaVenta (no existe como campo en el payload).
-    Solo registros con entregado != true (universo operativo).
+    Aging calculado desde fechaFactura (igual que la app). Solo universo operativo (entregado != true).
     """
     pool = await get_pool()
     row = await pool.fetchrow(
@@ -141,8 +140,8 @@ async def get_fne_resumen() -> dict:
             SELECT
                 elem,
                 CASE
-                    WHEN (elem->>'fechaVenta') IS NOT NULL AND (elem->>'fechaVenta') NOT IN ('null','')
-                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz))::int
+                    WHEN (elem->>'fechaFactura') IS NOT NULL AND (elem->>'fechaFactura') NOT IN ('null','')
+                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz))::int
                     ELSE NULL
                 END AS dias
             FROM "Snapshot",
@@ -189,8 +188,8 @@ async def get_fne_detalle(marcas: Optional[list[str]] = None) -> list[dict]:
             SELECT
                 elem,
                 CASE
-                    WHEN (elem->>'fechaVenta') IS NOT NULL AND (elem->>'fechaVenta') NOT IN ('null','')
-                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz))::int
+                    WHEN (elem->>'fechaFactura') IS NOT NULL AND (elem->>'fechaFactura') NOT IN ('null','')
+                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz))::int
                     ELSE NULL
                 END AS dias
             FROM "Snapshot",
@@ -261,15 +260,15 @@ async def get_fne_por_vin(vin: str) -> Optional[dict]:
             elem->>'fechaVenta'                     AS fecha_venta,
             elem->>'fechaFactura'                   AS fecha_factura,
             CASE
-                WHEN (elem->>'fechaVenta') IS NOT NULL AND (elem->>'fechaVenta') NOT IN ('null','')
-                THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz))::int
+                WHEN (elem->>'fechaFactura') IS NOT NULL AND (elem->>'fechaFactura') NOT IN ('null','')
+                THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz))::int
                 ELSE NULL
             END AS dias,
             CASE
-                WHEN (elem->>'fechaVenta') IS NULL OR (elem->>'fechaVenta') IN ('null','') THEN 'sin_fecha'
-                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz)) <= 3   THEN '0-3'
-                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz)) <= 7   THEN '4-7'
-                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaVenta')::timestamptz)) <= 15  THEN '8-15'
+                WHEN (elem->>'fechaFactura') IS NULL OR (elem->>'fechaFactura') IN ('null','') THEN 'sin_fecha'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz)) <= 3   THEN '0-3'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz)) <= 7   THEN '4-7'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz)) <= 15  THEN '8-15'
                 ELSE '16+'
             END AS aging,
             (elem->>'autorizacionEntrega') = 'true' AS tiene_autorizacion,
