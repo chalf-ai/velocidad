@@ -54,7 +54,7 @@ const MARCAS_GRUPO = [
   "KIA MOTORS", "MG", "GEELY", "PEUGEOT", "OPEL",
   "CITROEN", "DFSK", "NISSAN", "NISSAN FLOTAS",
   "SUBARU", "SUZUKI", "GREAT WALL", "DFM", "LEAPMOTOR",
-  "LANDKING", "NAMMI",
+  "LANDKING", "NAMMI", "USADOS",
 ];
 
 /* ─── Modal overlay ──────────────────────────────────────────────────────── */

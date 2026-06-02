@@ -85,6 +85,8 @@ export async function POST(req: NextRequest) {
       name: true,
       rol: true,
       activo: true,
+      telefono: true,
+      marcas: true,
       createdAt: true,
     },
   });
