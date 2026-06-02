@@ -4,10 +4,20 @@ Cada función retorna un string legible (formato WhatsApp).
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
 from typing import Optional
 
 from . import database as db
+from .indicadores import (
+    SCORE_GERENCIAL,
+    ACCIONABILIDAD,
+    SEGUIMIENTO_PROACTIVO,
+    INACTIVIDAD,
+)
+
+# Roles con visión global (ven todas las marcas sin filtro)
+ROLES_VISION_GLOBAL = {"ADMIN", "DIRECTOR", "GERENTE_GENERAL"}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -57,7 +67,7 @@ async def briefing_diario(telefono: str) -> str:
     if not user:
         return "No encontré tu usuario en el sistema. Pide al administrador que registre tu número."
 
-    if user.get("rol") == "ADMIN":
+    if user.get("rol") in ROLES_VISION_GLOBAL:
         return await _briefing_ejecutivo(user)
 
     marcas = user.get("marcas") or []
@@ -134,7 +144,7 @@ async def analisis_capital(telefono: str) -> str:
     if not user:
         return "No encontré tu usuario en el sistema."
 
-    es_admin = user.get("rol") == "ADMIN"
+    es_admin = user.get("rol") in ROLES_VISION_GLOBAL
     marcas = None if es_admin else (user.get("marcas") or [])
     nombre = user.get("name", "Usuario")
 
@@ -291,46 +301,56 @@ async def _briefing_ejecutivo(user: dict) -> str:
 
 
 async def detalle_vin(vin: str, telefono: str) -> str:
-    """Ficha completa de un VIN: estado de gestión, comentarios e historial reciente."""
-    user = await db.get_user_by_phone(telefono)
-    nombre = user["name"] if user else "Usuario"
-
+    """Ficha completa de un VIN con contexto temporal: estado, historial y si se viene arrastrando."""
     vin = vin.upper().strip()
-    gestion = await db.get_gestion_by_vin(vin)
-    historial = await db.get_historial_vin(vin, limit=4)
+    gestion, historial, temporal = await asyncio.gather(
+        db.get_gestion_by_vin(vin),
+        db.get_historial_vin(vin, limit=6),
+        db.get_contexto_temporal_vin(vin),
+    )
 
     if not gestion:
-        return f"No hay gestión registrada para el VIN *{vin}*. ¿Quieres que la cree?"
+        return f"No hay gestión registrada para el VIN *{vin}*. ¿Lo creamos?"
 
     prioridad = gestion.get("prioridadManual")
     estado = gestion.get("estadoGestion", "ABIERTO")
     emoji = PRIORIDAD_EMOJI.get(prioridad, "⚪")
 
-    lines = [f"*VIN: {vin}* {emoji}"]
-    lines.append(f"Estado: *{ESTADO_LABEL.get(estado, estado)}*")
+    lines = [f"*{vin}* {emoji}  {ESTADO_LABEL.get(estado, estado)}"]
     if prioridad:
-        lines.append(f"Prioridad: {prioridad}")
+        lines.append(f"Prioridad: *{prioridad}*")
     if gestion.get("responsable"):
         lines.append(f"Responsable: {gestion['responsable']}")
     if gestion.get("fechaCompromiso"):
         lines.append(f"Compromiso: {_fecha_str(gestion['fechaCompromiso'])}")
+
+    # Contexto temporal — lo más importante para entender si es un caso arrastrado
+    snaps = temporal.get("snapshots_sin_cambio", 0)
+    dias_total = temporal.get("dias_en_gestion", 0)
+    if temporal.get("es_cronico"):
+        lines.append(f"\n⏳ *Caso crónico* — {snaps} informes consecutivos sin cambio ({dias_total}d en gestión)")
+    elif snaps > 1:
+        lines.append(f"\n_En gestión hace {dias_total}d · {snaps} informes sin cambio de estado_")
+
+    # Último comentario de gerencia sin respuesta posterior
+    uc = temporal.get("ultimo_comentario_gerencia")
+    if uc and uc["hace_dias"] > 3:
+        lines.append(f"\n🔔 *{uc['usuario']}* ({uc['rol']}) hace {uc['hace_dias']}d:")
+        lines.append(f'_"{uc["texto"]}"_')
+
     if gestion.get("comentario"):
         lines.append(f"\n📝 _{gestion['comentario']}_")
     if gestion.get("proximaAccion"):
-        lines.append(f"▶️ Próxima acción: {gestion['proximaAccion']}")
+        lines.append(f"▶️ {gestion['proximaAccion']}")
 
     if historial:
-        lines.append("\n*Últimos cambios:*")
+        lines.append("\n*Historial:*")
         for h in historial:
             ts = _fecha_str(h.get("createdAt"))
             usuario = h.get("usuario", "?")
             campo = h.get("campo", "")
-            nuevo = h.get("valorNuevo", "")
-            lines.append(f"• {ts} [{usuario}] {campo}: {nuevo}")
-
-    dias = _dias_sin_movimiento(gestion)
-    if dias > 0:
-        lines.append(f"\n_Sin movimiento: {dias} días_")
+            nuevo = h.get("valorNuevo", "") or ""
+            lines.append(f"• {ts} {usuario} · {campo}: {nuevo[:60]}")
 
     return "\n".join(lines)
 
@@ -392,6 +412,26 @@ async def agregar_comentario(vin: str, texto: str, telefono: str) -> str:
     vin = vin.upper().strip()
     await db.upsert_gestion_field(vin, "comentario", texto, user["name"], user["email"])
     await db.add_comentario_historial(vin, texto, user["name"], user["email"])
+
+    # HOOK DE ESCALADA — pendiente de activar
+    # Cuando un usuario con rol GERENTE/GERENTE_GENERAL/DIRECTOR/ADMIN deja un comentario,
+    # se debe notificar por WhatsApp al responsable del VIN (responsableEmail en GestionVIN).
+    # Implementar cuando se habiliten las notificaciones push entre usuarios.
+    #
+    # rol = user.get("rol", "")
+    # if rol in ("GERENTE", "GERENTE_GENERAL", "DIRECTOR", "ADMIN"):
+    #     gestion = await db.get_gestion_by_vin(vin)
+    #     responsable_email = gestion and gestion.get("responsableEmail")
+    #     if responsable_email:
+    #         responsable = await db.get_user_by_email(responsable_email)
+    #         if responsable and responsable.get("telefono"):
+    #             msg = (
+    #                 f"🔔 *{user['name']}* ({rol}) comentó en VIN *{vin}*:\n"
+    #                 f'_"{texto}"_\n'
+    #                 f"Actualiza el caso cuando puedas."
+    #             )
+    #             await send_text(responsable["telefono"], msg)
+
     return f"✅ Comentario guardado en VIN *{vin}*"
 
 
@@ -455,7 +495,7 @@ async def resumen_capital(telefono: str) -> str:
     if not user:
         return "No pude identificarte."
 
-    es_admin = user.get("rol") == "ADMIN"
+    es_admin = user.get("rol") in ROLES_VISION_GLOBAL
     marcas = None if es_admin else (user.get("marcas") or [])
 
     kpis = await db.get_capital_breakdown(marcas)
@@ -533,7 +573,7 @@ async def lineas_credito(telefono: str) -> str:
     if not user:
         return "No pude identificarte."
 
-    es_admin = user.get("rol") == "ADMIN"
+    es_admin = user.get("rol") in ROLES_VISION_GLOBAL
     marcas = None if es_admin else (user.get("marcas") or [])
 
     lineas = await db.get_lineas_credito_resumen(marcas)
@@ -565,7 +605,7 @@ async def alertas_stock(telefono: str) -> str:
     if not user:
         return "No pude identificarte."
 
-    es_admin = user.get("rol") == "ADMIN"
+    es_admin = user.get("rol") in ROLES_VISION_GLOBAL
     marcas = None if es_admin else (user.get("marcas") or [])
 
     alertas = await db.get_alertas_stock(marcas)
@@ -605,5 +645,200 @@ async def alertas_stock(telefono: str) -> str:
         lines.append(f"\n*📦 Stock B — {len(stock_b_list)} VINs:*")
         for a in stock_b_list[:5]:
             lines.append(f"• {a['vin']} {a.get('modelo', '')} ({a.get('marca', '')})")
+
+    return "\n".join(lines)
+
+
+# ── Capital consolidado — los 4 conceptos en una vista ───────────────────────
+
+async def capital_consolidado(telefono: str) -> str:
+    """
+    Cuadro unificado de capital inmovilizado: Stock + FNE + Saldos + Provisiones.
+    Incluye score gerencial actual y variación vs snapshot anterior.
+    """
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") in ("ADMIN", "DIRECTOR", "GERENTE_GENERAL")
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    # Carga paralela de los 4 conceptos
+    stock, fne, saldos, provisiones = await asyncio.gather(
+        db.get_capital_breakdown(marcas),
+        db.get_fne_resumen(),
+        db.get_saldos_resumen(marcas),
+        db.get_provisiones_resumen(marcas),
+    )
+
+    # Totales
+    stock_mm = (
+        (stock.get("capital_propio_mm") or 0)
+        + (stock.get("capital_floorplan_mm") or 0)
+        + (stock.get("capital_financiado_mm") or 0)
+    )
+    fne_mm = (fne.get("capital_detenido_mm") or 0)  # solo detenidos >15d como capital "real"
+    saldos_mm = (saldos.get("saldo_vehiculo_mm") or 0) + (saldos.get("saldo_bono_mm") or 0)
+    prov_mm = (provisiones.get("saldo_pendiente_mm") or 0)
+    total_mm = stock_mm + fne_mm + saldos_mm + prov_mm
+
+    lines = ["*Capital de trabajo*\n"]
+    lines.append(f"{'Grupo completo' if es_admin else ', '.join(marcas or [])}\n")
+
+    lines.append(f"*Total: ${total_mm:.1f}M*\n")
+    lines.append("*Por concepto:*")
+    lines.append(f"• Stock          ${stock_mm:.1f}M  ({stock.get('total_unidades', 0)} VINs)")
+    lines.append(f"• FNE detenidos  ${fne_mm:.1f}M  ({fne.get('detenidos_mas_15', 0)} VINs >15d)")
+    lines.append(f"• Saldos         ${saldos_mm:.1f}M  ({saldos.get('total_vehiculo', 0) + saldos.get('total_bono', 0)} docs)")
+    lines.append(f"• Provisiones    ${prov_mm:.1f}M  ({provisiones.get('abiertas', 0)} abiertas)")
+
+    # Score gerencial — alertas por indicador
+    alertas_score = []
+    cfg = SCORE_GERENCIAL
+
+    # I1: stock propio
+    sp_mm = stock.get("capital_propio_mm") or 0
+    if stock_mm > 0:
+        pct_propio = (sp_mm / stock_mm) * 100
+        if pct_propio > cfg["stock_propio"]["meta"]:
+            alertas_score.append(
+                f"Stock propio {pct_propio:.1f}% (meta ≤{cfg['stock_propio']['meta']}%) — "
+                f"${sp_mm:.1f}M · {cfg['stock_propio']['accion']}"
+            )
+
+    # I2: provisiones >90d
+    prov_criticas = provisiones.get("criticas_90d_count") or 0
+    if prov_criticas > cfg["provisiones_90d"]["meta"]:
+        alertas_score.append(
+            f"{prov_criticas} provisiones >90d — "
+            f"${provisiones.get('criticas_90d_mm', 0):.1f}M · {cfg['provisiones_90d']['accion']}"
+        )
+
+    # I3: CP >15d
+    cp_count = saldos.get("cp_vencido_count") or 0
+    if cp_count > cfg["cp_15d"]["meta"]:
+        alertas_score.append(
+            f"{cp_count} CP vencidos >15d — "
+            f"${saldos.get('cp_vencido_mm', 0):.1f}M · {cfg['cp_15d']['accion']}"
+        )
+
+    # I4: saldos T3+
+    t3_mm = saldos.get("vehiculo_t3_mm") or 0
+    saldos_veh_mm = saldos.get("saldo_vehiculo_mm") or 0
+    if saldos_veh_mm > 0:
+        pct_t3 = (t3_mm / saldos_veh_mm) * 100
+        if pct_t3 > cfg["saldos_t3"]["meta"]:
+            alertas_score.append(
+                f"Saldos T3+ {pct_t3:.1f}% del total (meta ≤{cfg['saldos_t3']['meta']}%) — "
+                f"${t3_mm:.1f}M · {cfg['saldos_t3']['accion']}"
+            )
+
+    if alertas_score:
+        lines.append("\n*Para mejorar el score:*")
+        for a in alertas_score:
+            lines.append(f"⚠️ {a}")
+
+    return "\n".join(lines)
+
+
+# ── Accionables — casos rápidos sin gestión reciente ─────────────────────────
+
+async def capital_accionable(telefono: str) -> str:
+    """
+    Casos accionables rápidos sin comentario reciente.
+    César usa esto para preguntar '¿lo gestionaste?' sobre cada caso.
+    """
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    es_admin = user.get("rol") in ("ADMIN", "DIRECTOR", "GERENTE_GENERAL")
+    marcas = None if es_admin else (user.get("marcas") or [])
+
+    # Carga paralela de los accionables por concepto
+    fne_data, saldos_data, provisiones_data, stock_data = await asyncio.gather(
+        db.get_fne_resumen(),
+        db.get_saldos_accionables(marcas),
+        db.get_provisiones_accionables(marcas),
+        db.get_alertas_stock(marcas),
+    )
+
+    dias_limite = INACTIVIDAD["dias_seguimiento_sin_comentario"]
+    lines = ["*Accionables rápidos*\n"]
+    hay_algo = False
+
+    # FNE detenidos >15d
+    fne_detenidos = fne_data.get("detenidos_mas_15", 0)
+    if fne_detenidos:
+        hay_algo = True
+        cap = fne_data.get("capital_detenido_mm", 0)
+        tmpl = SEGUIMIENTO_PROACTIVO.get("fne_sin_solicitud", "")
+        lines.append(f"*FNE detenidos >15d — {fne_detenidos} VINs · ${cap:.1f}M*")
+        lines.append(f"_Acción: {ACCIONABILIDAD['fne_listo_entregar']['accion']}_\n")
+
+    # Saldos: CP vencido
+    cp_casos = [s for s in saldos_data if s.get("sub_tipo") == "credito_pompeyo"]
+    if cp_casos:
+        hay_algo = True
+        total_cp = sum(s.get("saldo_mm", 0) for s in cp_casos)
+        lines.append(f"*CP >15d — {len(cp_casos)} casos · ${total_cp:.1f}M*")
+        for c in cp_casos[:5]:
+            pregunta = SEGUIMIENTO_PROACTIVO["cp_vencido"].format(
+                vin=c.get("vin_o_cajon", "?"),
+                dias=c.get("dias", 0),
+                monto_mm=c.get("saldo_mm", 0),
+            )
+            lines.append(f"• {pregunta}")
+        if len(cp_casos) > 5:
+            lines.append(f"  _...y {len(cp_casos) - 5} más_")
+        lines.append("")
+
+    # Saldos: T3+
+    t3_casos = [s for s in saldos_data if s.get("sub_tipo") != "credito_pompeyo"]
+    if t3_casos:
+        hay_algo = True
+        total_t3 = sum(s.get("saldo_mm", 0) for s in t3_casos)
+        lines.append(f"*Saldos T3+ — {len(t3_casos)} casos · ${total_t3:.1f}M*")
+        for c in t3_casos[:5]:
+            lines.append(
+                f"• {c.get('vin_o_cajon','?')} {c.get('marca','')} "
+                f"· {c.get('tramo','')} · ${c.get('saldo_mm',0):.1f}M"
+            )
+        lines.append("")
+
+    # Provisiones >90d
+    if provisiones_data:
+        hay_algo = True
+        total_prov = sum(p.get("monto_mm", 0) for p in provisiones_data)
+        lines.append(f"*Provisiones >90d — {len(provisiones_data)} casos · ${total_prov:.1f}M*")
+        for p in provisiones_data[:5]:
+            pregunta = SEGUIMIENTO_PROACTIVO["provision_90d_plus"].format(
+                concepto=p.get("concepto", "?"),
+                marca=p.get("marca", "?"),
+                dias=p.get("dias", 0),
+                monto_mm=p.get("monto_mm", 0),
+            )
+            lines.append(f"• {pregunta}")
+        if len(provisiones_data) > 5:
+            lines.append(f"  _...y {len(provisiones_data) - 5} más_")
+        lines.append("")
+
+    # Stock pagado sin rotación (accionable rápido)
+    pagados = [a for a in stock_data if a.get("pagado") and (a.get("dias_stock") or 0) >= 60]
+    if pagados:
+        hay_algo = True
+        total_pag = sum(a.get("costo_mm", 0) for a in pagados)
+        lines.append(f"*Stock pagado >60d — {len(pagados)} VINs · ${total_pag:.1f}M*")
+        for a in pagados[:5]:
+            pregunta = SEGUIMIENTO_PROACTIVO["stock_pagado_sin_rotacion"].format(
+                vin=a.get("vin", "?"),
+                dias=a.get("dias_stock", 0),
+                monto_mm=a.get("costo_mm", 0),
+            )
+            lines.append(f"• {pregunta}")
+        lines.append("")
+
+    if not hay_algo:
+        return "Sin accionables rápidos pendientes. Todo gestionado."
 
     return "\n".join(lines)
