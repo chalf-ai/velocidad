@@ -28,7 +28,7 @@ agent/
 ├── CESAR.md          ← estás aquí — documentación y contexto para próximas sesiones
 ├── indicadores.py    ← FUENTE DE VERDAD del negocio: umbrales, KPIs, lógica de gestión
 ├── agent.py          ← LangGraph + GPT-4o: system prompt, tools registradas, checkpointer
-├── tools.py          ← 21 tools de negocio que usan database.py
+├── tools.py          ← 22 tools de negocio que usan database.py
 ├── database.py       ← queries asyncpg sobre PostgreSQL (mismo DB que Next.js)
 ├── webhook.py        ← FastAPI: recibe WhatsApp, despacha mensajes, endpoints de debug
 ├── cron.py           ← APScheduler: briefing 09:00 + seguimiento 15:00 (L-V)
@@ -39,17 +39,17 @@ agent/
 
 ---
 
-## Las 21 tools de César
+## Las 22 tools de César
 
 ### Resumen y diagnóstico
 | Tool | Cuándo la usa César |
 |---|---|
 | `get_briefing` | Al iniciar la conversación o pedir resumen del día |
-| `ver_capital_consolidado` | "¿cómo estamos?", resumen financiero, capital total |
+| `ver_capital_consolidado` | "¿cómo estamos?", resumen financiero, capital total por los 4 conceptos |
 | `ver_capital_por_marca` | Desglose ejecutivo por marca (GERENTE_GENERAL ve todo) |
 | `analisis_capital` | Tendencia histórica — mejora/empeora vs semanas anteriores |
 | `ver_capital` | Capital de stock desglosado Propio/FP/Financiado |
-| `ver_accionables` | Casos sin gestión reciente + preguntas de seguimiento |
+| `ver_accionables` | Accionables rápidos de caja: FNE detenidos, CP vencidos, provisiones >90d, stock pagado |
 | `ver_alarmas` | Casos urgentes: vencidos, críticos, sin movimiento |
 | `ver_alertas_stock` | Inmovilizados >180d, pagados >60d, judiciales, Stock B |
 | `ver_lineas_credito` | Líneas por marca con semáforo de ocupación |
@@ -77,6 +77,8 @@ agent/
 | `reasignar` | Cambiar responsable del caso |
 | `guardar_comentario` | Agregar comentario + auditoría en HistorialGestion |
 | `guardar_proxima_accion` | Definir próxima acción concreta |
+
+> **Nota:** `_briefing_ejecutivo` y `_briefing_por_marca` son helpers internos de `briefing_diario`, no tools registradas en LangGraph.
 
 ---
 
@@ -126,11 +128,28 @@ Cada VIN consultado incluye automáticamente:
 
 | Hora | Job | Destinatarios | Contenido |
 |---|---|---|---|
-| 08:00 | `briefing_diario` | Todos los usuarios con teléfono | GERENTE_GENERAL → vista global del grupo; GERENTE/JEFE_MARCA → mini-resumen por marca |
-| 15:00 | `seguimiento_tarde` | GERENTE_GENERAL, GERENTE y JEFE_MARCA | Accionables de caja rápida: FNE listo para entregar, CP vencidos, provisiones >90d |
+| 08:00 | `briefing_diario` | Todos los usuarios con teléfono | Ver detalle abajo |
+| 15:00 | `seguimiento_tarde` | GERENTE_GENERAL, GERENTE y JEFE_MARCA | Accionables de caja rápida que se pueden cerrar ese día |
+
+### Briefing AM — contenido por rol
+
+**GERENTE_GENERAL / ADMIN / DIRECTOR** (`_briefing_ejecutivo`):
+Capital inmovilizado en los 4 conceptos (Stock, FNE, Saldos, Provisiones) + total del grupo.
+Sección "Para mover caja hoy" con accionables que generan liquidez inmediata:
+- FNE detenidos >15d
+- CP vencidos >15d
+- Provisiones >90d sin facturar
+- Stock pagado sin rotación >60d
+
+**GERENTE / JEFE_MARCA** (`_briefing_por_marca`):
+Mini-resumen por cada marca asignada: total de casos activos, desglose por estado,
+y hasta 3 alertas (críticos → vencidos → sin movimiento).
+
+### Seguimiento PM — "Caja rápida"
+Llama a `capital_accionable()` por usuario. Si no hay accionables, **no envía**.
+Header: `*Caja rápida* 💰 — esto se puede cerrar hoy`.
 
 Cambiar horarios: variables `BRIEFING_HORA` y `SEGUIMIENTO_HORA` en Railway.
-El seguimiento **no envía** si no hay accionables pendientes.
 
 ---
 
@@ -191,7 +210,7 @@ Todos los datos viven en `Snapshot.payload` como JSONB según la fuente:
 | `WHATSAPP_ACCESS_TOKEN` | — | Meta Graph API |
 | `WHATSAPP_PHONE_NUMBER_ID` | — | ID del número Business |
 | `WHATSAPP_VERIFY_TOKEN` | — | Token verificación webhook |
-| `BRIEFING_HORA` | `09:00` | Hora briefing matutino |
+| `BRIEFING_HORA` | `08:00` | Hora briefing matutino |
 | `SEGUIMIENTO_HORA` | `15:00` | Hora seguimiento tarde |
 
 ---
