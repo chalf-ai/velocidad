@@ -14,6 +14,7 @@ from .indicadores import (
     ACCIONABILIDAD,
     SEGUIMIENTO_PROACTIVO,
     INACTIVIDAD,
+    LOGICA_STOCK_AB,
 )
 
 # Roles con visión global (ven todas las marcas sin filtro)
@@ -303,11 +304,15 @@ async def _briefing_ejecutivo(user: dict) -> str:
 async def detalle_vin(vin: str, telefono: str) -> str:
     """Ficha completa de un VIN con contexto temporal: estado, historial y si se viene arrastrando."""
     vin = vin.upper().strip()
-    gestion, historial, temporal = await asyncio.gather(
+    gestion, historial, temporal, stock = await asyncio.gather(
         db.get_gestion_by_vin(vin),
         db.get_historial_vin(vin, limit=6),
         db.get_contexto_temporal_vin(vin),
+        db.get_vin_en_stock(vin),
     )
+
+    if not gestion and not stock:
+        return f"No encontré el VIN *{vin}* en el sistema."
 
     if not gestion:
         return f"No hay gestión registrada para el VIN *{vin}*. ¿Lo creamos?"
@@ -316,7 +321,26 @@ async def detalle_vin(vin: str, telefono: str) -> str:
     estado = gestion.get("estadoGestion", "ABIERTO")
     emoji = PRIORIDAD_EMOJI.get(prioridad, "⚪")
 
+    # Tipo de stock y lógica de gestión correspondiente
+    stock_ab = (stock.get("stockAB") or "A") if stock else None
+    logica = LOGICA_STOCK_AB.get(stock_ab) if stock_ab else None
+
     lines = [f"*{vin}* {emoji}  {ESTADO_LABEL.get(estado, estado)}"]
+    if stock:
+        tipo_label = logica["nombre"] if logica else stock_ab
+        dias_stock = stock.get("dias_stock")
+        costo = stock.get("costo_mm", 0)
+        lines.append(
+            f"{stock.get('marca','')} {stock.get('modelo','')}  "
+            f"*{tipo_label}*  ${costo:.2f}M  {f'{dias_stock}d' if dias_stock else ''}"
+        )
+        # Alerta de antigüedad según tipo
+        if logica and dias_stock:
+            if dias_stock >= logica["umbral_critico_dias"]:
+                lines.append(f"🔴 _{logica['escalada']}_")
+            elif dias_stock >= logica["umbral_alerta_dias"]:
+                accion_sugerida = logica["acciones"][0]
+                lines.append(f"⚠️ _{accion_sugerida}_")
     if prioridad:
         lines.append(f"Prioridad: *{prioridad}*")
     if gestion.get("responsable"):

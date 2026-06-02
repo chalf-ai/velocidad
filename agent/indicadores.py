@@ -361,6 +361,68 @@ SEMAFORO_LINEA_CREDITO: dict[str, tuple[float, float]] = {
 # UMBRALES DE INACTIVIDAD — cuándo César considera que un caso "se arrastra"
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LÓGICA DE GESTIÓN POR TIPO DE STOCK (stockAB)
+#
+# Tres flujos de gestión completamente distintos.
+# César usa esto para saber QUÉ preguntar y QUÉ accionar según el tipo de VIN.
+# ─────────────────────────────────────────────────────────────────────────────
+
+LOGICA_STOCK_AB: dict[str, dict] = {
+    "A": {
+        "nombre": "Stock A",
+        "descripcion": "Stock estándar disponible para venta",
+        "problema_con_antiguedad": True,
+        "umbral_alerta_dias": 90,    # >90d sin vender → necesita acción comercial
+        "umbral_critico_dias": 180,  # >180d → urgente, capital inmovilizado crítico
+        "tipo_gestion": "comercial",
+        "acciones": [
+            "Revisar precio vs. mercado — ¿está competitivo?",
+            "Activar promoción o descuento especial",
+            "Publicar en portales si no está visible",
+            "Evaluar transferencia a otra sucursal con más demanda",
+            "Proponer a flota o compra corporativa si aplica",
+        ],
+        "pregunta_seguimiento": "¿Qué acción comercial se tomó con {vin} ({dias}d en stock)? Deja el comentario.",
+        "escalada": "Si supera 180d sin movimiento comercial, escalar a gerencia para decisión de precio o subasta.",
+    },
+    "B": {
+        "nombre": "Stock B",
+        "descripcion": "Vehículos en proceso de reparación o acondicionamiento",
+        "problema_con_antiguedad": True,
+        "umbral_alerta_dias": 30,   # >30d en reparación → seguimiento activo
+        "umbral_critico_dias": 60,  # >60d → caso crítico, resolver urgente
+        "tipo_gestion": "operacional",
+        "acciones": [
+            "Confirmar estado actual de la reparación — ¿qué falta?",
+            "Definir fecha compromiso de salida de taller",
+            "Verificar si hay piezas pendientes o bloqueos externos",
+            "Escalar a jefatura de taller si supera el plazo estimado",
+            "Una vez listo, mover a Stock A y activar comercialmente",
+        ],
+        "pregunta_seguimiento": "¿Cómo va la reparación del {vin} ({dias}d en Stock B)? ¿Cuándo sale al stock? Deja el comentario.",
+        "escalada": "Si supera 60d en Stock B sin resolución, escalar: el costo de taller acumula sobre el capital inmovilizado.",
+    },
+    "Judicial": {
+        "nombre": "Stock Judicial",
+        "descripcion": "Vehículos con medida judicial vigente — no se pueden vender",
+        "problema_con_antiguedad": False,   # la antiguedad no define la acción — la define el avance legal
+        "umbral_alerta_dias": 30,   # recordatorio de seguimiento cada 30d
+        "umbral_critico_dias": 90,  # sin actualización → riesgo de olvidar el caso
+        "tipo_gestion": "legal",
+        "acciones": [
+            "Confirmar estado del proceso legal con el área jurídica",
+            "Registrar número de causa y tribunal si no está documentado",
+            "Verificar si hay resolución pendiente o audiencia programada",
+            "NO intentar acciones comerciales — el vehículo no es vendible hasta resolución",
+            "Coordinar con legal la estimación de plazo de resolución",
+        ],
+        "pregunta_seguimiento": "¿Cómo va el caso legal del {vin}? ¿Hay novedades del tribunal? Deja el comentario.",
+        "escalada": "Si supera 90d sin actualización del estado legal, escalar: puede haber resoluciones no registradas.",
+    },
+}
+
+
 INACTIVIDAD: dict[str, int] = {
     "dias_sin_movimiento_alerta":  5,   # días sin update en GestionVIN → aparece en briefing
     "dias_sin_movimiento_critico": 10,  # días sin update → alerta crítica
