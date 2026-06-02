@@ -75,67 +75,89 @@ async def briefing_diario(telefono: str) -> str:
     if not marcas:
         return f"Hola {user['name']}! Tu usuario no tiene marcas asignadas. Pide al admin que las configure."
 
+    return await _briefing_por_marca(user, marcas)
+
+
+async def _briefing_por_marca(user: dict, marcas: list) -> str:
+    """Mini-resumen por marca para GERENTE y JEFE_MARCA."""
+    today = date.today()
+    hoy_str = today.strftime("%A %d de %B").capitalize()
+
     stock_vins = await db.get_vins_for_marcas(marcas)
     if not stock_vins:
-        return f"Hola {user['name']}! No hay stock activo para tus marcas ({', '.join(marcas)})."
+        return (
+            f"*Briefing {hoy_str}* 📋\n\n"
+            f"Hola {user['name']}! No hay stock activo para tus marcas ({', '.join(marcas)})."
+        )
 
     vins = [v["vin"] for v in stock_vins]
     vin_info = {v["vin"]: v for v in stock_vins}
     gestiones = await db.get_gestiones_for_vins(vins)
     activas = [g for g in gestiones if g["estadoGestion"] in ESTADOS_ACTIVOS]
 
-    today = date.today()
-    hoy_str = today.strftime("%A %d de %B").capitalize()
+    # Agrupar VINs por marca
+    vin_por_marca: dict[str, list] = {}
+    for v in stock_vins:
+        m = v.get("marca") or v.get("marcaPompeyo") or "SIN MARCA"
+        vin_por_marca.setdefault(m, []).append(v["vin"])
 
-    if not activas:
-        return (
-            f"*Briefing {hoy_str}* 📋\n\n"
-            f"Hola {user['name']}! No tienes casos activos. ✅\n"
-            f"Marcas: {', '.join(marcas)}"
-        )
-
-    vencidos, criticos, sin_movimiento = [], [], []
+    # Agrupar gestiones activas por marca
+    gestion_por_marca: dict[str, list] = {}
     for g in activas:
-        fc = g.get("fechaCompromiso")
-        if fc:
-            fc_date = fc.date() if isinstance(fc, datetime) else datetime.fromisoformat(str(fc)).date()
-            if fc_date <= today:
-                vencidos.append(g)
-        if g.get("prioridadManual") == "CRITICA":
-            criticos.append(g)
-        if _dias_sin_movimiento(g) >= 5:
-            sin_movimiento.append(g)
-
-    por_estado: dict[str, list] = {}
-    for g in activas:
-        por_estado.setdefault(g["estadoGestion"], []).append(g)
+        m = vin_info.get(g["vin"], {}).get("marca") or vin_info.get(g["vin"], {}).get("marcaPompeyo") or "SIN MARCA"
+        gestion_por_marca.setdefault(m, []).append(g)
 
     lines = [f"*Briefing {hoy_str}* 📋\n"]
-    lines.append(f"Hola *{user['name']}*! Tienes *{len(activas)} casos activos*.")
-    lines.append(f"Marcas: {', '.join(marcas)}\n")
-    lines.append("📊 " + " | ".join(f"{ESTADO_LABEL[e]}: {len(c)}" for e, c in sorted(por_estado.items())))
+    lines.append(f"Hola *{user['name']}*!\n")
 
-    if vencidos or criticos or sin_movimiento:
-        lines.append("\n*⚠️ Requieren atención inmediata:*")
+    for marca in sorted(marcas):
+        gs = gestion_por_marca.get(marca, [])
+
+        if not gs:
+            lines.append(f"*{marca}:* sin casos activos ✅")
+            continue
+
+        vencidos, criticos, sin_mov = [], [], []
+        for g in gs:
+            fc = g.get("fechaCompromiso")
+            if fc:
+                fc_date = fc.date() if isinstance(fc, datetime) else datetime.fromisoformat(str(fc)).date()
+                if fc_date <= today:
+                    vencidos.append(g)
+            if g.get("prioridadManual") == "CRITICA":
+                criticos.append(g)
+            if _dias_sin_movimiento(g) >= 5:
+                sin_mov.append(g)
+
+        alertas_marca = []
+        if criticos: alertas_marca.append(f"🔴 {len(criticos)} críticos")
+        if vencidos: alertas_marca.append(f"⚠️ {len(vencidos)} vencidos")
+        if sin_mov:  alertas_marca.append(f"⏱ {len(sin_mov)} sin mov.")
+        sufijo = f" ({', '.join(alertas_marca)})" if alertas_marca else ""
+
+        por_estado: dict[str, int] = {}
+        for g in gs:
+            por_estado[g["estadoGestion"]] = por_estado.get(g["estadoGestion"], 0) + 1
+        estado_str = " · ".join(f"{ESTADO_LABEL[e]}: {c}" for e, c in sorted(por_estado.items()))
+
+        lines.append(f"*{marca}:* {len(gs)} casos{sufijo}")
+        lines.append(f"  {estado_str}")
+
+        # Máximo 3 alertas por marca
         mostrados: set[str] = set()
-        for g in vencidos:
+        for g in (criticos + vencidos + sin_mov)[:3]:
             if g["vin"] not in mostrados:
                 modelo = vin_info.get(g["vin"], {}).get("modelo", "")
-                lines.append(f"• {g['vin']} {modelo} — fecha compromiso vencida")
-                mostrados.add(g["vin"])
-        for g in criticos:
-            if g["vin"] not in mostrados:
-                modelo = vin_info.get(g["vin"], {}).get("modelo", "")
-                lines.append(f"• 🔴 {g['vin']} {modelo} — prioridad CRÍTICA")
-                mostrados.add(g["vin"])
-        for g in sin_movimiento:
-            if g["vin"] not in mostrados:
-                modelo = vin_info.get(g["vin"], {}).get("modelo", "")
-                dias = _dias_sin_movimiento(g)
-                lines.append(f"• {g['vin']} {modelo} — sin movimiento {dias} días")
+                if g in criticos:
+                    lines.append(f"  • 🔴 {g['vin']} {modelo} — prioridad CRÍTICA")
+                elif g in vencidos:
+                    lines.append(f"  • {g['vin']} {modelo} — compromiso vencido")
+                else:
+                    dias = _dias_sin_movimiento(g)
+                    lines.append(f"  • {g['vin']} {modelo} — sin movimiento {dias}d")
                 mostrados.add(g["vin"])
 
-    lines.append("\n_Escribe un VIN para ver el detalle, o 'ayuda' para ver qué puedo hacer._")
+    lines.append("\n_Escribe un VIN para ver el detalle._")
     return "\n".join(lines)
 
 
@@ -239,65 +261,70 @@ async def analisis_capital(telefono: str) -> str:
 
 
 async def _briefing_ejecutivo(user: dict) -> str:
-    """Resumen ejecutivo para perfil ADMIN — visión global por marca."""
+    """
+    Briefing para GERENTE_GENERAL / ADMIN / DIRECTOR.
+    Muestra capital inmovilizado por los 4 conceptos + accionables rápidos de caja.
+    """
     today = date.today()
     hoy_str = today.strftime("%A %d de %B").capitalize()
 
-    stock_vins = await db.get_all_stock_vins()
-    if not stock_vins:
-        return f"*Resumen Ejecutivo {hoy_str}*\n\nNo hay stock activo en el sistema."
-
-    vins = [v["vin"] for v in stock_vins]
-    vin_marca = {v["vin"]: v.get("marca", "SIN MARCA") for v in stock_vins}
-
-    gestiones = await db.get_gestiones_for_vins(vins)
-    activas = [g for g in gestiones if g["estadoGestion"] in ESTADOS_ACTIVOS]
-
-    total_vencidos = sum(
-        1 for g in activas
-        if g.get("fechaCompromiso") and (
-            (g["fechaCompromiso"].date() if isinstance(g["fechaCompromiso"], datetime)
-             else datetime.fromisoformat(str(g["fechaCompromiso"])).date()) <= today
-        )
+    # Carga paralela de los 4 conceptos
+    stock, fne, saldos, provisiones = await asyncio.gather(
+        db.get_capital_breakdown(None),
+        db.get_fne_resumen(),
+        db.get_saldos_resumen(None),
+        db.get_provisiones_resumen(None),
     )
-    total_criticos = sum(1 for g in activas if g.get("prioridadManual") == "CRITICA")
-    total_sin_mov = sum(1 for g in activas if _dias_sin_movimiento(g) >= 7)
 
-    # Agrupar por marca
-    por_marca: dict[str, dict] = {}
-    for g in activas:
-        marca = vin_marca.get(g["vin"], "SIN MARCA")
-        if marca not in por_marca:
-            por_marca[marca] = {"total": 0, "criticos": 0, "vencidos": 0}
-        por_marca[marca]["total"] += 1
-        if g.get("prioridadManual") == "CRITICA":
-            por_marca[marca]["criticos"] += 1
-        fc = g.get("fechaCompromiso")
-        if fc:
-            fc_date = fc.date() if isinstance(fc, datetime) else datetime.fromisoformat(str(fc)).date()
-            if fc_date <= today:
-                por_marca[marca]["vencidos"] += 1
+    # Totales por concepto
+    stock_mm = (
+        (stock.get("capital_propio_mm") or 0)
+        + (stock.get("capital_floorplan_mm") or 0)
+        + (stock.get("capital_financiado_mm") or 0)
+    )
+    fne_mm = fne.get("capital_detenido_mm") or 0
+    saldos_mm = (saldos.get("saldo_vehiculo_mm") or 0) + (saldos.get("saldo_bono_mm") or 0)
+    prov_mm = provisiones.get("saldo_pendiente_mm") or 0
+    total_mm = stock_mm + fne_mm + saldos_mm + prov_mm
 
     lines = [f"*Resumen Ejecutivo — {hoy_str}* 📊\n"]
-    lines.append(f"Hola *{user['name']}*. Visión global del grupo.\n")
-    lines.append(f"*Total casos activos: {len(activas)}*")
+    lines.append(f"Hola *{user['name']}*. Capital inmovilizado hoy:\n")
 
-    if total_vencidos or total_criticos or total_sin_mov:
-        alertas = []
-        if total_criticos:   alertas.append(f"🔴 {total_criticos} críticos")
-        if total_vencidos:   alertas.append(f"⚠️ {total_vencidos} vencidos")
-        if total_sin_mov:    alertas.append(f"⏱ {total_sin_mov} sin movimiento +7d")
-        lines.append("Alertas: " + " · ".join(alertas))
+    # Bloque capital
+    lines.append(f"• Stock          *${stock_mm:.1f}M*  ({stock.get('total_unidades', 0)} VINs)")
+    lines.append(f"• FNE detenidos  *${fne_mm:.1f}M*  ({fne.get('detenidos_mas_15', 0)} VINs >15d)")
+    lines.append(f"• Saldos         *${saldos_mm:.1f}M*  ({(saldos.get('total_vehiculo') or 0) + (saldos.get('total_bono') or 0)} docs T3+)")
+    lines.append(f"• Provisiones    *${prov_mm:.1f}M*  ({provisiones.get('abiertas', 0)} abiertas)")
+    lines.append(f"────────────────────")
+    lines.append(f"*Total: ${total_mm:.1f}M*")
 
-    lines.append("\n*Por marca:*")
-    for marca, datos in sorted(por_marca.items(), key=lambda x: -x[1]["total"]):
-        sufijo = []
-        if datos["criticos"]: sufijo.append(f"🔴 {datos['criticos']} críticos")
-        if datos["vencidos"]:  sufijo.append(f"⚠️ {datos['vencidos']} vencidos")
-        detalle = f" ({', '.join(sufijo)})" if sufijo else ""
-        lines.append(f"• *{marca}*: {datos['total']} casos{detalle}")
+    # Accionables rápidos — qué se puede mover hoy para liberar caja
+    rapidos = []
 
-    lines.append("\n_Para detalle de una marca o VIN específico, escríbeme._")
+    fne_detenidos = fne.get("detenidos_mas_15") or 0
+    if fne_detenidos:
+        cap_fne = fne.get("capital_detenido_mm") or 0
+        rapidos.append(f"🚗 {fne_detenidos} FNE detenidos >15d — ${cap_fne:.1f}M · coordinar entrega")
+
+    cp_count = saldos.get("cp_vencido_count") or 0
+    cp_mm = saldos.get("cp_vencido_mm") or 0
+    if cp_count:
+        rapidos.append(f"💳 {cp_count} CP vencidos >15d — ${cp_mm:.1f}M")
+
+    prov_90 = provisiones.get("criticas_90d_count") or 0
+    prov_90_mm = provisiones.get("criticas_90d_mm") or 0
+    if prov_90:
+        rapidos.append(f"📋 {prov_90} provisiones >90d sin facturar — ${prov_90_mm:.1f}M")
+
+    stock_pagado = stock.get("pagados_sin_rotacion") or 0
+    if stock_pagado:
+        rapidos.append(f"📦 {stock_pagado} VINs pagados sin rotación >60d")
+
+    if rapidos:
+        lines.append("\n*Para mover caja hoy:*")
+        lines.extend(f"• {r}" for r in rapidos)
+
+    lines.append("\n_Escríbeme 'capital', 'FNE', 'saldos' o 'provisiones' para el detalle._")
     return "\n".join(lines)
 
 

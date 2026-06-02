@@ -126,8 +126,8 @@ Cada VIN consultado incluye automáticamente:
 
 | Hora | Job | Destinatarios | Contenido |
 |---|---|---|---|
-| 09:00 | `briefing_diario` | Todos los usuarios con teléfono | Resumen del día + alertas |
-| 15:00 | `seguimiento_tarde` | Solo GERENTE y JEFE_MARCA | Accionables sin gestión reciente |
+| 08:00 | `briefing_diario` | Todos los usuarios con teléfono | GERENTE_GENERAL → vista global del grupo; GERENTE/JEFE_MARCA → mini-resumen por marca |
+| 15:00 | `seguimiento_tarde` | GERENTE_GENERAL, GERENTE y JEFE_MARCA | Accionables de caja rápida: FNE listo para entregar, CP vencidos, provisiones >90d |
 
 Cambiar horarios: variables `BRIEFING_HORA` y `SEGUIMIENTO_HORA` en Railway.
 El seguimiento **no envía** si no hay accionables pendientes.

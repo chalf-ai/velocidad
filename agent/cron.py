@@ -3,8 +3,11 @@ Cron de alertas diarias — APScheduler con timezone Chile.
 
 Dos jobs L-V:
   08:00  briefing_matutino   → todos los usuarios activos con teléfono
-  15:00  seguimiento_tarde   → solo GERENTE y JEFE_MARCA
-                               (casos sin gestión + accionables pendientes)
+                               GERENTE_GENERAL: vista global del grupo
+                               GERENTE / JEFE_MARCA: mini-resumen por marca
+  15:00  seguimiento_tarde   → GERENTE_GENERAL, GERENTE y JEFE_MARCA
+                               Accionables de caja rápida: FNE listo,
+                               CP vencido, provisiones >90d
 
 Para cambiar los horarios: BRIEFING_HORA y SEGUIMIENTO_HORA en .env
 """
@@ -23,8 +26,8 @@ from .whatsapp import send_text
 logger = logging.getLogger(__name__)
 TZ = "America/Santiago"
 
-# Roles que reciben el seguimiento de tarde
-ROLES_SEGUIMIENTO = {"GERENTE", "JEFE_MARCA"}
+# Roles que reciben el seguimiento de tarde (accionables de caja rápida)
+ROLES_SEGUIMIENTO = {"GERENTE_GENERAL", "GERENTE", "JEFE_MARCA"}
 
 
 # ── Briefing matutino (08:00) — todos los usuarios ────────────────────────────
@@ -73,8 +76,8 @@ async def enviar_seguimiento() -> None:
                 logger.info("Sin pendientes para %s — no se envía", user["name"])
                 continue
 
-            # Encabezado sin saludos — directo al punto
-            mensaje = f"*Seguimiento 15:00* — pendientes del día\n\n{accionables}"
+            # Encabezado enfocado en accionables de caja rápida
+            mensaje = f"*Caja rápida* 💰 — esto se puede cerrar hoy\n\n{accionables}"
 
             alerta_id = await db.create_alerta_log(
                 user_id=user["id"],
