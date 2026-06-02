@@ -207,9 +207,9 @@ export function Sidebar() {
   // DIRECTOR solo analiza, no opera
   const showOperaciones = !isDirector;
 
-  // Sección inferior: Técnico completo para ADMIN, solo Usuarios para GERENTE_GENERAL
+  // Sección inferior: Técnico completo para ADMIN y GERENTE_GENERAL
   const navSistema: NavItem[] = [
-    ...(isAdmin ? NAV_TEC : []),
+    ...(isAdmin || isGerenteGeneral ? NAV_TEC : []),
     ...(canManageUsers
       ? [{ href: "/usuarios", label: "Gestión de usuarios", icon: Users }]
       : []),
@@ -224,7 +224,7 @@ export function Sidebar() {
         <NavSection title="Tesorería" items={NAV_TESORERIA} />
         {navSistema.length > 0 && (
           <NavSection
-            title={isAdmin ? "Técnico" : "Administración"}
+            title={isAdmin || isGerenteGeneral ? "Técnico" : "Administración"}
             items={navSistema}
           />
         )}
