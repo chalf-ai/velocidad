@@ -42,6 +42,22 @@ interface NavItem {
   comingSoon?: boolean;
 }
 
+const ROL_LABEL: Record<string, string> = {
+  ADMIN: "Admin",
+  DIRECTOR: "Director",
+  GERENTE_GENERAL: "Gerente General",
+  GERENTE: "Gerente",
+  JEFE_MARCA: "Jefe de Marca",
+};
+
+const ROL_COLOR: Record<string, string> = {
+  ADMIN: "bg-red-100 text-red-700",
+  DIRECTOR: "bg-violet-100 text-violet-700",
+  GERENTE_GENERAL: "bg-amber-100 text-amber-700",
+  GERENTE: "bg-blue-100 text-[#3358e8]",
+  JEFE_MARCA: "bg-emerald-100 text-emerald-700",
+};
+
 const NAV_EXEC: NavItem[] = [
   { href: "/centro-accion", label: "Centro de Acción", icon: Gauge },
   { href: "/score-gerencial", label: "Score Gerencial", icon: Trophy },
@@ -175,12 +191,26 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
 export function Sidebar() {
   const { data: session } = useSession();
   const email = session?.user?.email ?? "usuario@pompeyo.cl";
-  const isAdmin = session?.user?.rol === "ADMIN";
+  const name = session?.user?.name ?? null;
+  const rol = session?.user?.rol ?? "";
   const [logoutModalOpen, setLogoutModalOpen] = useState(false);
 
-  const navTec: NavItem[] = [
-    ...NAV_TEC,
-    ...(isAdmin
+  const isAdmin = rol === "ADMIN";
+  const isDirector = rol === "DIRECTOR";
+  const isGerenteGeneral = rol === "GERENTE_GENERAL";
+  const isJefeMarca = rol === "JEFE_MARCA";
+
+  const canManageUsers = isAdmin || isGerenteGeneral;
+
+  // JEFE_MARCA es puramente operacional; no necesita la vista ejecutiva
+  const showEjecutivo = !isJefeMarca;
+  // DIRECTOR solo analiza, no opera
+  const showOperaciones = !isDirector;
+
+  // Sección inferior: Técnico completo para ADMIN, solo Usuarios para GERENTE_GENERAL
+  const navSistema: NavItem[] = [
+    ...(isAdmin ? NAV_TEC : []),
+    ...(canManageUsers
       ? [{ href: "/usuarios", label: "Gestión de usuarios", icon: Users }]
       : []),
   ];
@@ -188,11 +218,16 @@ export function Sidebar() {
   return (
     <aside className="sticky top-0 flex h-full w-60 shrink-0 flex-col border-r border-[--color-border] bg-white">
       <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 pb-4 pt-4">
-        <NavSection title="Ejecutivo" items={NAV_EXEC} />
+        {showEjecutivo && <NavSection title="Ejecutivo" items={NAV_EXEC} />}
         <NavSection title="Marcas" items={NAV_MARCAS} />
-        <NavSection title="Operaciones" items={NAV_OPERACIONES} />
+        {showOperaciones && <NavSection title="Operaciones" items={NAV_OPERACIONES} />}
         <NavSection title="Tesorería" items={NAV_TESORERIA} />
-        <NavSection title="Técnico" items={navTec} />
+        {navSistema.length > 0 && (
+          <NavSection
+            title={isAdmin ? "Técnico" : "Administración"}
+            items={navSistema}
+          />
+        )}
       </nav>
 
       <div className="border-t border-[--color-border] px-2.5 pt-3 pb-4">
@@ -200,12 +235,24 @@ export function Sidebar() {
           <button
             type="button"
             onClick={() => setLogoutModalOpen(true)}
-            className="flex w-full items-center gap-2 px-1.5 py-1.5 text-left transition hover:bg-[--color-bg-elev-2] rounded-md"
+            className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-[--color-bg-elev-2]"
           >
-            <UserCircle2 className="size-4 text-[--color-fg-dim]" strokeWidth={1.75} />
-            <span className="flex-1 truncate text-[12px] text-[--color-fg-muted]" title={email}>
-              {email}
-            </span>
+            <UserCircle2 className="size-4 shrink-0 text-[--color-fg-dim]" strokeWidth={1.75} />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-[12px] text-[--color-fg-muted]" title={email}>
+                {name ?? email}
+              </span>
+              {rol && (
+                <span
+                  className={cn(
+                    "mt-0.5 self-start rounded-full px-1.5 py-px text-[9px] font-semibold leading-tight",
+                    ROL_COLOR[rol] ?? "bg-gray-100 text-gray-600",
+                  )}
+                >
+                  {ROL_LABEL[rol] ?? rol}
+                </span>
+              )}
+            </div>
           </button>
         </div>
       </div>

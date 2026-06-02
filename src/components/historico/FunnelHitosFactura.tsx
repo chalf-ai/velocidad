@@ -38,8 +38,9 @@ export type FocoFunnelFactura =
   | { tipo: "tramo_lentos"; tramoId: string };
 
 // Fondo sólido + texto blanco para el chevron.
-// IMPORTANTE: usar bg-[color:var(...)] — la forma bg-[--color-X] NO resuelve
-// la custom property; queda transparente y el texto blanco se vuelve invisible.
+// IMPORTANTE: usar bg-[color:var(--color-ok)] (con nombre de token real).
+// La forma bg-[--color-X] NO resuelve la custom property; queda transparente
+// y el texto blanco se vuelve invisible.
 const SEM_FILL: Record<Semaforo, string> = {
   verde:    "bg-[color:var(--color-ok)]",
   amarillo: "bg-[color:var(--color-warning)]",

@@ -21,11 +21,13 @@ declare module "next-auth" {
     user: {
       id: string;
       rol: string;
+      marcas: string[];
     } & DefaultSession["user"];
   }
 
   interface User {
     rol?: string;
+    marcas?: string[];
   }
 }
 
@@ -65,6 +67,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           email: user.email,
           name: user.name ?? user.email,
           rol: user.rol,
+          marcas: user.marcas,
         };
       },
     }),
@@ -75,12 +78,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.id = user.id;
         token.rol = user.rol;
+        token.marcas = user.marcas ?? [];
       }
       return token;
     },
     session({ session, token }) {
       session.user.id = token.id as string;
       session.user.rol = token.rol as string;
+      session.user.marcas = (token.marcas ?? []) as string[];
       return session;
     },
   },

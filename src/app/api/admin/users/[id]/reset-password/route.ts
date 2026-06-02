@@ -15,7 +15,8 @@ export async function POST(
 ) {
   const session = await auth();
   if (!session) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  if (session.user.rol !== "ADMIN") {
+  const { rol } = session.user;
+  if (rol !== "ADMIN" && rol !== "GERENTE_GENERAL") {
     return NextResponse.json({ error: "Acceso denegado" }, { status: 403 });
   }
 

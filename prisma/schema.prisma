@@ -19,7 +19,7 @@ model User {
   email        String   @unique
   name         String?
   passwordHash String?
-  rol          Rol      @default(OPERACIONES)
+  rol          Rol      @default(JEFE_MARCA)
   activo       Boolean  @default(true)
   telefono     String?  // WhatsApp (+56912345678) — usado por el agente
   marcas       String[] // marcas que gestiona este usuario (ej: ["KIA MOTORS","MG"])
@@ -33,10 +33,11 @@ model User {
 }
 
 enum Rol {
-  ADMIN       // puede crear usuarios, activar snapshots, ver todo
-  JEFE_STOCK  // puede subir Excel y gestionar casos
-  OPERACIONES // puede gestionar casos, ver dashboards
-  READONLY    // solo lectura
+  ADMIN           // sube KPIs, gestión de usuarios, acceso total
+  DIRECTOR        // análisis genérico, solo lectura, ve todas las marcas
+  GERENTE_GENERAL // gestión integral, gestiona usuarios, ve todas las marcas
+  GERENTE         // responsable de indicadores, ve solo sus marcas asignadas
+  JEFE_MARCA      // responsable operacional, ve solo sus marcas asignadas
 }
 
 // ─────────────────────────────────────────────

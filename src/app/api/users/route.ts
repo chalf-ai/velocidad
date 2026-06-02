@@ -9,10 +9,14 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { Rol } from "@prisma/client";
 
+function canManageUsers(rol: string) {
+  return rol === "ADMIN" || rol === "GERENTE_GENERAL";
+}
+
 export async function GET() {
   const session = await auth();
-  if (!session || session.user.rol !== "ADMIN") {
-    return NextResponse.json({ error: "Solo ADMIN" }, { status: 403 });
+  if (!session || !canManageUsers(session.user.rol)) {
+    return NextResponse.json({ error: "Acceso denegado" }, { status: 403 });
   }
 
   const users = await prisma.user.findMany({
@@ -25,8 +29,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session || session.user.rol !== "ADMIN") {
-    return NextResponse.json({ error: "Solo ADMIN" }, { status: 403 });
+  if (!session || !canManageUsers(session.user.rol)) {
+    return NextResponse.json({ error: "Acceso denegado" }, { status: 403 });
   }
 
   let body: { email: string; name?: string; password: string; rol?: string };
@@ -57,7 +61,7 @@ export async function POST(req: NextRequest) {
       email,
       name: name ?? email,
       passwordHash,
-      rol: (rol as Rol) ?? Rol.OPERACIONES,
+      rol: (rol as Rol) ?? ("JEFE_MARCA" as Rol),
     },
     select: { id: true, email: true, name: true, rol: true, createdAt: true },
   });
