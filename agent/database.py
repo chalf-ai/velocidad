@@ -159,6 +159,170 @@ async def get_fne_resumen() -> dict:
     return dict(row) if row else {}
 
 
+async def get_fne_detalle(marcas: Optional[list[str]] = None) -> list[dict]:
+    """
+    Lista completa de FNE activos (no entregados) con pipeline de patente.
+    Estado de entrega derivado de las señales del archivo:
+      listo_entregar → patente recibida + sol_entrega + autorización
+      falta_autorizacion → patente recibida + sol_entrega, sin autorización
+      patente_en_sucursal → patente recibida, falta solicitud entrega
+      patente_en_transito → enviada por admin, sin recibir en sucursal
+      patente_en_admin → volvió de RC, sin enviar a sucursal
+      en_registro_civil → solicitud enviada a RC
+      en_control_negocios → sucursal pidió, CdN no mandó a RC
+      sin_solicitud → no se inició el trámite
+    """
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT
+            elem->>'vin'            AS vin,
+            elem->>'sucursal'       AS sucursal,
+            elem->>'cliente'        AS cliente,
+            elem->>'vendedor'       AS vendedor,
+            CASE WHEN (elem->>'valorFactura') IS NOT NULL AND (elem->>'valorFactura') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'valorFactura')::numeric / 1000000, 2)::float ELSE 0 END AS valor_mm,
+            CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL AND (elem->>'diasDesdeVenta') != 'null'
+                 THEN (elem->>'diasDesdeVenta')::int ELSE NULL END AS dias,
+            elem->>'agingBucket'    AS aging,
+            -- Estado entrega derivado de señales de patente
+            CASE
+              WHEN (elem->>'fechaPatenteRecibida') IS NOT NULL AND (elem->>'fechaPatenteRecibida') != 'null'
+                   AND (elem->>'solEntrega') = 'true'
+                   AND (elem->>'autorizacionEntrega') = 'true'
+                   THEN 'listo_entregar'
+              WHEN (elem->>'fechaPatenteRecibida') IS NOT NULL AND (elem->>'fechaPatenteRecibida') != 'null'
+                   AND (elem->>'solEntrega') = 'true'
+                   THEN 'falta_autorizacion'
+              WHEN (elem->>'fechaPatenteRecibida') IS NOT NULL AND (elem->>'fechaPatenteRecibida') != 'null'
+                   THEN 'patente_en_sucursal'
+              WHEN (elem->>'fechaPatenteEnviada') IS NOT NULL AND (elem->>'fechaPatenteEnviada') != 'null'
+                   THEN 'patente_en_transito'
+              WHEN (elem->>'patentesAdministracion') IS NOT NULL AND (elem->>'patentesAdministracion') != 'null'
+                   THEN 'patente_en_admin'
+              WHEN (elem->>'fechaSolicitudInscripcion') IS NOT NULL AND (elem->>'fechaSolicitudInscripcion') != 'null'
+                   THEN 'en_registro_civil'
+              WHEN (elem->>'solicitarInscripcion') = 'true'
+                   THEN 'en_control_negocios'
+              ELSE 'sin_solicitud'
+            END AS estado_entrega,
+            (elem->>'autorizacionEntrega') = 'true'   AS tiene_autorizacion,
+            (elem->>'solEntrega') = 'true'             AS tiene_sol_entrega,
+            elem->>'fechaPatenteRecibida'              AS patente_recibida,
+            elem->>'fechaPatenteEnviada'               AS patente_enviada
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'FNE' AND activo = true
+          AND (elem->>'entregado') IS DISTINCT FROM 'true'
+        ORDER BY
+            CASE
+              WHEN (elem->>'diasDesdeVenta') IS NOT NULL AND (elem->>'diasDesdeVenta') != 'null'
+              THEN (elem->>'diasDesdeVenta')::int ELSE 0
+            END DESC
+        """,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_fne_por_vin(vin: str) -> Optional[dict]:
+    """Pipeline completo de un VIN específico en FNE."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT
+            elem->>'vin'                AS vin,
+            elem->>'sucursal'           AS sucursal,
+            elem->>'cliente'            AS cliente,
+            elem->>'vendedor'           AS vendedor,
+            elem->>'cajon'              AS cajon,
+            CASE WHEN (elem->>'valorFactura') IS NOT NULL AND (elem->>'valorFactura') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'valorFactura')::numeric / 1000000, 2)::float ELSE 0 END AS valor_mm,
+            elem->>'fechaVenta'                     AS fecha_venta,
+            elem->>'fechaFactura'                   AS fecha_factura,
+            CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL AND (elem->>'diasDesdeVenta') != 'null'
+                 THEN (elem->>'diasDesdeVenta')::int ELSE NULL END AS dias,
+            elem->>'agingBucket'                    AS aging,
+            (elem->>'autorizacionEntrega') = 'true' AS tiene_autorizacion,
+            (elem->>'solEntrega') = 'true'          AS tiene_sol_entrega,
+            (elem->>'solicitarInscripcion') = 'true' AS solicito_inscripcion,
+            elem->>'fechaSolicitudInscripcion'      AS fecha_solicitud_inscripcion,
+            elem->>'patentesAdministracion'         AS patente_en_admin,
+            elem->>'fechaPatenteEnviada'            AS patente_enviada,
+            elem->>'fechaPatenteRecibida'           AS patente_recibida,
+            elem->>'fechaPatenteEntregada'          AS patente_entregada,
+            elem->>'entregaAuto'                    AS entrega_auto,
+            elem->>'etapa'                          AS etapa
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'FNE' AND activo = true
+          AND upper(elem->>'vin') = $1
+        LIMIT 1
+        """,
+        vin.upper().strip(),
+    )
+    return dict(row) if row else None
+
+
+async def get_vin_en_stock(vin: str) -> Optional[dict]:
+    """Datos del VIN en el snapshot BASE_STOCK activo."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT
+            elem->>'vin'            AS vin,
+            elem->>'marcaPompeyo'   AS marca,
+            elem->>'modelo'         AS modelo,
+            elem->>'version'        AS version,
+            elem->>'color'          AS color,
+            elem->>'sucursal'       AS sucursal,
+            elem->>'tipoStock'      AS tipo_stock,
+            CASE WHEN (elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null'
+                 THEN (elem->>'diasStock')::int ELSE NULL END AS dias_stock,
+            CASE WHEN (elem->>'costoNeto') IS NOT NULL AND (elem->>'costoNeto') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'costoNeto')::numeric / 1000000, 2)::float ELSE 0 END AS costo_mm,
+            elem->>'estadoDealer'   AS estado_dealer,
+            elem->>'estadoComercial' AS estado_comercial,
+            (elem->>'esJudicial') = 'true'          AS judicial,
+            (elem->>'esStockB') = 'true'            AS stock_b,
+            (elem->>'pagado') = 'true'              AS pagado,
+            (elem->>'esVPPComprometido') = 'true'   AS vpp
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'vehiculos') AS elem
+        WHERE fuente = 'BASE_STOCK' AND activo = true
+          AND upper(elem->>'vin') = $1
+        LIMIT 1
+        """,
+        vin.upper().strip(),
+    )
+    return dict(row) if row else None
+
+
+async def get_vin_en_saldos(vin: str) -> list[dict]:
+    """Saldos asociados a un VIN (por vinResuelto o cajón)."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT
+            elem->>'subTipo'        AS sub_tipo,
+            elem->>'statusDPS'      AS tramo,
+            CASE WHEN (elem->>'diasArchivo') IS NOT NULL AND (elem->>'diasArchivo') != 'null'
+                 THEN (elem->>'diasArchivo')::int ELSE 0 END AS dias,
+            CASE WHEN (elem->>'saldoXDocumentar') IS NOT NULL AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'saldoXDocumentar')::numeric / 1000000, 2)::float ELSE 0 END AS saldo_mm,
+            elem->>'entidadFinanciera' AS financiera,
+            elem->>'cliente'        AS cliente,
+            elem->>'estadoPago'     AS estado_pago,
+            elem->>'comentariosFinanzas' AS comentario
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'SALDOS' AND activo = true
+          AND (upper(elem->>'vinResuelto') = $1 OR upper(elem->>'cajon') = $1)
+        """,
+        vin.upper().strip(),
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_lineas_credito_resumen(marcas: Optional[list[str]] = None) -> list[dict]:
     """Líneas de crédito por marca desde el snapshot BASE_STOCK activo."""
     pool = await get_pool()

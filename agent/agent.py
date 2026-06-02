@@ -143,6 +143,39 @@ async def ver_capital_consolidado(telefono: str) -> str:
 
 
 @tool
+async def ver_fne_detalle(telefono: str) -> str:
+    """
+    Lista completa de FNE agrupada por estado del pipeline de patente:
+    listos para entregar, falta autorización, patente en tránsito, en Registro Civil, etc.
+    Para cada estado muestra la acción concreta a tomar.
+    Llamar cuando piden 'detalle del FNE', 'cómo está el pipeline de entregas',
+    'qué FNE puedo entregar hoy', 'cuáles están trabados'.
+    """
+    return await t.fne_detalle(telefono)
+
+
+@tool
+async def ver_fne_vin(vin: str, telefono: str) -> str:
+    """
+    Pipeline completo de un VIN específico en FNE: checklist de patente paso a paso,
+    cliente, vendedor, sucursal, días desde venta y acción concreta a tomar.
+    Llamar cuando mencionan un VIN y quieren saber el estado de su entrega en FNE.
+    """
+    return await t.fne_por_vin(vin, telefono)
+
+
+@tool
+async def ver_vin_360(vin: str, telefono: str) -> str:
+    """
+    Vista 360° de un VIN: cruza las 4 fuentes — stock actual, FNE, saldos y gestión.
+    Muestra en una sola respuesta todo lo que hay sobre ese vehículo en el sistema.
+    Llamar cuando el usuario pregunta por un VIN y quiere el panorama completo,
+    o cuando no sabe en qué módulo buscar un auto específico.
+    """
+    return await t.vin_360(vin, telefono)
+
+
+@tool
 async def ver_provisiones_detalle(telefono: str) -> str:
     """
     Lista completa de provisiones no facturadas con su ID (PROV-XXX), marca, concepto,
@@ -199,6 +232,9 @@ LANGCHAIN_TOOLS = [
     analisis_capital,
     ver_capital,
     ver_capital_consolidado,
+    ver_fne_detalle,
+    ver_fne_vin,
+    ver_vin_360,
     ver_provisiones_detalle,
     ver_capital_por_marca,
     ver_saldos_t3_detalle,

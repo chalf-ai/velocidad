@@ -844,6 +844,193 @@ async def capital_accionable(telefono: str) -> str:
     return "\n".join(lines)
 
 
+# ── FNE detalle y pipeline ────────────────────────────────────────────────────
+
+ESTADO_ENTREGA_LABEL = {
+    "listo_entregar":      "✅ Listo para entregar",
+    "falta_autorizacion":  "🟡 Falta autorización",
+    "patente_en_sucursal": "📋 Patente en sucursal",
+    "patente_en_transito": "🚚 Patente en tránsito",
+    "patente_en_admin":    "🏢 Patente en admin",
+    "en_registro_civil":   "⚖️  En Registro Civil",
+    "en_control_negocios": "📝 En Control de Negocios",
+    "sin_solicitud":       "⚠️ Sin solicitud inscripción",
+}
+
+ESTADO_ENTREGA_ACCION = {
+    "listo_entregar":      "Llamar al cliente hoy para coordinar entrega",
+    "falta_autorizacion":  "Gestionar autorización con administración",
+    "patente_en_sucursal": "Solicitar entrega a sucursal",
+    "patente_en_transito": "Confirmar recepción con sucursal",
+    "patente_en_admin":    "Enviar patente a sucursal hoy",
+    "en_registro_civil":   "Hacer seguimiento con Control de Negocios",
+    "en_control_negocios": "Verificar que CdN envió a Registro Civil",
+    "sin_solicitud":       "Solicitar inscripción inmediatamente",
+}
+
+
+async def fne_detalle(telefono: str) -> str:
+    """Lista completa de FNE con estado de pipeline por auto."""
+    user = await db.get_user_by_phone(telefono)
+    if not user:
+        return "No pude identificarte."
+
+    datos = await db.get_fne_detalle()
+    if not datos:
+        return "No hay FNE activos."
+
+    total_mm = sum(d.get("valor_mm") or 0 for d in datos)
+    lines = [f"*FNE — {len(datos)} autos · ${total_mm:.1f}M*\n"]
+
+    # Agrupar por estado de entrega (prioridad: más listo primero)
+    orden = ["listo_entregar", "falta_autorizacion", "patente_en_sucursal",
+             "patente_en_transito", "patente_en_admin", "en_registro_civil",
+             "en_control_negocios", "sin_solicitud"]
+
+    por_estado: dict[str, list] = {}
+    for d in datos:
+        por_estado.setdefault(d.get("estado_entrega", "sin_solicitud"), []).append(d)
+
+    for estado in orden:
+        casos = por_estado.get(estado, [])
+        if not casos:
+            continue
+        mm = sum(c.get("valor_mm") or 0 for c in casos)
+        label = ESTADO_ENTREGA_LABEL.get(estado, estado)
+        accion = ESTADO_ENTREGA_ACCION.get(estado, "")
+        lines.append(f"*{label} — {len(casos)} · ${mm:.1f}M*")
+        lines.append(f"_Acción: {accion}_")
+        for c in casos[:6]:
+            dias = f"{c.get('dias',0)}d" if c.get("dias") else "?"
+            cliente = f" · {c['cliente']}" if c.get("cliente") else ""
+            lines.append(f"  • {c.get('vin','?')}  {c.get('sucursal','')}  {dias}{cliente}")
+        if len(casos) > 6:
+            lines.append(f"  _...y {len(casos)-6} más_")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+async def fne_por_vin(vin: str, telefono: str) -> str:
+    """Pipeline completo de un VIN específico en FNE."""
+    vin = vin.upper().strip()
+    fne = await db.get_fne_por_vin(vin)
+    if not fne:
+        return f"El VIN *{vin}* no aparece en FNE activo."
+
+    estado = fne.get("estado_entrega") or "sin_solicitud"
+    label = ESTADO_ENTREGA_LABEL.get(estado, estado)
+    accion = ESTADO_ENTREGA_ACCION.get(estado, "")
+
+    lines = [f"*FNE: {vin}*  {label}\n"]
+    lines.append(f"💰 ${fne.get('valor_mm',0):.2f}M  ·  {fne.get('dias','?')}d  ·  {fne.get('aging','')} ")
+    if fne.get("cliente"):
+        lines.append(f"Cliente: {fne['cliente']}")
+    if fne.get("vendedor"):
+        lines.append(f"Vendedor: {fne['vendedor']}")
+    if fne.get("sucursal"):
+        lines.append(f"Sucursal: {fne['sucursal']}")
+
+    lines.append("\n*Pipeline patente:*")
+    checks = [
+        ("Solicitud inscripción", fne.get("solicito_inscripcion")),
+        ("En Registro Civil",     fne.get("fecha_solicitud_inscripcion")),
+        ("Patente en admin",      fne.get("patente_en_admin")),
+        ("Patente enviada",       fne.get("patente_enviada")),
+        ("Patente recibida",      fne.get("patente_recibida")),
+        ("Sol. entrega",          fne.get("tiene_sol_entrega")),
+        ("Autorización entrega",  fne.get("tiene_autorizacion")),
+    ]
+    for nombre, valor in checks:
+        icono = "✅" if valor else "⬜"
+        lines.append(f"  {icono} {nombre}")
+
+    lines.append(f"\n▶️ *{accion}*")
+    return "\n".join(lines)
+
+
+# ── Vista 360° de un VIN ──────────────────────────────────────────────────────
+
+async def vin_360(vin: str, telefono: str) -> str:
+    """
+    Vista completa de un VIN cruzando las 4 fuentes:
+    stock actual, FNE, saldos y gestión.
+    """
+    vin = vin.upper().strip()
+
+    stock, fne, saldos, gestion, historial = await asyncio.gather(
+        db.get_vin_en_stock(vin),
+        db.get_fne_por_vin(vin),
+        db.get_vin_en_saldos(vin),
+        db.get_gestion_by_vin(vin),
+        db.get_historial_vin(vin, limit=4),
+    )
+
+    if not stock and not fne and not saldos and not gestion:
+        return f"No encontré el VIN *{vin}* en ninguna fuente de datos."
+
+    lines = [f"*{vin} — Vista 360°*\n"]
+
+    # Stock
+    if stock:
+        lines.append("*📦 En stock:*")
+        lines.append(
+            f"  {stock.get('marca','')} {stock.get('modelo','')}  "
+            f"${stock.get('costo_mm',0):.2f}M  "
+            f"{stock.get('tipo_stock','')}  "
+            f"{stock.get('dias_stock','?')}d"
+        )
+        alertas = []
+        if stock.get("judicial"):   alertas.append("⚖️ Judicial")
+        if stock.get("stock_b"):    alertas.append("📦 Stock B")
+        if stock.get("vpp"):        alertas.append("🔄 VPP")
+        if stock.get("pagado"):     alertas.append("💳 Pagado")
+        if alertas:
+            lines.append(f"  {' · '.join(alertas)}")
+    else:
+        lines.append("_No está en stock activo_")
+
+    # FNE
+    if fne:
+        estado = ESTADO_ENTREGA_LABEL.get(fne.get("estado_entrega",""), "")
+        lines.append(f"\n*🚗 En FNE:*  {estado}")
+        lines.append(
+            f"  ${fne.get('valor_mm',0):.2f}M  ·  {fne.get('dias','?')}d  ·  "
+            f"{fne.get('cliente') or 'sin cliente'}"
+        )
+        accion = ESTADO_ENTREGA_ACCION.get(fne.get("estado_entrega",""), "")
+        if accion:
+            lines.append(f"  ▶️ {accion}")
+
+    # Saldos
+    if saldos:
+        total_s = sum(s.get("saldo_mm") or 0 for s in saldos)
+        lines.append(f"\n*💰 Saldos ({len(saldos)} · ${total_s:.2f}M):*")
+        for s in saldos:
+            lines.append(
+                f"  {s.get('sub_tipo','')}  {s.get('tramo','')}  "
+                f"${s.get('saldo_mm',0):.2f}M  {s.get('dias',0)}d  "
+                f"{s.get('financiera') or ''}"
+            )
+
+    # Gestión
+    if gestion:
+        prioridad = gestion.get("prioridadManual")
+        estado_g = gestion.get("estadoGestion","")
+        emoji = PRIORIDAD_EMOJI.get(prioridad, "⚪")
+        lines.append(f"\n*🗂 Gestión:*  {emoji} {ESTADO_LABEL.get(estado_g, estado_g)}")
+        if gestion.get("responsable"):
+            lines.append(f"  Responsable: {gestion['responsable']}")
+        if gestion.get("comentario"):
+            lines.append(f"  📝 _{gestion['comentario']}_")
+        if gestion.get("proximaAccion"):
+            lines.append(f"  ▶️ {gestion['proximaAccion']}")
+        if historial:
+            lines.append(f"  _Último movimiento: {_fecha_str(historial[0].get('createdAt'))}_")
+
+    return "\n".join(lines)
+
+
 # ── Detalle provisiones ───────────────────────────────────────────────────────
 
 async def detalle_provisiones(telefono: str) -> str:
