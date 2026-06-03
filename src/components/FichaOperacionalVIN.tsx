@@ -17,6 +17,7 @@ import Link from "next/link";
 import {
   Activity,
   Banknote,
+  Briefcase,
   Car,
   ClipboardCheck,
   Clock,
@@ -354,6 +355,19 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
             <Linea k="Valor factura" v={vu.fneValorFactura > 0 ? fmtCLPCompact(vu.fneValorFactura) : "—"} />
           </CapaCard>
 
+          <CapaCard
+            icon={<Briefcase className="size-3.5" />}
+            titulo="Control de Negocio"
+            presente={com.enFNE}
+            motivoNoAplica="Vehículo sin facturación · Sin proceso comercial iniciado."
+          >
+            <Linea k="Estado" v="Proceso comercial iniciado" />
+            <Linea k="Etapa actual" v={vu.fneEstado ? vu.fneEstado.replaceAll("_", " ") : "—"} />
+            <Linea k="Factura" v={fechaTxt(com.fechaFactura)} />
+            <Linea k="Entrega comprom." v={fechaTxt(com.fechaEntregaComprometida)} />
+            <Linea k="Listo entregar" v={ope.listoParaEntregar ? "Sí" : "No"} />
+          </CapaCard>
+
           <CapaCard icon={<ClipboardCheck className="size-3.5" />} titulo="Inscripción / patente" presente={com.enFNE}>
             <Linea k="Solicitud inscr." v={ins.solicitarInscripcion == null ? "—" : ins.solicitarInscripcion ? "Sí" : "No"} />
             <Linea k="Inscripción" v={fechaTxt(ins.fechaInscripcion)} />
@@ -645,11 +659,15 @@ function CapaCard({
   icon,
   titulo,
   presente,
+  motivoNoAplica,
   children,
 }: {
   icon: React.ReactNode;
   titulo: string;
   presente: boolean;
+  /** Mensaje explícito cuando la capa no aplica al VIN (ej. "Sin facturación").
+   *  Si no se pasa, muestra el genérico "sin datos". */
+  motivoNoAplica?: string;
   children?: React.ReactNode;
 }) {
   return (
@@ -657,9 +675,19 @@ function CapaCard({
       <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-[--color-fg] mb-1.5">
         <span className="text-[--color-fg-muted]">{icon}</span>
         {titulo}
-        {!presente && <span className="ml-auto text-[10px] text-[--color-fg-dim] font-normal">sin datos</span>}
+        {!presente && (
+          <span className="ml-auto text-[10px] text-[--color-fg-dim] font-normal">
+            {motivoNoAplica ? "no aplica" : "sin datos"}
+          </span>
+        )}
       </div>
-      {presente ? <div className="space-y-0.5">{children}</div> : null}
+      {presente ? (
+        <div className="space-y-0.5">{children}</div>
+      ) : motivoNoAplica ? (
+        <div className="text-[11.5px] text-[--color-fg-muted] leading-snug italic">
+          {motivoNoAplica}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -36,6 +36,11 @@ import { AbrirCasoButton } from "@/components/AbrirCasoButton";
 import { GestionInline } from "@/components/GestionInline";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
 import { diasMaxCreditoPompeyo } from "@/lib/gestion/caso";
+import { useGestionStore } from "@/lib/gestion/store";
+import {
+  ESTADO_GESTION_LABEL,
+  ESTADO_GESTION_TONE,
+} from "@/lib/gestion/types";
 import type {
   ScoreGerencialResultado,
   IndicadorId,
@@ -270,6 +275,10 @@ function ColaVins({
   vus: VehiculoUnificado[];
   modo: "stock" | "cp";
 }) {
+  // Subscripción al store de gestión — refresca cuando cambia owner/estado
+  // en cualquier ficha. Lookup O(1) por VIN al renderear filas.
+  const gestionByVin = useGestionStore((s) => s.byVin);
+
   const totalMonto = useMemo(
     () =>
       vus.reduce(
@@ -313,26 +322,33 @@ function ColaVins({
         {titulo}
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px] min-w-[720px]">
+        <table className="w-full text-[12.5px] min-w-[1100px]">
           <thead>
             <tr className="text-left text-[10.5px] uppercase tracking-[0.05em] text-[--color-fg-muted] bg-[--color-bg-elev-1]">
               <th className="px-3 py-2 font-semibold">Marca / Modelo</th>
               <th className="px-3 py-2 font-semibold">VIN</th>
               <th className="px-3 py-2 font-semibold">Sucursal</th>
-              {modo === "cp" && (
-                <th className="px-3 py-2 font-semibold">Aging</th>
-              )}
+              <th className="px-3 py-2 font-semibold">Bodega</th>
               <th className="px-3 py-2 font-semibold text-right">
                 {modo === "cp" ? "CP retenido" : "Capital"}
               </th>
+              <th className="px-3 py-2 font-semibold text-right">Días stock</th>
+              <th className="px-3 py-2 font-semibold">
+                {modo === "cp" ? "Aging CP" : "Aging stock"}
+              </th>
+              <th className="px-3 py-2 font-semibold">Responsable / Físico</th>
+              <th className="px-3 py-2 font-semibold">Estado</th>
               <th className="px-3 py-2 font-semibold">Gestión</th>
             </tr>
           </thead>
           <tbody>
             {vus.slice(0, MAX_FILAS).map((vu, idx) => {
-              const dias = modo === "cp" ? diasMaxCreditoPompeyo(vu) : null;
+              const diasCP = modo === "cp" ? diasMaxCreditoPompeyo(vu) : null;
+              const diasStock = vu.diasStock;
               const monto =
                 modo === "cp" ? vu.creditoPompeyo : vu.capitalComprometido;
+              const g = gestionByVin[vu.vinLimpio] ?? null;
+              const fisico = chipFisicoSimple(vu);
               return (
                 <tr
                   key={vu.vinLimpio}
@@ -354,20 +370,45 @@ function ColaVins({
                   <td className="px-3 py-2 mono text-[11px] text-[--color-fg-muted] whitespace-nowrap">
                     {vu.vin}
                   </td>
-                  <td className="px-3 py-2 text-[11.5px] text-[--color-fg-muted] truncate max-w-[180px]">
+                  <td className="px-3 py-2 text-[11.5px] text-[--color-fg-muted] truncate max-w-[160px]">
                     {vu.sucursal ?? "—"}
                   </td>
-                  {modo === "cp" && (
-                    <td className="px-3 py-2">
-                      <AgingBadge
-                        dias={dias}
-                        umbralWarn={15}
-                        umbralDanger={30}
-                      />
-                    </td>
-                  )}
+                  <td className="px-3 py-2 text-[11.5px] text-[--color-fg-muted] truncate max-w-[160px]">
+                    {vu.bodega ?? "—"}
+                  </td>
                   <td className="px-3 py-2 text-right mono text-[--color-fg] font-semibold">
                     {fmtCLPCompact(monto)}
+                  </td>
+                  <td className="px-3 py-2 text-right mono text-[11.5px] text-[--color-fg-muted]">
+                    {diasStock != null ? `${diasStock}d` : "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    {modo === "cp" ? (
+                      <AgingBadge dias={diasCP} umbralWarn={15} umbralDanger={30} />
+                    ) : (
+                      <AgingBadge dias={diasStock} umbralWarn={90} umbralDanger={180} />
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="text-[11.5px] text-[--color-fg] truncate max-w-[150px]">
+                      {g?.responsable ?? (
+                        <span className="text-[--color-fg-dim] italic">Sin asignar</span>
+                      )}
+                    </div>
+                    <Badge tone={fisico.tone} size="xs">
+                      {fisico.label}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-2">
+                    {g ? (
+                      <Badge tone={ESTADO_GESTION_TONE[g.estadoGestion]} size="xs">
+                        {ESTADO_GESTION_LABEL[g.estadoGestion]}
+                      </Badge>
+                    ) : (
+                      <Badge tone="muted" size="xs">
+                        Sin gestionar
+                      </Badge>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <AbrirCasoButton vin={limpiarVIN(vu.vin)} origen={origen} />
@@ -386,6 +427,27 @@ function ColaVins({
       )}
     </ColaShell>
   );
+}
+
+/**
+ * Chip físico simplificado para la cola del Score Gerencial.
+ * Heurística rápida basada en `bodega` vs `sucursal` — la verdad física
+ * EXACTA (con cruce FNE + logística) vive en la FichaOperacionalVIN cuando
+ * se abre el caso. Acá solo informamos a primera vista dónde está el auto.
+ */
+function chipFisicoSimple(
+  vu: VehiculoUnificado,
+): { label: string; tone: "success" | "info" | "warning" | "muted" } {
+  const b = (vu.bodega ?? "").toUpperCase().trim();
+  const s = (vu.sucursal ?? "").toUpperCase().trim();
+  if (!b) return { label: "Sin ubicación", tone: "muted" };
+  // Bodega que empieza con "STOCK" o que comparte la primera palabra de la
+  // sucursal → auto en sucursal de venta.
+  const sFirst = s.split(/\s+/)[0];
+  if (b.startsWith("STOCK") || (sFirst && b.includes(sFirst))) {
+    return { label: "En sucursal", tone: "success" };
+  }
+  return { label: "En bodega", tone: "info" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
