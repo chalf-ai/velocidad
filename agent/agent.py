@@ -131,6 +131,95 @@ async def ver_alertas_stock(telefono: str) -> str:
     return await t.alertas_stock(telefono)
 
 
+@tool
+async def ver_capital_consolidado(telefono: str) -> str:
+    """
+    Vista unificada de capital inmovilizado: Stock + FNE + Saldos + Provisiones en un cuadro.
+    Incluye qué indicadores del score gerencial están fallando y qué acción los mejora.
+    Llamar cuando el usuario pregunta '¿cómo estamos?', '¿cuánto capital tenemos parado?',
+    '¿cómo está el capital?', o pide un resumen ejecutivo del estado financiero.
+    """
+    return await t.capital_consolidado(telefono)
+
+
+@tool
+async def ver_fne_detalle(telefono: str) -> str:
+    """
+    Lista completa de FNE agrupada por estado del pipeline de patente:
+    listos para entregar, falta autorización, patente en tránsito, en Registro Civil, etc.
+    Para cada estado muestra la acción concreta a tomar.
+    Llamar cuando piden 'detalle del FNE', 'cómo está el pipeline de entregas',
+    'qué FNE puedo entregar hoy', 'cuáles están trabados'.
+    """
+    return await t.fne_detalle(telefono)
+
+
+@tool
+async def ver_fne_vin(vin: str, telefono: str) -> str:
+    """
+    Pipeline completo de un VIN específico en FNE: checklist de patente paso a paso,
+    cliente, vendedor, sucursal, días desde venta y acción concreta a tomar.
+    Llamar cuando mencionan un VIN y quieren saber el estado de su entrega en FNE.
+    """
+    return await t.fne_por_vin(vin, telefono)
+
+
+@tool
+async def ver_vin_360(vin: str, telefono: str) -> str:
+    """
+    Vista 360° de un VIN: cruza las 4 fuentes — stock actual, FNE, saldos y gestión.
+    Muestra en una sola respuesta todo lo que hay sobre ese vehículo en el sistema.
+    Llamar cuando el usuario pregunta por un VIN y quiere el panorama completo,
+    o cuando no sabe en qué módulo buscar un auto específico.
+    """
+    return await t.vin_360(vin, telefono)
+
+
+@tool
+async def ver_provisiones_detalle(telefono: str) -> str:
+    """
+    Lista completa de provisiones no facturadas con su ID (PROV-XXX), marca, concepto,
+    monto, saldo pendiente y antigüedad en días. Agrupadas por marca.
+    Llamar cuando piden 'detalle de provisiones', 'ID de provisiones', 'lista de provisiones',
+    'cuáles son las provisiones abiertas', o cualquier drill-down de provisiones.
+    """
+    return await t.detalle_provisiones(telefono)
+
+
+@tool
+async def ver_capital_por_marca(telefono: str) -> str:
+    """
+    Capital de stock desglosado por marca: total, Propio, FloorPlan, inmovilizados y judiciales.
+    Para GERENTE_GENERAL y ADMIN muestra todo el grupo.
+    Llamar cuando piden 'capital por marca', 'cómo está cada marca', 'desglose por gerencia',
+    'cuánto tiene KIA', 'cuál marca tiene más capital', o cualquier breakdown por marca.
+    """
+    return await t.capital_por_marca(telefono)
+
+
+@tool
+async def ver_saldos_t3_detalle(telefono: str) -> str:
+    """
+    Lista completa de saldos vehículo en tramos T3-T7 (más de 30 días sin cobrar).
+    Muestra cada caso con VIN/cajón, marca, monto, días, cliente y financiera.
+    Llamar cuando piden 'detalle de saldos T3', 'cuáles son los saldos vencidos',
+    'dame los saldos por cobrar', 'quiero ver los T3', o cualquier drill-down de saldos.
+    """
+    return await t.detalle_saldos_t3(telefono)
+
+
+@tool
+async def ver_accionables(telefono: str) -> str:
+    """
+    Casos accionables rápidos sin gestión reciente: CP vencidos, saldos T3+,
+    provisiones >90d, FNE detenidos, stock pagado sin rotación.
+    Para cada caso sin comentario reciente, César pregunta directamente si se gestionó.
+    Llamar cuando el usuario pide '¿qué puedo hacer hoy?', '¿qué está pendiente?',
+    '¿qué accionables tengo?', o quiere saber qué recuperar esta semana.
+    """
+    return await t.capital_accionable(telefono)
+
+
 LANGCHAIN_TOOLS = [
     get_briefing,
     get_detalle_vin,
@@ -142,6 +231,14 @@ LANGCHAIN_TOOLS = [
     ver_alarmas,
     analisis_capital,
     ver_capital,
+    ver_capital_consolidado,
+    ver_fne_detalle,
+    ver_fne_vin,
+    ver_vin_360,
+    ver_provisiones_detalle,
+    ver_capital_por_marca,
+    ver_saldos_t3_detalle,
+    ver_accionables,
     ver_fne,
     ver_lineas_credito,
     ver_alertas_stock,
@@ -149,24 +246,37 @@ LANGCHAIN_TOOLS = [
 
 # ── Prompt del sistema ────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """Eres el asistente de gestión de stock de *Pompeyo Carrasco*.
-Ayudas a los ejecutivos de cuenta a gestionar sus casos de vehículos día a día por WhatsApp.
+SYSTEM_PROMPT = """Eres César, el asistente de gestión de capital de Pompeyo Carrasco.
 
-*Qué puedes hacer:*
-• Briefing diario con casos pendientes y alertas
-• Detalle completo de cualquier VIN
-• Actualizar estados, prioridades, responsables y comentarios
-• Mostrar alarmas urgentes
-• Analizar tendencia del capital de trabajo en el tiempo (mejora/empeora)
+Conoces el negocio: el capital se inmoviliza en Stock, FNE (vendidos no entregados), Saldos por cobrar y Provisiones sin facturar. Tu trabajo es ayudar a reducir ese capital parado identificando qué se puede accionar y haciendo seguimiento de que se haga.
 
-*Instrucciones:*
-- Siempre responde en español, de forma concisa y directa.
-- Usa formato WhatsApp: *negrita* para títulos, _itálica_ para notas, listas con •
-- Recuerdas el historial de esta conversación: úsalo para dar respuestas contextuales.
-- Cuando el usuario mencione un VIN (17 caracteres aprox.), úsalo directamente.
-- Para modificar datos, usa las herramientas disponibles — nunca inventes valores.
-- Si el usuario pregunta cómo van los KPIs, el capital o la tendencia, usa analisis_capital.
-- El parámetro 'telefono' siempre es el número del usuario actual que está escribiendo."""
+CÓMO HABLAS:
+Hablas como un colega que conoce bien el negocio, no como un asistente de software. Sin saludos formales ni repetitivos — si el usuario ya habló contigo hoy, vas directo al punto. Usas el nombre de la persona cuando corresponde, no en cada mensaje. Respuestas cortas cuando la pregunta es corta, detalle cuando se necesita.
+
+Nunca digas "como tu asistente" ni "estoy aquí para ayudarte" ni cosas así. Tampoco repitas lo que acabas de hacer ("he actualizado el estado de...") — si lo hiciste, ya está.
+
+CUANDO NO SABES ALGO:
+Di exactamente qué puedes ver y qué no tenés acceso. Nunca inventes un dato. Si la pregunta cruza algo que no tenés en las herramientas, lo decís claramente y sugerís qué hacer.
+
+CÓMO ANALIZÁS:
+Cada caso tiene una velocidad: accionable rápido (esta semana), medio (1-2 semanas) o bloqueado (legal/disputa). Cuando ves algo accionable sin gestión reciente, preguntás directamente: "¿Cobraste ese CP? Deja el comentario." Cuando un VIN lleva 4+ semanas sin cambio, lo decís.
+
+TIPOS DE STOCK — lógica de gestión distinta por categoría:
+• Stock A: gestión COMERCIAL. Si lleva >90d necesita acción de precio o promoción. Si lleva >180d es crítico. Preguntás: "¿Está publicado? ¿El precio está competitivo? ¿Se evaluó transferencia o descuento?"
+• Stock B: gestión OPERACIONAL. Son autos en reparación. Urgencia alta — >30d ya necesita seguimiento. Preguntás: "¿Qué falta para que salga del taller? ¿Cuándo estará listo?"
+• Judicial: gestión LEGAL únicamente. NO hay acción comercial posible. Solo seguimiento del proceso legal. Preguntás: "¿Hay novedades del tribunal? ¿Cuál es el estado de la causa?" Nunca sugerís precio ni venta.
+
+SCORE GERENCIAL (referencia para diagnosticar):
+- Stock propio ≤5% del stock valorizado (peso 40 pts)
+- Provisiones no facturadas >90d = 0 casos (peso 40 pts)
+- Crédito Pompeyo >15d = 0 casos (peso 10 pts)
+- Saldos T3+ ≤15% del total (peso 10 pts)
+
+FORMATO:
+WhatsApp: *negrita*, _itálica_, listas con •. Conciso. Sin headers innecesarios si la respuesta es corta.
+
+El teléfono del usuario en esta sesión es: {telefono}
+Usalo en todas las herramientas como parámetro 'telefono'."""
 
 
 # ── Preparación de mensajes (trimming para contexto largo) ───────────────────
@@ -183,7 +293,7 @@ def _prepare_messages(state: dict, config: RunnableConfig) -> list:
         allow_partial=False,
         start_on="human",
     )
-    system = SYSTEM_PROMPT + f"\n\n*Teléfono del usuario en esta sesión: {telefono}* — úsalo en todas las tools."
+    system = SYSTEM_PROMPT.replace("{telefono}", telefono)
     return [SystemMessage(content=system)] + trimmed
 
 

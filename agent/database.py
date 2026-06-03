@@ -130,33 +130,226 @@ async def get_alertas_stock(marcas: Optional[list[str]] = None) -> list[dict]:
 
 
 async def get_fne_resumen() -> dict:
-    """Resumen FNE: total, detenidos >15d, aging buckets."""
+    """Resumen FNE: total, detenidos >15d, aging buckets.
+    Aging calculado desde fechaFactura (igual que la app). Solo universo operativo (entregado != true).
+    """
     pool = await get_pool()
     row = await pool.fetchrow(
         """
+        WITH fne AS (
+            SELECT
+                elem,
+                CASE
+                    WHEN (elem->>'fechaFactura') IS NOT NULL AND (elem->>'fechaFactura') NOT IN ('null','')
+                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz))::int
+                    ELSE NULL
+                END AS dias
+            FROM "Snapshot",
+                 jsonb_array_elements(payload->'registros') AS elem
+            WHERE fuente = 'FNE' AND activo = true
+              AND (elem->>'entregado') IS DISTINCT FROM 'true'
+        )
         SELECT
             COUNT(*)::int AS total_fne,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '0-3'  THEN 1 END)::int AS bucket_0_3,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '4-7'  THEN 1 END)::int AS bucket_4_7,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '8-15' THEN 1 END)::int AS bucket_8_15,
-            COUNT(CASE WHEN (elem->>'agingBucket') = '16+'  THEN 1 END)::int AS bucket_16_mas,
-            COUNT(CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL
-                        AND (elem->>'diasDesdeVenta') != 'null'
-                        AND (elem->>'diasDesdeVenta')::int > 15 THEN 1 END)::int AS detenidos_mas_15,
+            COUNT(CASE WHEN dias <= 3              THEN 1 END)::int AS bucket_0_3,
+            COUNT(CASE WHEN dias BETWEEN 4 AND 7   THEN 1 END)::int AS bucket_4_7,
+            COUNT(CASE WHEN dias BETWEEN 8 AND 15  THEN 1 END)::int AS bucket_8_15,
+            COUNT(CASE WHEN dias > 15              THEN 1 END)::int AS bucket_16_mas,
+            COUNT(CASE WHEN dias > 15              THEN 1 END)::int AS detenidos_mas_15,
             ROUND(COALESCE(SUM(
-                CASE WHEN (elem->>'diasDesdeVenta') IS NOT NULL
-                          AND (elem->>'diasDesdeVenta') != 'null'
-                          AND (elem->>'diasDesdeVenta')::int > 15
+                CASE WHEN dias > 15
                           AND (elem->>'valorFactura') IS NOT NULL
                           AND (elem->>'valorFactura') NOT IN ('null','0','')
                 THEN (elem->>'valorFactura')::numeric ELSE 0 END
             ), 0) / 1000000, 1)::float AS capital_detenido_mm
-        FROM "Snapshot",
-             jsonb_array_elements(payload->'registros') AS elem
-        WHERE fuente = 'FNE' AND activo = true
+        FROM fne
         """,
     )
     return dict(row) if row else {}
+
+
+async def get_fne_detalle(marcas: Optional[list[str]] = None) -> list[dict]:
+    """
+    Lista completa de FNE activos (no entregados) con pipeline de patente.
+    Estado de entrega derivado de las señales del archivo:
+      listo_entregar → patente recibida + sol_entrega + autorización
+      falta_autorizacion → patente recibida + sol_entrega, sin autorización
+      patente_en_sucursal → patente recibida, falta solicitud entrega
+      patente_en_transito → enviada por admin, sin recibir en sucursal
+      patente_en_admin → volvió de RC, sin enviar a sucursal
+      en_registro_civil → solicitud enviada a RC
+      en_control_negocios → sucursal pidió, CdN no mandó a RC
+      sin_solicitud → no se inició el trámite
+    """
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        WITH fne AS (
+            SELECT
+                elem,
+                CASE
+                    WHEN (elem->>'fechaFactura') IS NOT NULL AND (elem->>'fechaFactura') NOT IN ('null','')
+                    THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz))::int
+                    ELSE NULL
+                END AS dias
+            FROM "Snapshot",
+                 jsonb_array_elements(payload->'registros') AS elem
+            WHERE fuente = 'FNE' AND activo = true
+              AND (elem->>'entregado') IS DISTINCT FROM 'true'
+        )
+        SELECT
+            elem->>'vin'            AS vin,
+            elem->>'sucursal'       AS sucursal,
+            elem->>'cliente'        AS cliente,
+            elem->>'vendedor'       AS vendedor,
+            CASE WHEN (elem->>'valorFactura') IS NOT NULL AND (elem->>'valorFactura') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'valorFactura')::numeric / 1000000, 2)::float ELSE 0 END AS valor_mm,
+            dias,
+            CASE
+                WHEN dias IS NULL THEN 'sin_fecha'
+                WHEN dias <= 3    THEN '0-3'
+                WHEN dias <= 7    THEN '4-7'
+                WHEN dias <= 15   THEN '8-15'
+                ELSE '16+'
+            END AS aging,
+            -- Estado entrega derivado de señales de patente
+            CASE
+              WHEN (elem->>'fechaPatenteRecibida') IS NOT NULL AND (elem->>'fechaPatenteRecibida') != 'null'
+                   AND (elem->>'solEntrega') = 'true'
+                   AND (elem->>'autorizacionEntrega') = 'true'
+                   THEN 'listo_entregar'
+              WHEN (elem->>'fechaPatenteRecibida') IS NOT NULL AND (elem->>'fechaPatenteRecibida') != 'null'
+                   AND (elem->>'solEntrega') = 'true'
+                   THEN 'falta_autorizacion'
+              WHEN (elem->>'fechaPatenteRecibida') IS NOT NULL AND (elem->>'fechaPatenteRecibida') != 'null'
+                   THEN 'patente_en_sucursal'
+              WHEN (elem->>'fechaPatenteEnviada') IS NOT NULL AND (elem->>'fechaPatenteEnviada') != 'null'
+                   THEN 'patente_en_transito'
+              WHEN (elem->>'patentesAdministracion') IS NOT NULL AND (elem->>'patentesAdministracion') != 'null'
+                   THEN 'patente_en_admin'
+              WHEN (elem->>'fechaSolicitudInscripcion') IS NOT NULL AND (elem->>'fechaSolicitudInscripcion') != 'null'
+                   THEN 'en_registro_civil'
+              WHEN (elem->>'solicitarInscripcion') = 'true'
+                   THEN 'en_control_negocios'
+              ELSE 'sin_solicitud'
+            END AS estado_entrega,
+            (elem->>'autorizacionEntrega') = 'true'   AS tiene_autorizacion,
+            (elem->>'solEntrega') = 'true'             AS tiene_sol_entrega,
+            elem->>'fechaPatenteRecibida'              AS patente_recibida,
+            elem->>'fechaPatenteEnviada'               AS patente_enviada
+        FROM fne
+        ORDER BY COALESCE(dias, 0) DESC
+        """,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_fne_por_vin(vin: str) -> Optional[dict]:
+    """Pipeline completo de un VIN específico en FNE."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT
+            elem->>'vin'                AS vin,
+            elem->>'sucursal'           AS sucursal,
+            elem->>'cliente'            AS cliente,
+            elem->>'vendedor'           AS vendedor,
+            elem->>'cajon'              AS cajon,
+            CASE WHEN (elem->>'valorFactura') IS NOT NULL AND (elem->>'valorFactura') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'valorFactura')::numeric / 1000000, 2)::float ELSE 0 END AS valor_mm,
+            elem->>'fechaVenta'                     AS fecha_venta,
+            elem->>'fechaFactura'                   AS fecha_factura,
+            CASE
+                WHEN (elem->>'fechaFactura') IS NOT NULL AND (elem->>'fechaFactura') NOT IN ('null','')
+                THEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz))::int
+                ELSE NULL
+            END AS dias,
+            CASE
+                WHEN (elem->>'fechaFactura') IS NULL OR (elem->>'fechaFactura') IN ('null','') THEN 'sin_fecha'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz)) <= 3   THEN '0-3'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz)) <= 7   THEN '4-7'
+                WHEN EXTRACT(DAY FROM (NOW() - (elem->>'fechaFactura')::timestamptz)) <= 15  THEN '8-15'
+                ELSE '16+'
+            END AS aging,
+            (elem->>'autorizacionEntrega') = 'true' AS tiene_autorizacion,
+            (elem->>'solEntrega') = 'true'          AS tiene_sol_entrega,
+            (elem->>'solicitarInscripcion') = 'true' AS solicito_inscripcion,
+            elem->>'fechaSolicitudInscripcion'      AS fecha_solicitud_inscripcion,
+            elem->>'patentesAdministracion'         AS patente_en_admin,
+            elem->>'fechaPatenteEnviada'            AS patente_enviada,
+            elem->>'fechaPatenteRecibida'           AS patente_recibida,
+            elem->>'fechaPatenteEntregada'          AS patente_entregada,
+            elem->>'entregaAuto'                    AS entrega_auto,
+            elem->>'etapa'                          AS etapa
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'FNE' AND activo = true
+          AND upper(elem->>'vin') = $1
+        LIMIT 1
+        """,
+        vin.upper().strip(),
+    )
+    return dict(row) if row else None
+
+
+async def get_vin_en_stock(vin: str) -> Optional[dict]:
+    """Datos del VIN en el snapshot BASE_STOCK activo."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT
+            elem->>'vin'            AS vin,
+            elem->>'marcaPompeyo'   AS marca,
+            elem->>'modelo'         AS modelo,
+            elem->>'version'        AS version,
+            elem->>'color'          AS color,
+            elem->>'sucursal'       AS sucursal,
+            elem->>'tipoStock'      AS tipo_stock,
+            CASE WHEN (elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null'
+                 THEN (elem->>'diasStock')::int ELSE NULL END AS dias_stock,
+            CASE WHEN (elem->>'costoNeto') IS NOT NULL AND (elem->>'costoNeto') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'costoNeto')::numeric / 1000000, 2)::float ELSE 0 END AS costo_mm,
+            elem->>'estadoDealer'   AS estado_dealer,
+            elem->>'estadoComercial' AS estado_comercial,
+            (elem->>'esJudicial') = 'true'          AS judicial,
+            (elem->>'esStockB') = 'true'            AS stock_b,
+            (elem->>'pagado') = 'true'              AS pagado,
+            (elem->>'esVPPComprometido') = 'true'   AS vpp
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'vehiculos') AS elem
+        WHERE fuente = 'BASE_STOCK' AND activo = true
+          AND upper(elem->>'vin') = $1
+        LIMIT 1
+        """,
+        vin.upper().strip(),
+    )
+    return dict(row) if row else None
+
+
+async def get_vin_en_saldos(vin: str) -> list[dict]:
+    """Saldos asociados a un VIN (por vinResuelto o cajón)."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT
+            elem->>'subTipo'        AS sub_tipo,
+            elem->>'statusDPS'      AS tramo,
+            CASE WHEN (elem->>'diasArchivo') IS NOT NULL AND (elem->>'diasArchivo') != 'null'
+                 THEN (elem->>'diasArchivo')::int ELSE 0 END AS dias,
+            CASE WHEN (elem->>'saldoXDocumentar') IS NOT NULL AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'saldoXDocumentar')::numeric / 1000000, 2)::float ELSE 0 END AS saldo_mm,
+            elem->>'entidadFinanciera' AS financiera,
+            elem->>'cliente'        AS cliente,
+            elem->>'estadoPago'     AS estado_pago,
+            elem->>'comentariosFinanzas' AS comentario
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'SALDOS' AND activo = true
+          AND (upper(elem->>'vinResuelto') = $1 OR upper(elem->>'cajon') = $1)
+        """,
+        vin.upper().strip(),
+    )
+    return [dict(r) for r in rows]
 
 
 async def get_lineas_credito_resumen(marcas: Optional[list[str]] = None) -> list[dict]:
@@ -187,6 +380,82 @@ async def get_lineas_credito_resumen(marcas: Optional[list[str]] = None) -> list
     if marcas:
         result = [r for r in result if r.get("marca") in marcas]
     return result
+
+
+async def get_capital_por_marca(marcas: Optional[list[str]] = None) -> list[dict]:
+    """Capital de trabajo desglosado por marca — para vista ejecutiva GERENTE_GENERAL/ADMIN."""
+    pool = await get_pool()
+    marca_filter = "AND elem->>'marcaPompeyo' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            elem->>'marcaPompeyo'  AS marca,
+            COUNT(*)::int          AS unidades,
+            ROUND(COALESCE(SUM(
+                CASE WHEN (elem->>'costoNeto') IS NOT NULL AND (elem->>'costoNeto') NOT IN ('null','0','')
+                THEN (elem->>'costoNeto')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float AS capital_mm,
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'tipoStock' IN ('Propio','FinPropio')
+                     AND (elem->>'costoNeto') IS NOT NULL AND (elem->>'costoNeto') NOT IN ('null','0','')
+                THEN (elem->>'costoNeto')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float AS propio_mm,
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'tipoStock' = 'FloorPlan'
+                     AND (elem->>'costoNeto') IS NOT NULL AND (elem->>'costoNeto') NOT IN ('null','0','')
+                THEN (elem->>'costoNeto')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float AS floorplan_mm,
+            COUNT(CASE WHEN (elem->>'diasStock') IS NOT NULL AND (elem->>'diasStock') != 'null'
+                        AND (elem->>'diasStock')::int >= 180 THEN 1 END)::int AS inmovilizados,
+            COUNT(CASE WHEN (elem->>'esJudicial') = 'true' THEN 1 END)::int   AS judiciales
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'vehiculos') AS elem
+        WHERE fuente = 'BASE_STOCK' AND activo = true
+          {marca_filter}
+        GROUP BY elem->>'marcaPompeyo'
+        ORDER BY capital_mm DESC
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_saldos_t3_detalle(marcas: Optional[list[str]] = None) -> list[dict]:
+    """Lista completa de saldos T3+ (>30d) con detalle por caso."""
+    pool = await get_pool()
+    marca_filter = "AND elem->>'marca' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            COALESCE(elem->>'vinResuelto', elem->>'cajon') AS vin_o_cajon,
+            elem->>'marca'          AS marca,
+            elem->>'subTipo'        AS sub_tipo,
+            elem->>'statusDPS'      AS tramo,
+            CASE WHEN (elem->>'diasArchivo') IS NOT NULL AND (elem->>'diasArchivo') != 'null'
+                 THEN (elem->>'diasArchivo')::int ELSE 0 END AS dias,
+            CASE WHEN (elem->>'saldoXDocumentar') IS NOT NULL
+                      AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'saldoXDocumentar')::numeric / 1000000, 2)::float ELSE 0 END AS saldo_mm,
+            elem->>'cliente'        AS cliente,
+            elem->>'entidadFinanciera' AS financiera,
+            elem->>'estadoPago'     AS estado_pago,
+            elem->>'comentariosFinanzas' AS comentario
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'SALDOS' AND activo = true
+          AND elem->>'categoria' = 'vehiculo'
+          AND elem->>'statusDPS' IN ('T3','T4','T5','T6','T7')
+          {marca_filter}
+        ORDER BY (elem->>'diasArchivo')::int DESC NULLS LAST
+        LIMIT 100
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
 
 
 async def get_all_stock_vins() -> list[dict]:
@@ -466,6 +735,317 @@ async def get_kpis_snapshot(snapshot_id: str, marcas: Optional[list[str]] = None
         *params,
     )
     return dict(row) if row else {"total": 0, "floor_plan": 0, "propio_fin": 0, "capital_mm": 0.0}
+
+
+# ── SALDOS desde Snapshot ────────────────────────────────────────────────────
+
+async def get_saldos_resumen(marcas: Optional[list[str]] = None) -> dict:
+    """
+    Resumen de saldos por documentar desde el snapshot SALDOS activo.
+    Filtra solo categoría 'vehiculo' y 'bono_comision' (excluye servicios/postventa).
+    """
+    pool = await get_pool()
+    marca_filter = "AND elem->>'marca' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    row = await pool.fetchrow(
+        f"""
+        SELECT
+            COUNT(CASE WHEN elem->>'categoria' = 'vehiculo' THEN 1 END)::int        AS total_vehiculo,
+            COUNT(CASE WHEN elem->>'categoria' = 'bono_comision' THEN 1 END)::int   AS total_bono,
+
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'categoria' = 'vehiculo'
+                     AND (elem->>'saldoXDocumentar') IS NOT NULL
+                     AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                THEN (elem->>'saldoXDocumentar')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                              AS saldo_vehiculo_mm,
+
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'categoria' = 'bono_comision'
+                     AND (elem->>'saldoXDocumentar') IS NOT NULL
+                     AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                THEN (elem->>'saldoXDocumentar')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                              AS saldo_bono_mm,
+
+            -- Saldos T3+ (statusDPS en tramos >30 días) — pesan en el score gerencial
+            COUNT(CASE WHEN elem->>'categoria' = 'vehiculo'
+                        AND elem->>'statusDPS' IN ('T3','T4','T5','T6','T7') THEN 1 END)::int  AS vehiculo_t3_count,
+
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'categoria' = 'vehiculo'
+                     AND elem->>'statusDPS' IN ('T3','T4','T5','T6','T7')
+                     AND (elem->>'saldoXDocumentar') IS NOT NULL
+                     AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                THEN (elem->>'saldoXDocumentar')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                              AS vehiculo_t3_mm,
+
+            -- Crédito Pompeyo >15d — pesa en el score gerencial
+            COUNT(CASE WHEN elem->>'subTipo' = 'credito_pompeyo'
+                        AND (elem->>'diasArchivo') IS NOT NULL
+                        AND (elem->>'diasArchivo') NOT IN ('null','')
+                        AND (elem->>'diasArchivo')::int > 15 THEN 1 END)::int        AS cp_vencido_count,
+
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'subTipo' = 'credito_pompeyo'
+                     AND (elem->>'diasArchivo') IS NOT NULL
+                     AND (elem->>'diasArchivo') NOT IN ('null','')
+                     AND (elem->>'diasArchivo')::int > 15
+                     AND (elem->>'saldoXDocumentar') IS NOT NULL
+                     AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                THEN (elem->>'saldoXDocumentar')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                              AS cp_vencido_mm
+
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'SALDOS' AND activo = true
+          AND elem->>'categoria' != 'servicio'
+          {marca_filter}
+        """,
+        *params,
+    )
+    return dict(row) if row else {}
+
+
+async def get_saldos_accionables(marcas: Optional[list[str]] = None) -> list[dict]:
+    """VINs con saldos accionables: CP >15d y T3+ de vehículo."""
+    pool = await get_pool()
+    marca_filter = "AND elem->>'marca' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            COALESCE(elem->>'vinResuelto', elem->>'cajon')  AS vin_o_cajon,
+            elem->>'marca'          AS marca,
+            elem->>'subTipo'        AS sub_tipo,
+            elem->>'statusDPS'      AS tramo,
+            CASE WHEN (elem->>'diasArchivo') IS NOT NULL AND (elem->>'diasArchivo') != 'null'
+                 THEN (elem->>'diasArchivo')::int ELSE 0 END AS dias,
+            CASE WHEN (elem->>'saldoXDocumentar') IS NOT NULL AND (elem->>'saldoXDocumentar') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'saldoXDocumentar')::numeric / 1000000, 2)::float ELSE 0 END AS saldo_mm,
+            elem->>'cliente'        AS cliente,
+            elem->>'categoria'      AS categoria
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'SALDOS' AND activo = true
+          AND elem->>'categoria' = 'vehiculo'
+          AND (
+            (elem->>'subTipo' = 'credito_pompeyo'
+             AND (elem->>'diasArchivo') IS NOT NULL AND (elem->>'diasArchivo') != 'null'
+             AND (elem->>'diasArchivo')::int > 15)
+            OR elem->>'statusDPS' IN ('T3','T4','T5','T6','T7')
+          )
+          {marca_filter}
+        ORDER BY dias DESC
+        LIMIT 50
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
+
+
+# ── PROVISIONES desde Snapshot ────────────────────────────────────────────────
+
+async def get_provisiones_resumen(marcas: Optional[list[str]] = None) -> dict:
+    """
+    Resumen de provisiones desde el snapshot PROVISIONES activo.
+    Solo área 'ventas' (postventa excluida del capital de trabajo de ventas).
+    """
+    pool = await get_pool()
+    # Las provisiones usan 'origen' como campo de marca (nombre del fabricante)
+    marca_filter = "AND elem->>'origen' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    row = await pool.fetchrow(
+        f"""
+        SELECT
+            COUNT(CASE WHEN elem->>'estado' = 'no_facturada' THEN 1 END)::int     AS abiertas,
+            COUNT(CASE WHEN elem->>'estado' = 'facturada' THEN 1 END)::int        AS facturadas,
+
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'estado' = 'no_facturada'
+                     AND (elem->>'saldo') IS NOT NULL AND (elem->>'saldo') NOT IN ('null','0','')
+                THEN (elem->>'saldo')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                            AS saldo_pendiente_mm,
+
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'estado' = 'no_facturada'
+                     AND (elem->>'montoProvision') IS NOT NULL AND (elem->>'montoProvision') NOT IN ('null','0','')
+                THEN (elem->>'montoProvision')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                            AS monto_provision_mm,
+
+            -- Provisiones >90d — pesan 40 pts en el score gerencial
+            COUNT(CASE WHEN elem->>'estado' = 'no_facturada'
+                        AND (elem->>'agingDias') IS NOT NULL AND (elem->>'agingDias') != 'null'
+                        AND (elem->>'agingDias')::int > 90 THEN 1 END)::int       AS criticas_90d_count,
+
+            ROUND(COALESCE(SUM(
+                CASE WHEN elem->>'estado' = 'no_facturada'
+                     AND (elem->>'agingDias') IS NOT NULL AND (elem->>'agingDias') != 'null'
+                     AND (elem->>'agingDias')::int > 90
+                     AND (elem->>'montoProvision') IS NOT NULL AND (elem->>'montoProvision') NOT IN ('null','0','')
+                THEN (elem->>'montoProvision')::numeric ELSE 0 END
+            ), 0) / 1000000, 1)::float                                            AS criticas_90d_mm
+
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'PROVISIONES' AND activo = true
+          AND elem->>'area' = 'ventas'
+          {marca_filter}
+        """,
+        *params,
+    )
+    return dict(row) if row else {}
+
+
+async def get_provisiones_accionables(marcas: Optional[list[str]] = None) -> list[dict]:
+    """Provisiones no facturadas >90d — las que impactan el score gerencial."""
+    pool = await get_pool()
+    marca_filter = "AND elem->>'origen' = ANY($1::text[])" if marcas else ""
+    params = [marcas] if marcas else []
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            elem->>'origen'         AS marca,
+            elem->>'concepto'       AS concepto,
+            elem->>'periodo'        AS periodo,
+            CASE WHEN (elem->>'agingDias') IS NOT NULL AND (elem->>'agingDias') != 'null'
+                 THEN (elem->>'agingDias')::int ELSE 0 END AS dias,
+            elem->>'agingBucket'    AS bucket,
+            CASE WHEN (elem->>'montoProvision') IS NOT NULL AND (elem->>'montoProvision') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'montoProvision')::numeric / 1000000, 2)::float ELSE 0 END AS monto_mm,
+            elem->>'estado'         AS estado,
+            elem->>'estadoAjuste'   AS estado_ajuste
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'PROVISIONES' AND activo = true
+          AND elem->>'area' = 'ventas'
+          AND elem->>'estado' = 'no_facturada'
+          AND (elem->>'agingDias') IS NOT NULL AND (elem->>'agingDias') != 'null'
+          AND (elem->>'agingDias')::int > 90
+          {marca_filter}
+        ORDER BY (elem->>'agingDias')::int DESC
+        LIMIT 50
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
+
+
+# ── Contexto temporal de un VIN ───────────────────────────────────────────────
+
+async def get_provisiones_detalle(marcas: Optional[list[str]] = None, solo_abiertas: bool = True) -> list[dict]:
+    """
+    Lista completa de provisiones con ID (claveGestion), marca, concepto, montos y aging.
+    solo_abiertas=True devuelve solo no_facturadas (universo activo).
+    """
+    pool = await get_pool()
+    marca_filter = "AND elem->>'origen' = ANY($1::text[])" if marcas else ""
+    estado_filter = "AND elem->>'estado' = 'no_facturada'" if solo_abiertas else ""
+    params = [marcas] if marcas else []
+
+    rows = await pool.fetch(
+        f"""
+        SELECT
+            elem->>'claveGestion'   AS id_provision,
+            elem->>'origen'         AS marca,
+            elem->>'concepto'       AS concepto,
+            elem->>'periodo'        AS periodo,
+            elem->>'solicitante'    AS solicitante,
+            elem->>'razonSocial'    AS razon_social,
+            elem->>'estado'         AS estado,
+            elem->>'estadoAjuste'   AS estado_ajuste,
+            elem->>'agingBucket'    AS aging_bucket,
+            CASE WHEN (elem->>'agingDias') IS NOT NULL AND (elem->>'agingDias') != 'null'
+                 THEN (elem->>'agingDias')::int ELSE 0 END AS dias,
+            CASE WHEN (elem->>'montoProvision') IS NOT NULL AND (elem->>'montoProvision') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'montoProvision')::numeric / 1000000, 3)::float ELSE 0 END AS monto_mm,
+            CASE WHEN (elem->>'saldo') IS NOT NULL AND (elem->>'saldo') NOT IN ('null','0','')
+                 THEN ROUND((elem->>'saldo')::numeric / 1000000, 3)::float ELSE 0 END AS saldo_mm
+        FROM "Snapshot",
+             jsonb_array_elements(payload->'registros') AS elem
+        WHERE fuente = 'PROVISIONES' AND activo = true
+          AND elem->>'area' = 'ventas'
+          {estado_filter}
+          {marca_filter}
+        ORDER BY (elem->>'agingDias')::int DESC NULLS LAST
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_contexto_temporal_vin(vin: str) -> dict:
+    """
+    Calcula cuántos snapshots BASE_STOCK han pasado desde el último cambio en el VIN
+    y extrae el último comentario de un usuario con rol gerencial.
+    No requiere campos nuevos en la DB — se calcula con datos existentes.
+    """
+    pool = await get_pool()
+
+    # Snapshots desde el último update
+    snapshots_count = await pool.fetchval(
+        """
+        SELECT COUNT(*)::int FROM "Snapshot"
+        WHERE fuente = 'BASE_STOCK'
+          AND "createdAt" > COALESCE(
+            (SELECT "updatedAt" FROM "GestionVIN" WHERE vin = $1),
+            NOW() - INTERVAL '1 year'
+          )
+        """,
+        vin,
+    )
+
+    # Último comentario de usuario gerencial (rol GERENTE, GERENTE_GENERAL o DIRECTOR)
+    ultimo_gerencia = await pool.fetchrow(
+        """
+        SELECT h."valorNuevo" AS texto, h.usuario, h."userEmail", h."createdAt",
+               u.rol
+        FROM "HistorialGestion" h
+        JOIN "GestionVIN" g ON h."gestionId" = g.id
+        LEFT JOIN "User" u ON u.email = h."userEmail"
+        WHERE g.vin = $1
+          AND h.campo IN ('comentario', 'comentario_agente')
+          AND u.rol IN ('GERENTE','GERENTE_GENERAL','DIRECTOR','ADMIN')
+        ORDER BY h."createdAt" DESC
+        LIMIT 1
+        """,
+        vin,
+    )
+
+    # Días desde creación del caso
+    caso_age = await pool.fetchrow(
+        """
+        SELECT "createdAt", "updatedAt",
+               EXTRACT(DAY FROM NOW() - "createdAt")::int AS dias_en_gestion
+        FROM "GestionVIN" WHERE vin = $1
+        """,
+        vin,
+    )
+
+    result: dict = {
+        "snapshots_sin_cambio": snapshots_count or 0,
+        "es_cronico": (snapshots_count or 0) >= 4,
+        "dias_en_gestion": caso_age["dias_en_gestion"] if caso_age else 0,
+        "ultimo_comentario_gerencia": None,
+    }
+
+    if ultimo_gerencia:
+        from datetime import datetime, timezone
+        hace_dias = (
+            datetime.now(timezone.utc)
+            - ultimo_gerencia["createdAt"].replace(tzinfo=timezone.utc)
+        ).days
+        result["ultimo_comentario_gerencia"] = {
+            "texto": ultimo_gerencia["texto"],
+            "usuario": ultimo_gerencia["usuario"],
+            "rol": ultimo_gerencia["rol"],
+            "hace_dias": hace_dias,
+        }
+
+    return result
 
 
 async def get_fne_count_snapshot(snapshot_id_fne: str, marcas: Optional[list[str]] = None) -> int:

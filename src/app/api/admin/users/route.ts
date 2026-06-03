@@ -11,15 +11,18 @@ import bcrypt from "bcryptjs";
 
 export const runtime = "nodejs";
 
-async function requireAdmin() {
+async function requireUserManager() {
   const session = await auth();
   if (!session) return { error: "No autorizado", status: 401 } as const;
-  if (session.user.rol !== "ADMIN") return { error: "Acceso denegado", status: 403 } as const;
+  const { rol } = session.user;
+  if (rol !== "ADMIN" && rol !== "GERENTE_GENERAL") {
+    return { error: "Acceso denegado", status: 403 } as const;
+  }
   return { session } as const;
 }
 
 export async function GET() {
-  const check = await requireAdmin();
+  const check = await requireUserManager();
   if ("error" in check) {
     return NextResponse.json({ error: check.error }, { status: check.status });
   }
@@ -43,7 +46,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const check = await requireAdmin();
+  const check = await requireUserManager();
   if ("error" in check) {
     return NextResponse.json({ error: check.error }, { status: check.status });
   }
@@ -82,6 +85,8 @@ export async function POST(req: NextRequest) {
       name: true,
       rol: true,
       activo: true,
+      telefono: true,
+      marcas: true,
       createdAt: true,
     },
   });

@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { fmtDate } from "@/lib/format";
 
-type Rol = "ADMIN" | "JEFE_STOCK" | "OPERACIONES" | "READONLY";
+type Rol = "ADMIN" | "DIRECTOR" | "GERENTE_GENERAL" | "GERENTE" | "JEFE_MARCA";
 
 interface UserRow {
   id: string;
@@ -24,23 +24,37 @@ interface UserRow {
 
 const ROL_LABEL: Record<Rol, string> = {
   ADMIN: "Admin",
-  JEFE_STOCK: "Jefe Stock",
-  OPERACIONES: "Operaciones",
-  READONLY: "Solo lectura",
+  DIRECTOR: "Director",
+  GERENTE_GENERAL: "Gerente General",
+  GERENTE: "Gerente",
+  JEFE_MARCA: "Jefe de Marca",
 };
 
 const ROL_COLOR: Record<Rol, string> = {
   ADMIN: "bg-red-100 text-red-700",
-  JEFE_STOCK: "bg-blue-100 text-[#3358e8]",
-  OPERACIONES: "bg-green-100 text-green-700",
-  READONLY: "bg-gray-100 text-gray-600",
+  DIRECTOR: "bg-violet-100 text-violet-700",
+  GERENTE_GENERAL: "bg-amber-100 text-amber-700",
+  GERENTE: "bg-blue-100 text-[#3358e8]",
+  JEFE_MARCA: "bg-emerald-100 text-emerald-700",
 };
+
+// Descripción corta para el selector de roles
+const ROL_OPTION: Record<Rol, string> = {
+  ADMIN: "Admin — sube datos, acceso total",
+  DIRECTOR: "Director — análisis genérico, ve todo",
+  GERENTE_GENERAL: "Gerente General — gestiona usuarios, ve todo",
+  GERENTE: "Gerente — KPIs de sus marcas asignadas",
+  JEFE_MARCA: "Jefe de Marca — operacional, sus marcas asignadas",
+};
+
+// Roles que ven todas las marcas sin filtro
+const ROLES_VEN_TODAS: Rol[] = ["ADMIN", "DIRECTOR", "GERENTE_GENERAL"];
 
 const MARCAS_GRUPO = [
   "KIA MOTORS", "MG", "GEELY", "PEUGEOT", "OPEL",
   "CITROEN", "DFSK", "NISSAN", "NISSAN FLOTAS",
   "SUBARU", "SUZUKI", "GREAT WALL", "DFM", "LEAPMOTOR",
-  "LANDKING", "NAMMI",
+  "LANDKING", "NAMMI", "USADOS",
 ];
 
 /* ─── Modal overlay ──────────────────────────────────────────────────────── */
@@ -66,7 +80,7 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
-  const [rol, setRol] = useState<Rol>("OPERACIONES");
+  const [rol, setRol] = useState<Rol>("JEFE_MARCA");
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +135,9 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
           <label className="mb-1 block text-[12px] font-medium text-[--color-fg-muted]">Rol</label>
           <select value={rol} onChange={(e) => setRol(e.target.value as Rol)}
             className="w-full rounded-md border border-[--color-border] bg-white px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#3358e8]/40">
-            {(Object.keys(ROL_LABEL) as Rol[]).map((r) => <option key={r} value={r}>{ROL_LABEL[r]}</option>)}
+            {(Object.keys(ROL_OPTION) as Rol[]).map((r) => (
+              <option key={r} value={r}>{ROL_OPTION[r]}</option>
+            ))}
           </select>
         </div>
         {error && <p className="rounded-md bg-red-50 px-3 py-2 text-[12px] text-red-600">{error}</p>}
@@ -198,11 +214,11 @@ function ResetPasswordModal({ user, onClose }: { user: UserRow; onClose: () => v
   );
 }
 
-/* ─── Modal: configurar agente WhatsApp ──────────────────────────────────── */
-function AgentModal({
+/* ─── Modal: configurar WhatsApp y marcas ────────────────────────────────── */
+function ConfigModal({
   user, onClose, onSaved,
 }: { user: UserRow; onClose: () => void; onSaved: (u: UserRow) => void }) {
-  const isAdmin = user.rol === "ADMIN";
+  const veTodas = ROLES_VEN_TODAS.includes(user.rol);
   const [telefono, setTelefono] = useState(user.telefono ?? "");
   const [marcas, setMarcas] = useState<string[]>(user.marcas ?? []);
   const [loading, setLoading] = useState(false);
@@ -223,7 +239,7 @@ function AgentModal({
         credentials: "include",
         body: JSON.stringify({
           telefono: telefono.trim() || null,
-          marcas: isAdmin ? [] : marcas,
+          marcas: veTodas ? [] : marcas,
         }),
       });
       const json = await res.json();
@@ -234,12 +250,20 @@ function AgentModal({
     finally { setLoading(false); }
   }
 
+  const marcasLabel = user.rol === "GERENTE"
+    ? "Marcas de responsabilidad"
+    : "Marcas asignadas";
+
+  const marcasHint = user.rol === "GERENTE"
+    ? "Marcas sobre las que este gerente es responsable de indicadores."
+    : "Marcas que este jefe de marca puede ver y gestionar.";
+
   return (
     <Modal onClose={onClose}>
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <MessageCircle className="size-4 text-green-600" strokeWidth={1.75} />
-          <h2 className="text-[15px] font-semibold text-[--color-fg]">Agente WhatsApp</h2>
+          <h2 className="text-[15px] font-semibold text-[--color-fg]">WhatsApp · Marcas</h2>
         </div>
         <button type="button" onClick={onClose} className="text-[--color-fg-dim] hover:text-[--color-fg]"><X className="size-4" /></button>
       </div>
@@ -266,33 +290,36 @@ function AgentModal({
 
         {/* Marcas */}
         <div>
-          <label className="mb-2 block text-[12px] font-medium text-[--color-fg-muted]">
-            Marcas que gestiona
+          <label className="mb-1 block text-[12px] font-medium text-[--color-fg-muted]">
+            {veTodas ? "Acceso a marcas" : marcasLabel}
           </label>
-          {isAdmin ? (
+          {veTodas ? (
             <div className="flex items-center gap-2 rounded-md border border-[--color-border] bg-[--color-bg-elev-1] px-3 py-2.5">
-              <ShieldCheck className="size-3.5 text-red-600" strokeWidth={2} />
+              <ShieldCheck className="size-3.5 shrink-0 text-violet-600" strokeWidth={2} />
               <span className="text-[12px] text-[--color-fg-muted]">
-                Perfil directivo — ve todas las marcas
+                Ve todas las marcas — sin restricción de acceso
               </span>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-1.5">
-              {MARCAS_GRUPO.map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => toggleMarca(m)}
-                  className={`rounded-md border px-2 py-1.5 text-left text-[11px] font-medium transition ${
-                    marcas.includes(m)
-                      ? "border-[#3358e8] bg-[#3358e8]/8 text-[#3358e8]"
-                      : "border-[--color-border] text-[--color-fg-muted] hover:border-[#3358e8]/40"
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-1.5">
+                {MARCAS_GRUPO.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => toggleMarca(m)}
+                    className={`rounded-md border px-2 py-1.5 text-left text-[11px] font-medium transition ${
+                      marcas.includes(m)
+                        ? "border-[#3358e8] bg-[#3358e8]/8 text-[#3358e8]"
+                        : "border-[--color-border] text-[--color-fg-muted] hover:border-[#3358e8]/40"
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-[--color-fg-dim]">{marcasHint}</p>
+            </>
           )}
         </div>
 
@@ -316,7 +343,7 @@ export default function UsuariosPage() {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [resetTarget, setResetTarget] = useState<UserRow | null>(null);
-  const [agentTarget, setAgentTarget] = useState<UserRow | null>(null);
+  const [configTarget, setConfigTarget] = useState<UserRow | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [changingRolId, setChangingRolId] = useState<string | null>(null);
 
@@ -361,11 +388,14 @@ export default function UsuariosPage() {
     return <div className="flex h-full items-center justify-center"><Loader2 className="size-5 animate-spin text-[--color-fg-dim]" /></div>;
   }
 
-  if (session?.user.rol !== "ADMIN") {
+  const userRol = session?.user.rol;
+  const canManage = userRol === "ADMIN" || userRol === "GERENTE_GENERAL";
+
+  if (!canManage) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-[--color-fg-muted]">
         <ShieldOff className="size-8 text-[--color-fg-dim]" />
-        <p className="text-[14px]">Acceso restringido a administradores.</p>
+        <p className="text-[14px]">Acceso restringido.</p>
       </div>
     );
   }
@@ -394,7 +424,7 @@ export default function UsuariosPage() {
         <table className="w-full border-collapse text-[13px]">
           <thead>
             <tr className="border-b border-[--color-border] bg-[--color-bg-elev-1]">
-              {["Usuario", "Rol", "Agente WhatsApp", "Estado", "Creado", "Acciones"].map((h) => (
+              {["Usuario", "Rol", "Marcas · WhatsApp", "Estado", "Creado", "Acciones"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.1em] text-[--color-fg-dim]">{h}</th>
               ))}
             </tr>
@@ -402,7 +432,7 @@ export default function UsuariosPage() {
           <tbody className="divide-y divide-[--color-border]">
             {users.map((user) => {
               const isSelf = user.id === session?.user.id;
-              const isAdmin = user.rol === "ADMIN";
+              const veTodas = ROLES_VEN_TODAS.includes(user.rol);
 
               return (
                 <tr key={user.id} className={`transition hover:bg-[--color-bg-elev-1] ${!user.activo ? "opacity-50" : ""}`}>
@@ -419,15 +449,20 @@ export default function UsuariosPage() {
                         {ROL_LABEL[user.rol]}
                       </span>
                     ) : (
-                      <select value={user.rol} disabled={changingRolId === user.id}
+                      <select
+                        value={user.rol}
+                        disabled={changingRolId === user.id}
                         onChange={(e) => changeRol(user, e.target.value as Rol)}
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#3358e8]/40 ${ROL_COLOR[user.rol]}`}>
-                        {(Object.keys(ROL_LABEL) as Rol[]).map((r) => <option key={r} value={r}>{ROL_LABEL[r]}</option>)}
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#3358e8]/40 ${ROL_COLOR[user.rol]}`}
+                      >
+                        {(Object.keys(ROL_LABEL) as Rol[]).map((r) => (
+                          <option key={r} value={r}>{ROL_LABEL[r]}</option>
+                        ))}
                       </select>
                     )}
                   </td>
 
-                  {/* Agente WhatsApp */}
+                  {/* Marcas · WhatsApp */}
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
                       {user.telefono ? (
@@ -438,8 +473,8 @@ export default function UsuariosPage() {
                       ) : (
                         <span className="text-[12px] text-[--color-fg-dim]">Sin número</span>
                       )}
-                      {isAdmin ? (
-                        <span className="inline-block rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-600">
+                      {veTodas ? (
+                        <span className={`inline-block self-start rounded-full px-2 py-0.5 text-[10px] font-medium ${ROL_COLOR[user.rol]}`}>
                           Todas las marcas
                         </span>
                       ) : user.marcas.length > 0 ? (
@@ -451,7 +486,7 @@ export default function UsuariosPage() {
                           ))}
                         </div>
                       ) : (
-                        <span className="text-[11px] text-[--color-fg-dim]">Sin marcas</span>
+                        <span className="text-[11px] text-[--color-fg-dim]">Sin marcas asignadas</span>
                       )}
                     </div>
                   </td>
@@ -476,11 +511,11 @@ export default function UsuariosPage() {
                   {/* Acciones */}
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1.5">
-                      <button type="button" onClick={() => setAgentTarget(user)}
+                      <button type="button" onClick={() => setConfigTarget(user)}
                         className="inline-flex items-center gap-1 rounded-md border border-[--color-border] px-2.5 py-1.5 text-[12px] text-[--color-fg-muted] hover:bg-[--color-bg-elev-2] hover:text-green-700 transition"
-                        title="Configurar agente WhatsApp">
+                        title="Configurar WhatsApp y marcas">
                         <MessageCircle className="size-3.5" strokeWidth={1.75} />
-                        Agente
+                        Configurar
                       </button>
                       <button type="button" onClick={() => setResetTarget(user)}
                         className="inline-flex items-center gap-1 rounded-md border border-[--color-border] px-2.5 py-1.5 text-[12px] text-[--color-fg-muted] hover:bg-[--color-bg-elev-2] hover:text-[--color-fg] transition"
@@ -506,10 +541,10 @@ export default function UsuariosPage() {
         <CreateUserModal onClose={() => setShowCreate(false)} onCreated={(u) => setUsers((prev) => [...prev, u])} />
       )}
       {resetTarget && <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />}
-      {agentTarget && (
-        <AgentModal
-          user={agentTarget}
-          onClose={() => setAgentTarget(null)}
+      {configTarget && (
+        <ConfigModal
+          user={configTarget}
+          onClose={() => setConfigTarget(null)}
           onSaved={(u) => setUsers((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
         />
       )}
