@@ -198,13 +198,11 @@ export function Sidebar() {
   const isAdmin = rol === "ADMIN";
   const isDirector = rol === "DIRECTOR";
   const isGerenteGeneral = rol === "GERENTE_GENERAL";
-  const isJefeMarca = rol === "JEFE_MARCA";
 
   const canManageUsers = isAdmin || isGerenteGeneral;
 
-  // JEFE_MARCA es puramente operacional; no necesita la vista ejecutiva
-  const showEjecutivo = !isJefeMarca;
   // DIRECTOR solo analiza, no opera
+  const showEjecutivo = true;
   const showOperaciones = !isDirector;
 
   // Sección inferior: Técnico completo para ADMIN y GERENTE_GENERAL
