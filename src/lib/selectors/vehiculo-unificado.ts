@@ -99,6 +99,13 @@ export interface VehiculoUnificado {
   esTescarOperacional: boolean;
   diasTescar: number | null;        // proxy: diasStock si esTescar
   esStockPagadoViejo: boolean;      // tipoStock=Propio + diasStock>180
+  /** Caja propia ya absorbida: cualquier auto que Pompeyo terminó de pagar,
+   *  independiente del tipoStock histórico (puede haber entrado como
+   *  Financiado/FloorPlan/VuPorRecibir y ahora estar pagado). Se usa SOLO
+   *  para el universo "Capital Propio Comprometido" del Centro de Acción.
+   *  Score Gerencial sigue usando tipoStock Propio/FinPropio (la meta del 5%
+   *  no cambia). Decisión usuario 2026-06. */
+  esPagado: boolean;
   esVPP: boolean;
   diasVPP: number | null;
 
@@ -214,6 +221,7 @@ export function buildVehiculosUnificados(
         esTescarOperacional: false,
         diasTescar: null,
         esStockPagadoViejo: false,
+        esPagado: false,
         esVPP: false,
         diasVPP: null,
         capitalComprometido: 0,
@@ -245,6 +253,7 @@ export function buildVehiculosUnificados(
       vu.esStockB = vu.esStockB || predicadoEsStockB(v);
       vu.esTescar = vu.esTescar || v.esTescar;
       vu.esTescarOperacional = vu.esTescarOperacional || v.esTescarOperacional;
+      vu.esPagado = vu.esPagado || v.esPagado === true;
       vu.esVPP = vu.esVPP || v.esVPPComprometido;
       if (vu.esVPP && vu.diasVPP === null) vu.diasVPP = v.diasStock;
       if (vu.esTescar && vu.diasTescar === null) vu.diasTescar = v.diasStock;

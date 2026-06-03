@@ -21,6 +21,7 @@ import {
   TrendingDown,
   Truck,
   Users,
+  Wallet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody } from "@/components/ui/Card";
@@ -28,7 +29,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ScoreChip } from "@/components/ScoreBadge";
 import { SeguimientoBadge } from "@/components/SeguimientoBadge";
 import { normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
-import { useDatosFiltrados } from "@/lib/marca-filtro";
+import { useDatosFiltrados, useMarcaFilter } from "@/lib/marca-filtro";
 import { useGestionStore } from "@/lib/gestion/store";
 import { type GestionVIN } from "@/lib/gestion/types";
 import {
@@ -46,6 +47,10 @@ import { useExcelStore } from "@/lib/store";
 import { GestionInline } from "@/components/GestionInline";
 import { UploadLogisticaButton } from "@/components/UploadLogisticaButton";
 import { FichaOperacionalVIN } from "@/components/FichaOperacionalVIN";
+import {
+  CapitalPropioComprometidoBlock,
+  esCapitalPropioComprometido,
+} from "@/components/centro-accion/CapitalPropioComprometidoBlock";
 import {
   BLOQUEO_LOGISTICO_LABEL,
   BLOQUEO_OWNER,
@@ -79,6 +84,7 @@ type TabId =
   | "tescar"
   | "linea"
   | "logistica"
+  | "capital_propio"
   | "por_marca";
 
 type CmdTone = "danger" | "warning" | "info" | "muted";
@@ -215,6 +221,17 @@ const COMMANDS: TabDef[] = [
     monto: (vu) => vu.capitalComprometido,
   },
   {
+    id: "capital_propio",
+    label: "Capital Propio Comprometido",
+    desc: "Todos los VINs cuya caja propia está inmovilizada (Propio / FinPropio / Pagado).",
+    icon: <Wallet className="size-4" />,
+    tone: "info",
+    filter: (vu) => esCapitalPropioComprometido(vu),
+    // Capital desc → días stock desc (decisión usuario 2026-06).
+    sortKey: (vu) => vu.capitalComprometido * 1e6 + (vu.diasStock ?? 0),
+    monto: (vu) => vu.capitalComprometido,
+  },
+  {
     id: "por_marca",
     label: "Por marca",
     desc: "Agregado por marca · dónde se concentra la máxima alerta.",
@@ -294,6 +311,7 @@ function CentroAccionInner() {
   const provNoFactRef = useRef<HTMLDivElement>(null);
   const [vinExpanded, setVinExpanded] = useState<string | null>(null);
   const gestionMap = useGestionStore((s) => s.byVin);
+  const marcaActiva = useMarcaFilter((s) => s.marca);
 
   // Construcción del universo unificado + scoring
   const universo = useMemo(
@@ -1147,6 +1165,14 @@ function CentroAccionInner() {
           onSelect={selBloqueoLog}
         />
       )}
+
+      {/* Capital Propio Comprometido — lectura ejecutiva de caja inmovilizada.
+          Va ANTES de los comandos: KPI conceptual primero, palancas operativas después. */}
+      <CapitalPropioComprometidoBlock
+        vus={activos}
+        marca={marcaActiva}
+        onVerVins={() => selCmd("capital_propio")}
+      />
 
       {/* Comandos operacionales */}
       <div>
