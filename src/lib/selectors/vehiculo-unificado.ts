@@ -28,6 +28,7 @@ import type {
 import { limpiarVIN } from "../parser/venta-apc";
 import { limpiarCajon, pareceePatente } from "../parser/saldos";
 import { cruzarFNEConStock } from "./fne-real";
+import { esStockB as predicadoEsStockB } from "./segmentos-caja";
 import { cruzarSaldosConStock } from "./saldos";
 import { razonesBloqueoFNE, type Bloqueo } from "./razones-bloqueo";
 import { calcularCreditoPompeyoPorVIN } from "./credito-pompeyo";
@@ -89,6 +90,11 @@ export interface VehiculoUnificado {
 
   // Señales de riesgo / naturaleza
   esJudicial: boolean;
+  /** Stock B (segunda categoría / reacondicionamiento) — bandera consolidada
+   *  desde Vehiculo raw vía helper `esStockB` de selectors/segmentos-caja.
+   *  Decisión usuario 2026-06: se excluye del cálculo de Stock propio del
+   *  Score Gerencial para Usados (Stock B + Judicial no son meta gerencial). */
+  esStockB: boolean;
   esTescar: boolean;
   esTescarOperacional: boolean;
   diasTescar: number | null;        // proxy: diasStock si esTescar
@@ -203,6 +209,7 @@ export function buildVehiculosUnificados(
         creditoPompeyo: 0,
         saldosDetalle: [],
         esJudicial: false,
+        esStockB: false,
         esTescar: false,
         esTescarOperacional: false,
         diasTescar: null,
@@ -235,6 +242,7 @@ export function buildVehiculosUnificados(
       vu.costoNeto = vu.costoNeto || v.costoNeto;
       vu.diasStock = vu.diasStock ?? v.diasStock;
       vu.esJudicial = vu.esJudicial || v.esJudicial;
+      vu.esStockB = vu.esStockB || predicadoEsStockB(v);
       vu.esTescar = vu.esTescar || v.esTescar;
       vu.esTescarOperacional = vu.esTescarOperacional || v.esTescarOperacional;
       vu.esVPP = vu.esVPP || v.esVPPComprometido;

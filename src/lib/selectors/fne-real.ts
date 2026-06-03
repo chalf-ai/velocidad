@@ -129,6 +129,77 @@ export function filtrarFNEOperativo(registros: AutoNoEntregado[]): AutoNoEntrega
   return registros.filter((r) => !r.entregado);
 }
 
+/**
+ * Alinea el flag `entregado` del archivo FNE con la verdad operacional de
+ * ROMA-Actas (decisión usuario 2026-06).
+ *
+ * Problema operacional: el archivo `Autos no entregados.xlsx` marca
+ * `entrega_auto_txt = "Cargado"` cuando el equipo administrativo (APC)
+ * carga la patente al sistema. ROMA-Actas marca `entregado = true` cuando
+ * el vendedor confirma el acta firmada por el cliente. Son dos eventos
+ * del mismo flujo, pero ROMA es más estricto: hasta que el cliente firme,
+ * el auto NO está entregado.
+ *
+ * Regla cruzada:
+ *   · Si ROMA tiene una entrada para el VIN y `cruceRoma.entregado === false`
+ *     → forzar `entregado=false` aunque el archivo diga "Cargado".
+ *   · Si ROMA tiene entrada y dice entregado, mantener flag del archivo
+ *     (el archivo también lo marca como entregado típicamente — agree).
+ *   · Si el VIN NO está en ROMA, respetar el archivo (caso usados sin ROMA,
+ *     o VINs que no llegaron al cruce — son minoritarios).
+ *
+ * Función pura. Cero side effects. El resultado conserva todos los demás
+ * campos intactos; solo recalcula `entregado` / `fechaEntregaReal` /
+ * `fuenteEntrega` cuando aplica el override.
+ */
+export interface CruceRomaMin {
+  vin: string;
+  entregado: boolean;
+  fEntregaReal: Date | null;
+}
+
+export function alinearFNEConROMA(
+  registros: AutoNoEntregado[],
+  cruceRoma: ReadonlyArray<CruceRomaMin>,
+): AutoNoEntregado[] {
+  // Index por VIN limpio para lookup O(1).
+  const byVin = new Map<string, CruceRomaMin>();
+  for (const c of cruceRoma) {
+    const k = limpiarVIN(c.vin);
+    if (k) byVin.set(k, c);
+  }
+
+  return registros.map((r) => {
+    const k = limpiarVIN(r.vin);
+    if (!k) return r;
+    const roma = byVin.get(k);
+    if (!roma) return r; // sin entrada en ROMA → respetar archivo
+
+    // Override: ROMA dice NO entregado → forzar a no entregado.
+    if (!roma.entregado && r.entregado) {
+      return {
+        ...r,
+        entregado: false,
+        fechaEntregaReal: null,
+        fuenteEntrega: "ninguna" as const,
+      };
+    }
+
+    // ROMA dice entregado + archivo dice no entregado → tirar de ROMA
+    // (caso raro, defensivo: si ROMA tiene fEntregaReal poblada, usarla).
+    if (roma.entregado && !r.entregado && roma.fEntregaReal) {
+      return {
+        ...r,
+        entregado: true,
+        fechaEntregaReal: roma.fEntregaReal,
+        fuenteEntrega: "entrega_auto_txt" as const,
+      };
+    }
+
+    return r;
+  });
+}
+
 /** Subconjunto histórico de entregados — fuera del pipeline operacional.
  *  Reservado para módulos futuros de tiempos / throughput / comparativas. */
 export function filtrarFNEHistorico(registros: AutoNoEntregado[]): AutoNoEntregado[] {

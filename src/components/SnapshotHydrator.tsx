@@ -125,32 +125,38 @@ export function SnapshotHydrator() {
     }
 
     // FNE
-    // Snapshots viejos no tienen el flag `entregado` (se introdujo con el split
-    // histórico/operativo). Normalizamos: si viene undefined ⇒ false. Idempotente:
-    // snapshots nuevos vienen con el flag explícito y no se tocan.
+    // Snapshots viejos pueden traer `entregado` calculado con reglas anteriores
+    // (red de seguridad por `fechaPatenteEntregada`, etc). Decisión usuario
+    // 2026-06: recalcular SIEMPRE desde la regla canónica actual al hidratar,
+    // ignorando el flag persistido del snapshot. Esto evita que un snapshot
+    // cargado bajo la regla vieja "envenene" la app después de cambiar la
+    // regla, sin tener que re-subir el archivo.
+    //
+    // Regla canónica vigente: entregado = (entrega_auto_txt.trim() === "Cargado").
     if (!store.fne) {
       void hidratarSeguro<ParsedFNE>("FNE", (snap) => {
         const revived = reviveDates(snap.payload);
-        // Si vino un snapshot viejo SIN flag entregado, lo derivamos en runtime
-        // aplicando la regla canónica actual: entrega_auto_txt === "Cargado".
-        // Idempotente cuando el snapshot ya trae el flag explícito.
         const registros = (revived.registros ?? []).map((r) => {
           const entregaTxtNorm = (r.entregaAutoTxt ?? "").trim();
-          const derivado = r.entregado === true || entregaTxtNorm === "Cargado";
+          const derivado = entregaTxtNorm === "Cargado";
           return {
             ...r,
             entregado: derivado,
-            fechaEntregaReal: r.fechaEntregaReal ?? (derivado ? r.fechaPatenteEntregada ?? null : null),
+            fechaEntregaReal: derivado
+              ? (r.fechaEntregaReal ?? r.fechaPatenteEntregada ?? null)
+              : null,
             estadoEntregaOriginal: r.estadoEntregaOriginal ?? r.entregaAutoTxt ?? null,
-            fuenteEntrega: r.fuenteEntrega ?? (derivado ? "entrega_auto_txt" : "ninguna"),
+            fuenteEntrega: (derivado ? "entrega_auto_txt" : "ninguna") as
+              "entrega_auto_txt" | "fecha_patente_entregada" | "ninguna",
           };
         });
+        // Recalcular counts SIEMPRE en función del flag recién derivado.
+        // Los counts del snapshot pueden estar desactualizados respecto a la
+        // regla canónica actual y producirían cuadratura inconsistente.
         const reportNormalizado = {
           ...revived.report,
-          entregadosCount:
-            revived.report?.entregadosCount ?? registros.filter((r) => r.entregado).length,
-          noEntregadosCount:
-            revived.report?.noEntregadosCount ?? registros.filter((r) => !r.entregado).length,
+          entregadosCount: registros.filter((r) => r.entregado).length,
+          noEntregadosCount: registros.filter((r) => !r.entregado).length,
         };
         const parsed = { ...revived, registros, report: reportNormalizado };
         useExcelStore.getState().setFNE(parsed);

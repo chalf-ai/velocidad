@@ -67,6 +67,7 @@ const NAV_EXEC: NavItem[] = [
   { href: "/capital-pagado", label: "Recuperación de Caja", icon: Coins },
   { href: "/saldos", label: "Saldos", icon: Receipt },
   { href: "/provisiones", label: "Provisiones", icon: ClipboardList },
+  { href: "/facturados-no-entregados", label: "Facturados no entregados", icon: Truck },
   { href: "/capital-trabajo", label: "Capital de trabajo", icon: Banknote },
 ];
 
@@ -96,8 +97,9 @@ const NAV_OPERACIONES: NavItem[] = [
 
 // "Tesorería" — antes era "Operacional". La ruta /velocidad-operacional queda
 // fuera del menú (sigue viva por URL directa para auditoría comparativa).
+// FNE pasó a Ejecutivo (decisión usuario 2026-06): el equipo lo consume como
+// métrica ejecutiva del flujo de entrega, no como bloque de tesorería.
 const NAV_TESORERIA: NavItem[] = [
-  { href: "/facturados-no-entregados", label: "Facturados no entregados", icon: Truck },
   { href: "/vu-en-fne", label: "Usados pendientes de recuperación", icon: Link2 },
   {
     href: "/stock?naturaleza=puente",

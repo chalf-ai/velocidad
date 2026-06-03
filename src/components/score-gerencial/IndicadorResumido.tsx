@@ -102,6 +102,14 @@ export function IndicadorResumido({
               {indicador.detalle}
             </div>
           )}
+          {indicador.nota && (
+            <div
+              className="text-[9.5px] text-[--color-fg-muted] italic mt-1 leading-snug"
+              title={indicador.nota}
+            >
+              {indicador.nota}
+            </div>
+          )}
         </div>
 
         {/* Lado derecho · gauge donut */}
