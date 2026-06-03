@@ -283,24 +283,79 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
       }
 
       case "actas": {
-        // Fuente nueva del módulo histórico. La parsea y carga el dispatcher
-        // histórico (parseActasBuffer + consolidador) y luego registramos meta
-        // para que `/ingesta` muestre la tarjeta como cargada.
+        // Doble dispatch (decisión usuario 2026-06):
+        //   1) Histórico — alimenta `useHistoricoStore` vía dispatcher histórico.
+        //   2) FNE operacional — el archivo "Actas al X.xlsx" contiene el
+        //      universo completo (entregados + no entregados); parseFNEFile
+        //      reusa la misma hoja (Vin / entrega_auto_txt / FechaFactura) y
+        //      llena el universo FNE que consumen Centro de Acción, FNE,
+        //      Score Gerencial, etc.
+        // Si el parse FNE falla, NO se interrumpe la carga histórica:
+        // se reporta como advertencia clara.
+
+        // ── 1) Histórico ────────────────────────────────────────────────
         const reemplazoActas = useHistoricoStore.getState().cargaActas != null;
         await procesarArchivosHistorico([file]);
         const hs = useHistoricoStore.getState();
         const carga = hs.cargaActas;
-        const corteFecha = hs.historicoActas?.cortes.at(-1)?.corteFecha ?? null;
+        const corteFechaActas = hs.historicoActas?.cortes.at(-1)?.corteFecha ?? null;
         const advActas: string[] = [];
         if (!carga) {
           advActas.push("El dispatcher histórico no pudo procesar el archivo.");
         }
+
+        // ── 2) FNE operacional ──────────────────────────────────────────
+        const reemplazoFne = excel.fne != null;
+        let fneOk = false;
+        try {
+          const parsedFne = await parseFNEFile(file);
+          excel.setFNE(parsedFne);
+          const fneCorte = maxDate(parsedFne.registros.map((r) => r.fechaFactura));
+          const fneVins = contarVins(parsedFne.registros.map((r) => r.vin));
+          const fneRegistros = parsedFne.report.filasProcesadas;
+          const advFne: string[] = [];
+          if (parsedFne.report.filasOmitidas)
+            advFne.push(`${parsedFne.report.filasOmitidas} filas sin VIN`);
+          if (parsedFne.report.vinsDuplicados.length)
+            advFne.push(`${parsedFne.report.vinsDuplicados.length} VIN duplicados`);
+          const persistenciaFne = await persistirSnapshot({
+            file,
+            fuente: "FNE",
+            payload: parsedFne,
+            registros: fneRegistros,
+            fechaCorte: fneCorte,
+          });
+          if (persistenciaFne) advFne.push(persistenciaFne);
+          aplicarMeta({
+            fuenteId: "fne",
+            archivoNombre: file.name,
+            archivoSize: file.size,
+            fechaCarga: new Date(),
+            fechaCorte: fneCorte,
+            registros: fneRegistros,
+            vins: fneVins,
+            advertencias: advFne,
+          });
+          fneOk = true;
+        } catch (e) {
+          const detalle = e instanceof Error ? e.message : String(e);
+          console.error("[ingesta:actas] FNE parse falló:", detalle);
+          advActas.push(
+            `Actas cargadas para histórico, pero no se pudo actualizar FNE operacional: ${detalle}`,
+          );
+        }
+
+        if (fneOk) {
+          advActas.push("También se actualizó FNE operacional desde este archivo.");
+        }
+
+        // ── 3) Meta de la tarjeta "actas" ───────────────────────────────
         aplicarMeta({
           fuenteId: "actas",
           archivoNombre: file.name,
           archivoSize: file.size,
           fechaCarga: new Date(),
-          fechaCorte: corteFecha,
+          fechaCorte: corteFechaActas,
           registros: carga?.filas ?? 0,
           vins: carga?.filas ?? null,
           advertencias: advActas,
@@ -309,10 +364,10 @@ export async function procesarArchivo(file: File): Promise<IngestaResultado> {
           ...base,
           fuenteId: "actas",
           ok: !!carga,
-          reemplazo: reemplazoActas,
+          reemplazo: reemplazoActas || reemplazoFne,
           registros: carga?.filas ?? 0,
           vins: carga?.filas ?? null,
-          fechaCorte: corteFecha,
+          fechaCorte: corteFechaActas,
           advertencias: advActas,
         };
       }
