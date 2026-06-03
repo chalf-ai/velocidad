@@ -37,6 +37,7 @@ import {
 } from "recharts";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Landing } from "@/components/Landing";
+import { VentaPonderadaBlock } from "@/components/VentaPonderadaBlock";
 import { useDatosFiltrados, useMarcaFilter } from "@/lib/marca-filtro";
 import { fmtCLP, fmtCLPCompact, fmtDate, fmtNum, fmtPct } from "@/lib/format";
 import {
@@ -56,7 +57,7 @@ import {
   vehiculosCapitalDeMarca,
 } from "@/lib/selectors/owner-operacional";
 import { esStockB } from "@/lib/selectors/segmentos-caja";
-import { ventaMensualPromedio, ventaQ1De } from "@/lib/ventas-q1";
+import { ventaMensualPromedio } from "@/lib/ventas-q1";
 import {
   calcularEficienciaCapital,
   MOS_IDEAL,
@@ -252,8 +253,9 @@ function DashboardInner() {
 
   // ── EFICIENCIA DE CAPITAL (ventas Q1 mensualizadas) ──
   // Respeta el filtro global: KIA usa ventas KIA, Todas usa total Pompeyo.
-  // Ventas Q1 / 3 = venta mensual promedio, comparable contra el capital (foto
-  // mensual actual). MOS = capital / venta mensual; % = MOS·100; score 0-100.
+  // Venta MENSUAL PONDERADA (N-1 50% · N-2 30% · N-3 20%) — base de eficiencia.
+  // Comparable contra el capital (foto mensual actual). MOS = capital / venta
+  // mensual; % = MOS·100; score 0-100. Ver `ventas-q1.ts` para la ventana actual.
   const eficiencia = useMemo<EficienciaCapital>(() => {
     const venta = ventaMensualPromedio(marcaActiva);
     const total = ct.total || 0;
@@ -442,6 +444,14 @@ function DashboardInner() {
           <CapitalTrabajoCard ct={ct} efic={eficiencia} marca={marcaActiva} />
         </div>
       </div>
+
+      {/* Venta ponderada · base contextual de eficiencia (50/30/20) */}
+      <VentaPonderadaBlock
+        marca={marcaActiva}
+        stockPropioMonto={ct.mStock}
+        capitalUtilizadoMonto={ct.total}
+        withBottomMargin={false}
+      />
 
       {/* ════════════════════════════════════════════════════════════ */}
       {/* BLOQUE A · Origen del capital · partición disjunta · CUADRA  */}
@@ -1182,7 +1192,7 @@ function CapitalTrabajoCard({
     { label: "Bonos/comis.", monto: ct.mBonos, unidades: ct.bonosReg.length },
     { label: "Provisiones", monto: ct.mProv, unidades: ct.provReg.length },
   ];
-  const q1 = ventaQ1De(marca);
+  const ventaPond = ventaMensualPromedio(marca);
   const r = (n: number) => Math.round(n);
   // Colores dinámicos como valores CSS (inline style) — los arbitrary classes
   // de Tailwind no se generan de forma fiable cuando vienen de variables.
@@ -1402,18 +1412,18 @@ function CapitalTrabajoCard({
         ))}
       </div>
 
-      {/* Footer: Q1 real (plata + unidades), base de la mensualización */}
+      {/* Footer: venta mensual ponderada (N-1 50% · N-2 30% · N-3 20%), base del MOS y Capital/Venta */}
       <div className="text-[8.5px] text-[--color-fg-dim] mt-2 leading-snug">
-        {q1 ? (
+        {ventaPond ? (
           <>
-            Q1 real:{" "}
+            Venta ponderada:{" "}
             <span className="text-[--color-fg-muted] font-medium">
-              {fmtCLPCompact(q1.montoQ1)} · {fmtNum(q1.unidadesQ1)} u
+              {fmtCLPCompact(ventaPond.monto)} · {fmtNum(Math.round(ventaPond.unidades))} u
             </span>{" "}
-            (÷3 = venta mensual prom).{" "}
+            (N-1 50% · N-2 30% · N-3 20%).{" "}
           </>
         ) : (
-          <>Sin ventas Q1 para esta marca. </>
+          <>Sin ventas en la ventana ponderada para esta marca. </>
         )}
         {marca && normalizarMarcaOperacional(marca) === MARCA_USADOS
           ? "* Capital puente = BU propio recibido por usados. El VU en ventas de autos nuevos se atribuye a su marca originadora (no suma acá)."

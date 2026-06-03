@@ -29,6 +29,7 @@ import { IndicadorResumido } from "@/components/score-gerencial/IndicadorResumid
 import { PlanLlegarA100Banner } from "@/components/score-gerencial/PlanLlegarA100Banner";
 import { IndicadorCard } from "@/components/score-gerencial/IndicadorCard";
 import { ColaIndicador } from "@/components/score-gerencial/ColaIndicador";
+import { VentaPonderadaBlock } from "@/components/VentaPonderadaBlock";
 
 import {
   calcularScoreGerencial,
@@ -107,6 +108,18 @@ export default function ScoreGerencialPage() {
 
       {/* 1 · Hero ejecutivo (banner gradiente) */}
       <HeroScore resultado={resultado} />
+
+      {/* 1.5 · Venta ponderada · base contextual de eficiencia (50/30/20) */}
+      <VentaPonderadaBlock
+        marca={marcaGlobal}
+        stockPropioMonto={capitalGestionado.stockPropio}
+        capitalUtilizadoMonto={
+          capitalGestionado.stockPropio +
+          capitalGestionado.saldos +
+          capitalGestionado.provisiones
+        }
+        withBottomMargin={false}
+      />
 
       {/* 2 · Indicadores resumidos · 4 cards compactas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

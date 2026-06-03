@@ -315,9 +315,9 @@ function UsadosInner({
               ))}
             </div>
             <div className="text-[8.5px] text-[--color-fg-dim] mt-2 leading-snug">
-              MOS = stock comercializable ÷ venta mensual (u) · ideal ≤{MOS_IDEAL} · crítico &gt;{MOS_CRITICO}. Q1 usados:{" "}
-              {dash.ventaQ1Monto != null ? fmtCLPCompact(dash.ventaQ1Monto) : "—"} ·{" "}
-              {dash.ventaQ1Unidades ?? "—"} u (÷3 = venta mensual).
+              MOS = stock comercializable ÷ venta mensual (u) · ideal ≤{MOS_IDEAL} · crítico &gt;{MOS_CRITICO}. Venta ponderada usados:{" "}
+              {dash.ventaMensualMonto != null ? fmtCLPCompact(dash.ventaMensualMonto) : "—"} ·{" "}
+              {dash.ventaMensualUnidades != null ? Math.round(dash.ventaMensualUnidades) : "—"} u (N-1 50% · N-2 30% · N-3 20%).
             </div>
           </div>
         </div>
