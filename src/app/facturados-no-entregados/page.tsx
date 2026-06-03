@@ -43,9 +43,11 @@ import {
   ESTADO_ENTREGA_TONE,
   ETAPA_LABEL,
   ORDEN_ESTADO,
+  alinearFNEConROMA,
   cruzarFNEConStock,
   statsFNEReal,
 } from "@/lib/selectors/fne-real";
+import { useHistoricoStore } from "@/lib/historico/store-cliente";
 
 /** Filtros que se pueden aplicar al panel inline al drillear desde una card.
  *  Los tramos son MUTUAMENTE EXCLUYENTES (cada operación cae en uno solo). */
@@ -136,7 +138,28 @@ export default function FNEPage() {
 
 function FNEInner() {
   const { data, fne, saldos } = useDatosFiltrados();
-  const parsedFNE = fne!;
+  const cruceRoma = useHistoricoStore((s) => s.cruce);
+  const parsedFNEBase = fne!;
+
+  // Alinear flag `entregado` del archivo con ROMA-Actas (verdad operacional).
+  // Si ROMA dice "no entregado" para un VIN, override aunque archivo diga
+  // "Cargado". El archivo manda solo cuando ROMA no tiene la entrada.
+  const parsedFNE = useMemo(() => {
+    if (!cruceRoma || cruceRoma.filas.length === 0) return parsedFNEBase;
+    const registrosAlineados = alinearFNEConROMA(
+      parsedFNEBase.registros,
+      cruceRoma.filas,
+    );
+    return {
+      ...parsedFNEBase,
+      registros: registrosAlineados,
+      report: {
+        ...parsedFNEBase.report,
+        entregadosCount: registrosAlineados.filter((r) => r.entregado).length,
+        noEntregadosCount: registrosAlineados.filter((r) => !r.entregado).length,
+      },
+    };
+  }, [parsedFNEBase, cruceRoma]);
 
   const cruzados = useMemo(
     () =>

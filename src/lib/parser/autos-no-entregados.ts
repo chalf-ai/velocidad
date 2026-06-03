@@ -73,8 +73,7 @@ function toEtapa(v: unknown): EtapaFNE {
 /**
  * Detecta si la fila representa un auto YA entregado al cliente.
  *
- * Regla canónica oficial (decidida con Operaciones tras revisar "Actas al
- * 28 de Mayo.xlsx" donde la columna `entrega_auto_txt` está 100% poblada):
+ * Regla canónica oficial (V2 · alineada con ROMA · decisión usuario 2026-06):
  *
  *   entregado = (entrega_auto_txt.trim() === "Cargado")
  *
@@ -83,12 +82,18 @@ function toEtapa(v: unknown): EtapaFNE {
  * "No Cargado", vacíos, nulos o variantes) deja el registro en el universo
  * FNE operativo.
  *
- * Red de seguridad: si por alguna razón `entrega_auto_txt` no marca entrega
- * pero `fecha_patente_entregada` sí tiene fecha física de entrega, también
- * lo marcamos entregado (fuente=fecha_patente_entregada). Esto cubre archivos
- * mal poblados sin alterar el comportamiento principal.
+ * HISTORIAL · removida la red de seguridad por `fecha_patente_entregada`.
+ * Esa regla marcaba como "entregado" cualquier auto con patente entregada
+ * físicamente, aunque el acta NO estuviera firmada. ROMA considera "no
+ * entregado" hasta que el acta esté cargada, así que la red de seguridad
+ * inflaba el flag y subreportaba el universo FNE (KIA: ROMA 259 vs sistema
+ * 174). Ahora la única señal de entrega es `entrega_auto_txt === "Cargado"`.
  *
- * Devuelve los 4 campos derivados que viven en cada `AutoNoEntregado`.
+ * Si el archivo viene con `entrega_auto_txt` mal poblada (toda en null o
+ * variantes raras), el sistema mostrará todo como FNE — eso es preferible
+ * a mostrar de menos: una sub-cuenta inflada (falsos no-entregados) es
+ * recuperable con vista; una sub-cuenta cortada (falsos entregados) hace
+ * desaparecer plata del radar.
  */
 function detectarEntregado(
   entregaAutoTxt: string | null,
@@ -106,17 +111,6 @@ function detectarEntregado(
       fechaEntregaReal: fechaPatenteEntregada,
       estadoEntregaOriginal: entregaAutoTxt,
       fuenteEntrega: "entrega_auto_txt",
-    };
-  }
-
-  // Defensivo: si quedaron filas con fecha de entrega física pero entrega_auto_txt
-  // sin "Cargado", las consideramos entregadas igual (red de seguridad).
-  if (fechaPatenteEntregada !== null) {
-    return {
-      entregado: true,
-      fechaEntregaReal: fechaPatenteEntregada,
-      estadoEntregaOriginal: entregaAutoTxt,
-      fuenteEntrega: "fecha_patente_entregada",
     };
   }
 

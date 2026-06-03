@@ -20,6 +20,7 @@
 import type { SaldoRegistro, ProvisionRegistro } from "../types";
 import { diasMaxCreditoPompeyo } from "../gestion/caso";
 import type { VehiculoUnificado } from "./vehiculo-unificado";
+import { MARCA_USADOS } from "./owner-operacional";
 
 // ─── Umbrales (calibrables sin cambiar lógica) ──────────────────────────────
 
@@ -58,6 +59,8 @@ export interface Indicador {
   valor: number;
   /** Dato secundario opcional (ej. "12 VIN · 8% por unidades"). */
   detalle?: string;
+  /** Nota chica explicativa (ej. excepciones aplicadas al universo). */
+  nota?: string;
   /** Monto asociado al castigo (universo del indicador). */
   monto: number;
   /** Cantidad de casos afectados (universo del indicador). */
@@ -144,14 +147,30 @@ export interface ScoreGerencialInput {
 export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerencialResultado {
   const { marca, vus, saldos, provisiones } = input;
 
+  // ─── Regla excluyente · USADOS ─────────────────────────────────────────
+  // Decisión usuario 2026-06: para la unidad operacional USADOS, el
+  // indicador Stock propio debe excluir Stock B y Judicial — esos autos
+  // no son meta gerencial normal (Stock B es reacondicionamiento, judicial
+  // tiene su propio canal). La exclusión aplica ÚNICAMENTE al indicador
+  // stock_propio y SÓLO cuando la marca operacional activa es USADOS.
+  // Cualquier otra marca (KIA, Geely, Citroën, etc.) conserva el cálculo
+  // original sin cambios.
+  const esUsados = marca === MARCA_USADOS;
+  const aplicaEnStockPropio = (vu: VehiculoUnificado): boolean => {
+    if (!vu.enStockActivo) return false;
+    if (esUsados && (vu.esStockB || vu.esJudicial)) return false;
+    return true;
+  };
+
   // ─── 1. Stock propio · capitalPropio / stockValorizado ──────────────────
   // Universo: VUs con enStockActivo (stock vigente, no FNE ni saldos).
+  // Para USADOS, además se excluyen Stock B y Judicial — ver bloque arriba.
   let stockValorizado = 0;
   let capitalPropio = 0;
   let unidadesStock = 0;
   let unidadesPropio = 0;
   for (const vu of vus) {
-    if (!vu.enStockActivo) continue;
+    if (!aplicaEnStockPropio(vu)) continue;
     const costo = vu.costoNeto ?? 0;
     stockValorizado += costo;
     unidadesStock++;
@@ -165,18 +184,25 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     : 0;
   const p1 = puntosLineal(pctStockPropio, META_STOCK_PROPIO_PCT, MAX_STOCK_PROPIO_PCT, PESO_I1);
 
+  // Drill consistente con el numerador: NO listar autos excluidos del cálculo.
   const drillStockPropio = vus.filter(
     (vu) =>
-      vu.enStockActivo &&
+      aplicaEnStockPropio(vu) &&
       (vu.tipoStock === "Propio" || vu.tipoStock === "FinPropio"),
   );
 
-  // ─── 2. Provisiones no facturadas >90d ─────────────────────────────────
+  // ─── 2. Provisiones envejecidas >90d ──────────────────────────────────
+  // Criterio alineado con módulo /provisiones (decisión usuario 2026-06):
+  // "envejecida" = saldo ABIERTO (saldo ≠ 0) con aging > 90 días.
+  // Antes filtraba por estado === "no_facturada" — eso era más estricto y
+  // dejaba afuera provisiones parcialmente facturadas con saldo abierto que
+  // SÍ están arrastrando capital y SÍ aparecen en /provisiones como críticas.
+  // El selector ahora considera el universo COMPLETO de saldos abiertos.
   const prov90 = provisiones.filter(
-    (p) => p.estado === "no_facturada" && (p.agingDias ?? 0) > 90,
+    (p) => (p.saldo ?? 0) !== 0 && (p.agingDias ?? 0) > 90,
   );
   const p2 = puntosLineal(prov90.length, META_PROV_90D, MAX_PROV_90D, PESO_I2);
-  const montoProv90 = prov90.reduce((s, p) => s + (p.montoProvision ?? 0), 0);
+  const montoProv90 = prov90.reduce((s, p) => s + (p.saldo ?? 0), 0);
 
   // ─── 3. Crédito Pompeyo >15d (sobre VUs) ──────────────────────────────
   const cp15 = vus.filter((vu) => {
@@ -216,6 +242,9 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
           ? ((unidadesPropio / unidadesStock) * 100).toFixed(0)
           : 0
       }% por unidades`,
+      // Nota chica · sólo en USADOS la meta de Stock propio excluye Stock B
+      // y Judicial. Para marcas nuevas la nota queda undefined (no se muestra).
+      nota: esUsados ? "Stock B y Judicial excluidos de esta meta" : undefined,
       monto: capitalPropio,
       casos: unidadesPropio,
       puntos: p1,

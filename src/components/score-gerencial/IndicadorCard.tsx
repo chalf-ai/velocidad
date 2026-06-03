@@ -70,6 +70,14 @@ export function IndicadorCard({
           {indicador.detalle}
         </div>
       )}
+      {indicador.nota && (
+        <div
+          className="text-[10px] text-[--color-fg-muted] italic mt-1 leading-snug"
+          title={indicador.nota}
+        >
+          {indicador.nota}
+        </div>
+      )}
 
       {/* Puntos */}
       <div className="mt-3">

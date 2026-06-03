@@ -102,6 +102,34 @@ export function subTipoVehiculo(tipoRaw: string | null): SubTipoSaldoVehiculo {
   return "indefinido";
 }
 
+/**
+ * Subtipo de saldo vehículo · cruzando `Tipo` con `Entidad Financiera`.
+ *
+ * Decisión usuario 2026-06 tras auditoría:
+ * El reporte oficial PC Spa clasifica como Crédito Pompeyo todos los
+ * registros donde la `Entidad Financiera` es "Credito Pompeyo",
+ * INDEPENDIENTE del `Tipo` que declare el archivo. El parser viejo solo
+ * miraba `Tipo` y dejaba ~45 registros KIA mal clasificados en
+ * Financieras (Tipo 1.1) cuando realmente eran CP (Entidad Financiera CP).
+ *
+ * Regla canónica:
+ *   1. Si Entidad Financiera (normalizada) === "CREDITO POMPEYO" → credito_pompeyo
+ *   2. Si no, caer a la clasificación por `Tipo` (subTipoVehiculo).
+ *
+ * Esto alinea el sistema con el Excel oficial al 92% (~6 registros de
+ * diferencia residual, probablemente noise del proceso manual del Excel).
+ */
+export function subTipoVehiculoCanonico(
+  tipoRaw: string | null,
+  entidadFinanciera: string | null,
+): SubTipoSaldoVehiculo {
+  const ef = (entidadFinanciera ?? "").trim().toUpperCase();
+  if (ef === "CREDITO POMPEYO" || ef === "CRÉDITO POMPEYO") {
+    return "credito_pompeyo";
+  }
+  return subTipoVehiculo(tipoRaw);
+}
+
 function statusFromString(raw: string | null): StatusDPS {
   if (!raw) return "Desconocido";
   const u = raw.toUpperCase();
@@ -161,13 +189,15 @@ export async function parseSaldosFile(file: File): Promise<ParsedSaldos> {
     const r = rows[i];
     const categoriaRaw = s(r["CATEGORIA"]);
     const tipoRaw = s(r["Tipo"]);
+    const entidadFinancieraRaw = s(r["Entidad Financiera"]) ?? s(r["Entidad"]) ?? s(r["Financiera"]);
     const categoria = categorizar(categoriaRaw, tipoRaw);
     const cajonRaw = s(r["Cajon"]);
     const cajonLimpio = limpiarCajon(cajonRaw);
 
-    // Determinar subtipo según categoría
+    // Determinar subtipo según categoría · vehiculo cruza Tipo con Entidad
+    // Financiera (CP "disfrazado" de Financiera) — ver subTipoVehiculoCanonico.
     let subTipo: string = "indefinido";
-    if (categoria === "vehiculo") subTipo = subTipoVehiculo(tipoRaw);
+    if (categoria === "vehiculo") subTipo = subTipoVehiculoCanonico(tipoRaw, entidadFinancieraRaw);
     else if (categoria === "bono_comision") {
       const u = (tipoRaw ?? "").toUpperCase();
       if (u.includes("COMISION")) subTipo = "comisiones";
