@@ -10,7 +10,7 @@ import { postSnapshot, serializeStockPayload } from "@/lib/snapshot-client";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 
-const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
+const PUEDE_SUBIR = new Set(["ADMIN", "GERENTE_GENERAL"]);
 
 export function UploadButton({ variant = "primary" }: { variant?: Variant }) {
   const inputRef = useRef<HTMLInputElement>(null);

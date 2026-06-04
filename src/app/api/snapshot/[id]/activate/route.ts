@@ -1,7 +1,7 @@
 /**
  * PUT /api/snapshot/[id]/activate
  * Activa un snapshot específico (desactiva los demás de la misma fuente).
- * Solo ADMIN o JEFE_STOCK.
+ * Solo ADMIN o GERENTE_GENERAL.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -18,7 +18,7 @@ export async function PUT(
   }
 
   const rol = session.user.rol;
-  if (rol !== "ADMIN" && rol !== "JEFE_STOCK") {
+  if (rol !== "ADMIN" && rol !== "GERENTE_GENERAL") {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
 

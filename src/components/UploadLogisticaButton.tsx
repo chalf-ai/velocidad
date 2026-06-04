@@ -10,7 +10,7 @@ import { parseRomiaFile } from "@/lib/parser/romia-logistica";
 import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
 
-const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
+const PUEDE_SUBIR = new Set(["ADMIN", "GERENTE_GENERAL"]);
 
 /**
  * Uploader de archivos logísticos. Detecta automáticamente el tipo:

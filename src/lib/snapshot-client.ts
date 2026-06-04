@@ -6,7 +6,7 @@
  * Sirve para subir el resultado parseado de un Excel a la DB compartida
  * (Postgres en Railway), de modo que todos los usuarios vean el mismo corte
  * sin tener que re-subir el archivo. La API ya valida que sólo ADMIN o
- * JEFE_STOCK puedan postear.
+ * GERENTE_GENERAL puedan postear.
  *
  * Detalles delicados al serializar/deserializar el payload:
  *   · `Date` ⇄ string ISO 8601  (JSON.stringify lo hace solo al subir; al traer

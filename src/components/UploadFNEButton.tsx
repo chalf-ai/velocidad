@@ -9,7 +9,7 @@ import { parseFNEFile } from "@/lib/parser/autos-no-entregados";
 import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
 
-const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
+const PUEDE_SUBIR = new Set(["ADMIN", "GERENTE_GENERAL"]);
 
 /** Uploader del archivo "Autos no entregados.xlsx" — fuente oficial del módulo FNE.
  *  Se carga aparte del Excel maestro (Base_Stock). */

@@ -9,7 +9,7 @@ import { parseProvisionesFile } from "@/lib/parser/provisiones";
 import { postSnapshot } from "@/lib/snapshot-client";
 import { fmtNum } from "@/lib/format";
 
-const PUEDE_SUBIR = new Set(["ADMIN", "JEFE_STOCK"]);
+const PUEDE_SUBIR = new Set(["ADMIN", "GERENTE_GENERAL"]);
 
 export function UploadProvisionesButton({ compact = false }: { compact?: boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);

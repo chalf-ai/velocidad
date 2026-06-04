@@ -3,7 +3,7 @@
  * POST /api/snapshot          → guarda un snapshot nuevo y lo marca activo
  *
  * El payload puede ser grande (Excel parseado completo).
- * Requiere autenticación — solo JEFE_STOCK o ADMIN pueden crear snapshots.
+ * Requiere autenticación — solo ADMIN o GERENTE_GENERAL pueden crear snapshots.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -53,9 +53,9 @@ export async function POST(req: NextRequest) {
   }
 
   const rol = session.user.rol;
-  if (rol !== "ADMIN" && rol !== "JEFE_STOCK") {
+  if (rol !== "ADMIN" && rol !== "GERENTE_GENERAL") {
     return NextResponse.json(
-      { error: "Solo ADMIN o JEFE_STOCK pueden subir datos" },
+      { error: "Solo ADMIN o GERENTE_GENERAL pueden subir datos" },
       { status: 403 },
     );
   }
