@@ -211,8 +211,11 @@ function buildOne(
     { v: r?.fSolicitud, fuente: "LEGACY_ROMA", confianza: "alta" },
     { v: x?.fSolicitudVendedor, fuente: fuenteRomia, confianza: "media" },
   ]);
-  // Respuesta logística: no hay equivalente ROMIA limpio. Solo legacy.
+  // Respuesta logística: ROMIA aporta este hito desde la hoja "Recopilado
+  // venta Roma" del SCHIAPP (col fecha_RespuestaGestionLogistica). Prioridad
+  // ROMIA → LEGACY_ROMA como fallback. Permite dejar de subir ROMA legacy.
   const fRespuestaLogistica = resolve("respuesta_logistica", [
+    { v: x?.fRespuestaLogistica, fuente: fuenteRomia, confianza: "alta" },
     { v: r?.fRespuestaLogistica, fuente: "LEGACY_ROMA", confianza: "alta" },
   ]);
   const fIngresoApc = resolve("ingreso_apc", [
@@ -235,9 +238,11 @@ function buildOne(
     { v: x?.fSalidaPatio, fuente: fuenteRomia, confianza: "media" },
     { v: s?.fDespacho, fuente: "LEGACY_STLI", confianza: "alta" },
   ]);
-  // Llegada a sucursal: NO inferir desde ENTRADAS (decisión explícita del producto).
-  // Solo aceptamos legacy ROMA. ROMIA no aporta este hito hoy.
+  // Llegada a sucursal: ROMIA aporta este hito desde "Recopilado venta Roma"
+  // (col FechaETASucursal). Prioridad ROMIA → LEGACY_ROMA como fallback. NO
+  // inferimos desde ENTRADAS (decisión explícita del producto).
   const fLlegadaSucursal = resolve("llegada_sucursal", [
+    { v: x?.fLlegadaSucursal, fuente: fuenteRomia, confianza: "alta" },
     { v: r?.fLlegadaSucursal, fuente: "LEGACY_ROMA", confianza: "alta" },
   ]);
   const fFactura = resolve("factura", [

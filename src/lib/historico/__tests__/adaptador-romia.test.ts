@@ -35,6 +35,8 @@ function mkRow(opts: Partial<RomiaRow> & Pick<RomiaRow, "vin" | "bodega">): Romi
     ventaId: null,
     fSolicitudVendedor: null,
     fEstimadaEntrega: null,
+    fRespuestaLogistica: null,
+    fLlegadaSucursal: null,
     pasoActual: null,
     sucursalDestino: null,
     gerencia: null,

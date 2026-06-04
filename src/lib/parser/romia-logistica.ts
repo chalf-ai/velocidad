@@ -115,6 +115,8 @@ interface VinAccumulator {
   ventaId: number | null;
   fSolicitudVendedor: Date | null;
   fEstimadaEntrega: Date | null;
+  fRespuestaLogistica: Date | null;
+  fLlegadaSucursal: Date | null;
   pasoActual: string | null;
   sucursalDestino: string | null;
   gerencia: string | null;
@@ -147,6 +149,7 @@ function newAcc(vin: string): VinAccumulator {
     fCompraMarca: null, diasPreentrega: null,
     fIngresoApc: null, diasStock: null, estadoBodega: null, patio: null,
     ventaId: null, fSolicitudVendedor: null, fEstimadaEntrega: null,
+    fRespuestaLogistica: null, fLlegadaSucursal: null,
     pasoActual: null, sucursalDestino: null, gerencia: null, tipoSolicitud: null,
     fSolicitudBodega: null, fPlanificacion: null, fDespacho: null,
     tieneSinSalida: false, fechaLimite: null, cumplimientoDespacho: null,
@@ -181,6 +184,14 @@ function procesarHojas(wb: XLSX.WorkBook): Map<string, VinAccumulator> {
   const hojaSalidas = wb.SheetNames.find((n) => /^salidas\s*$/i.test(n.trim()));
   const hojaSolVenta = wb.SheetNames.find((n) => /^solicitud\s+venta\s*$/i.test(n.trim()));
   const hojaSolVitrina = wb.SheetNames.find((n) => /^solicitud\s+vitrina\s*$/i.test(n.trim()));
+  // SCHIAPP trae además dos hojas de histórico completo (no vivo): "Recopilado
+  // venta Roma" (~5.4k filas) y "Recopilado Vitrina Roma" (~1.3k filas). Eso
+  // equivale al archivo legacy "Diciembre-Mayo ROMA.xlsx". Decisión usuario
+  // 2026-06: leer Recopilado como fuente principal del histórico ROMA, dejando
+  // Solicitud Venta/Vitrina como capa viva/complementaria (sobrescribe cuando
+  // Recopilado no tiene el dato). KAR no las trae — sin error si faltan.
+  const hojaRecopiladoVenta = wb.SheetNames.find((n) => /^recopilado\s+venta\s+roma\s*$/i.test(n.trim()));
+  const hojaRecopiladoVitrina = wb.SheetNames.find((n) => /^recopilado\s+vitrina\s+roma\s*$/i.test(n.trim()));
 
   // 1) Compra Marca — pre-recepción
   if (hojaCompra) {
@@ -294,7 +305,37 @@ function procesarHojas(wb: XLSX.WorkBook): Map<string, VinAccumulator> {
     }
   }
 
-  // 6) Solicitud Venta
+  // 6) Recopilado venta Roma — fuente HISTÓRICA principal de la agenda ROMA.
+  //    Equivalente al archivo legacy "Diciembre-Mayo ROMA.xlsx". Tiene los
+  //    hitos completos: FechaSolicitud, FechaFactura, FechaEnprocesoIns,
+  //    FechaETASucursal, fecha_RespuestaGestionLogistica, fecha_Respuesta-
+  //    InstalacionAcc, FechaEstimadaEntrega, PasoActual, Estado.
+  //    Procesar ANTES de "Solicitud Venta" para que fillIfEmpty mantenga la
+  //    prioridad (Recopilado se queda; Solicitud Venta llena gaps).
+  if (hojaRecopiladoVenta) {
+    for (const r of rowsOf(wb.Sheets[hojaRecopiladoVenta])) {
+      const vin = str(r["Vin"]); if (!vin) continue;
+      const a = ensure(vin);
+      a.ventaId = fillIfEmpty(a.ventaId, numv(r["VentaID"]));
+      a.gerencia = fillIfEmpty(a.gerencia, str(r["Gerencia"]));
+      a.marca = fillIfEmpty(a.marca, str(r["Marca"]));
+      a.modelo = fillIfEmpty(a.modelo, str(r["Modelo"]));
+      a.color = fillIfEmpty(a.color, str(r["ColorReferencial"]));
+      a.cajon = fillIfEmpty(a.cajon, str(r["Cajon"]));
+      a.sucursalDestino = fillIfEmpty(a.sucursalDestino, str(r["Sucursal"]) ?? str(r["SUCURSAL DESTINO"]));
+      a.fSolicitudVendedor = fillIfEmpty(a.fSolicitudVendedor, toDate(r["FechaSolicitud"]));
+      a.fEstimadaEntrega = fillIfEmpty(a.fEstimadaEntrega, toDate(r["FechaEstimadaEntrega"]));
+      a.fRespuestaLogistica = fillIfEmpty(a.fRespuestaLogistica, toDate(r["fecha_RespuestaGestionLogistica"]));
+      a.fLlegadaSucursal = fillIfEmpty(a.fLlegadaSucursal, toDate(r["FechaETASucursal"]));
+      a.pasoActual = fillIfEmpty(a.pasoActual, str(r["PasoActual"]));
+      a.hojasOrigen.push(hojaRecopiladoVenta);
+    }
+  }
+
+  // 7) Solicitud Venta — fuente VIVA complementaria (~275–393 filas vs ~5.4k).
+  //    Solo llena gaps que Recopilado no haya cubierto (datos más frescos del
+  //    día). Usa la misma columna que Recopilado, así fillIfEmpty respeta la
+  //    prioridad histórica.
   if (hojaSolVenta) {
     for (const r of rowsOf(wb.Sheets[hojaSolVenta])) {
       const vin = str(r["Vin"]); if (!vin) continue;
@@ -304,12 +345,27 @@ function procesarHojas(wb: XLSX.WorkBook): Map<string, VinAccumulator> {
       a.sucursalDestino = fillIfEmpty(a.sucursalDestino, str(r["Sucursal"]) ?? str(r["SUCURSAL DESTINO"]));
       a.fSolicitudVendedor = fillIfEmpty(a.fSolicitudVendedor, toDate(r["FechaSolicitud"]));
       a.fEstimadaEntrega = fillIfEmpty(a.fEstimadaEntrega, toDate(r["FechaEstimadaEntrega"]));
+      a.fRespuestaLogistica = fillIfEmpty(a.fRespuestaLogistica, toDate(r["fecha_RespuestaGestionLogistica"]));
+      a.fLlegadaSucursal = fillIfEmpty(a.fLlegadaSucursal, toDate(r["FechaETASucursal"]));
       a.pasoActual = fillIfEmpty(a.pasoActual, str(r["PasoActual"]));
       a.hojasOrigen.push(hojaSolVenta);
     }
   }
 
-  // 7) Solicitud Vitrina
+  // 8) Recopilado Vitrina Roma — histórico de traslados de vitrina (~1.3k filas).
+  if (hojaRecopiladoVitrina) {
+    for (const r of rowsOf(wb.Sheets[hojaRecopiladoVitrina])) {
+      const vin = str(r["vin"]); if (!vin) continue;
+      const a = ensure(vin);
+      a.esSolicitudVitrina = true;
+      a.fSolicitudVendedor = fillIfEmpty(a.fSolicitudVendedor, toDate(r["FechaCreacion"]));
+      a.tipoSolicitud = fillIfEmpty(a.tipoSolicitud, "VITRINA");
+      a.sucursalDestino = fillIfEmpty(a.sucursalDestino, str(r["BodegaDestino"]) ?? str(r["DESTINO"]) ?? str(r["DESTINO VITRINA"]));
+      a.hojasOrigen.push(hojaRecopiladoVitrina);
+    }
+  }
+
+  // 9) Solicitud Vitrina — fuente viva complementaria de vitrina (~5–18 filas).
   if (hojaSolVitrina) {
     for (const r of rowsOf(wb.Sheets[hojaSolVitrina])) {
       const vin = str(r["vin"]); if (!vin) continue;
@@ -361,6 +417,8 @@ function accToRow(acc: VinAccumulator, bodega: RomiaBodega): RomiaRow {
     ventaId: acc.ventaId,
     fSolicitudVendedor: acc.fSolicitudVendedor,
     fEstimadaEntrega: acc.fEstimadaEntrega,
+    fRespuestaLogistica: acc.fRespuestaLogistica,
+    fLlegadaSucursal: acc.fLlegadaSucursal,
     pasoActual: acc.pasoActual,
     sucursalDestino: acc.sucursalDestino,
     gerencia: acc.gerencia,

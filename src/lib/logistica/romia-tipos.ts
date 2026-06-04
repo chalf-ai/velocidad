@@ -72,6 +72,14 @@ export interface RomiaRow {
   ventaId: number | null;
   fSolicitudVendedor: Date | null;
   fEstimadaEntrega: Date | null;
+  /** V fecha_RespuestaGestionLogistica · momento en que Logística respondió la
+   *  solicitud del vendedor. Aporta el hito `respuesta_logistica` del modelo
+   *  cuando viene de SCHIAPP hoja "Recopilado venta Roma" (decisión 2026-06:
+   *  ROMIA pasa a ser fuente principal y ROMA legacy queda como fallback). */
+  fRespuestaLogistica: Date | null;
+  /** S FechaETASucursal · llegada confirmada a sucursal. Aporta el hito
+   *  `llegada_sucursal` cuando viene de SCHIAPP "Recopilado venta Roma". */
+  fLlegadaSucursal: Date | null;
   pasoActual: string | null;
   sucursalDestino: string | null;
   gerencia: string | null;
