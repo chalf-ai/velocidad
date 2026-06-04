@@ -41,7 +41,15 @@ export interface HeroNarrativa {
   /** Tensiones detectadas (orden por peso) — para trazabilidad. */
   tensiones: HeroTension[];
   /** Inputs resumidos para auditoría. */
-  trazas: { score: number | null; capitalVentaPct: number | null; mos: number | null; agingShare: number };
+  trazas: {
+    /** Score Gerencial · fuente principal de severidad cuando hay venta pond. */
+    scoreGerencial: number | null;
+    /** Score Eficiencia · fallback de severidad. */
+    score: number | null;
+    capitalVentaPct: number | null;
+    mos: number | null;
+    agingShare: number;
+  };
 }
 
 export interface HeroCT {
@@ -58,6 +66,15 @@ export interface HeroInputs {
   ct: HeroCT;
   /** Marca operacional activa (null = macro/grupo). */
   marca: string | null;
+  /**
+   * Score Gerencial 0..100 de la marca/universo actual (pesos 40+30+20+10
+   * sobre Stock propio ≤5%, Provisiones >90d, CP >15d, Saldos T3+). Cuando
+   * existe, ES la fuente de severidad del Hero (decisión usuario 2026-06).
+   * Si es null (sin venta ponderada o universo vacío), cae al Score
+   * Eficiencia como antes para mantener compatibilidad. Las TENSIONES
+   * (puente, saldos, FNE, etc.) siguen viniendo de la composición de caja.
+   */
+  scoreGerencial: number | null;
 }
 
 const TONE: Record<HeroNivel, HeroTone> = {
@@ -89,7 +106,7 @@ function sujetoDe(marca: string | null): { Suj: string; suj: string; esGrupo: bo
  * capital/venta, MOS y antigüedad. Sin score (sin ventas Q1) → desde composición.
  * TENSIONES: qué está reteniendo la caja (share sobre el capital utilizado).
  */
-export function deriveHeroOperacional({ efic, ct, marca }: HeroInputs): HeroNarrativa {
+export function deriveHeroOperacional({ efic, ct, marca, scoreGerencial }: HeroInputs): HeroNarrativa {
   const total = ct.total || 0;
   const share = (x: number) => (total > 0 ? x / total : 0);
   const sPuente = share(ct.mPuente);
@@ -101,10 +118,17 @@ export function deriveHeroOperacional({ efic, ct, marca }: HeroInputs): HeroNarr
   const { score, capitalVentaPct: cvp, mos } = efic;
 
   // ── NIVEL ────────────────────────────────────────────────────────────────
-  // Base por score; si no hay score, por capital/venta o composición.
+  // Prioridad de la fuente de severidad (decisión usuario 2026-06):
+  //   1) Score Gerencial cuando hay dato (≥85 verde · ≥65 amarillo · ≥50 naranjo · <50 rojo).
+  //      Garantiza congruencia con la pantalla /score-gerencial.
+  //   2) Score Eficiencia como fallback (≥85 verde · ≥65 amarillo · ≥50 naranjo · <50 rojo).
+  //   3) Capital/Venta como fallback secundario.
+  //   4) Composición de caja (puente+saldos+aging) si no hay ventas.
   let nivelIdx: number; // 0 verde · 1 amarillo · 2 naranjo · 3 rojo
-  if (score != null) {
-    nivelIdx = score >= 80 ? 0 : score >= 65 ? 1 : score >= 50 ? 2 : 3;
+  if (scoreGerencial != null) {
+    nivelIdx = scoreGerencial >= 85 ? 0 : scoreGerencial >= 65 ? 1 : scoreGerencial >= 50 ? 2 : 3;
+  } else if (score != null) {
+    nivelIdx = score >= 85 ? 0 : score >= 65 ? 1 : score >= 50 ? 2 : 3;
   } else if (cvp != null) {
     nivelIdx = cvp <= 80 ? 0 : cvp <= 110 ? 1 : cvp <= 150 ? 2 : 3;
   } else {
@@ -112,9 +136,12 @@ export function deriveHeroOperacional({ efic, ct, marca }: HeroInputs): HeroNarr
     const retenida = sPuente + sSaldos + (aging > 0.3 ? 0.2 : 0);
     nivelIdx = retenida < 0.2 ? 0 : retenida < 0.4 ? 1 : retenida < 0.6 ? 2 : 3;
   }
-  // Modificador: deterioro fuerte sube un nivel (tope rojo).
+  // Modificador: deterioro fuerte sube un nivel (tope rojo). Solo aplica
+  // cuando la fuente de severidad NO es el Score Gerencial (que ya integra
+  // sus propias señales). Evita doble penalización.
   const deterioroFuerte =
-    (cvp != null && cvp > 150) || (mos != null && mos > 2.6) || aging > 0.4 || fneDet > 0.5;
+    scoreGerencial == null &&
+    ((cvp != null && cvp > 150) || (mos != null && mos > 2.6) || aging > 0.4 || fneDet > 0.5);
   if (deterioroFuerte) nivelIdx = Math.min(3, nivelIdx + 1);
   const nivel: HeroNivel = (["verde", "amarillo", "naranjo", "rojo"] as const)[nivelIdx];
 
@@ -178,6 +205,6 @@ export function deriveHeroOperacional({ efic, ct, marca }: HeroInputs): HeroNarr
     headline,
     subtitulo,
     tensiones,
-    trazas: { score, capitalVentaPct: cvp, mos, agingShare: aging },
+    trazas: { scoreGerencial, score, capitalVentaPct: cvp, mos, agingShare: aging },
   };
 }

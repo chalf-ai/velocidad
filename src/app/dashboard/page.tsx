@@ -90,6 +90,8 @@ import { AbrirCasoButton } from "@/components/AbrirCasoButton";
 import { BotonesCasoPuente } from "@/components/BotonesCasoPuente";
 import { indexarFNEPorOrigen } from "@/lib/selectors/vu-en-fne";
 import { deriveHeroOperacional } from "@/lib/selectors/hero-operacional";
+import { calcularScoreGerencial } from "@/lib/selectors/score-gerencial";
+import { buildVehiculosUnificados } from "@/lib/selectors/vehiculo-unificado";
 import { tescarStats } from "@/lib/selectors/tescar-operacional";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
 import { useExcelStore } from "@/lib/store";
@@ -307,11 +309,26 @@ function DashboardInner() {
     [parsed.vehiculos, parsed.lineas],
   );
 
+  // Score Gerencial — fuente PRIMARIA de severidad del Hero (decisión 2026-06).
+  // Reusa la misma lógica de /score-gerencial para garantizar congruencia.
+  const scoreGerencial = useMemo<number | null>(() => {
+    if (!data) return null;
+    const map = buildVehiculosUnificados({ data, fne, saldos });
+    const vusAll = Array.from(map.values());
+    const sg = calcularScoreGerencial({
+      marca: marcaActiva ?? "Todas las marcas",
+      vus: vusAll,
+      saldos: saldos?.registros ?? [],
+      provisiones: provisiones?.registros ?? [],
+    });
+    return sg.score;
+  }, [data, fne, saldos, provisiones, marcaActiva]);
+
   // Radar operacional del hero — lectura ejecutiva determinística (no recalcula
   // score ni cálculos financieros; solo interpreta los KPIs ya derivados).
   const hero = useMemo(
-    () => deriveHeroOperacional({ efic: eficiencia, ct, marca: marcaActiva }),
-    [eficiencia, ct, marcaActiva],
+    () => deriveHeroOperacional({ efic: eficiencia, ct, marca: marcaActiva, scoreGerencial }),
+    [eficiencia, ct, marcaActiva, scoreGerencial],
   );
 
   const lineas = parsed.lineas;
