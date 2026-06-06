@@ -26,10 +26,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  snapshots   Snapshot[]
-  gestiones   GestionVIN[]
-  alertaLogs  AlertaLog[]
-  alertaConfs AlertaConfig[]
+  snapshots          Snapshot[]
+  gestiones          GestionVIN[]
+  alertaLogs         AlertaLog[]
+  alertaConfs        AlertaConfig[]
+  historicoArchivos  SnapshotHistoricoArchivo[]
 }
 
 enum Rol {
@@ -172,3 +173,193 @@ enum AlertaTipo {
   PRIORIDAD_CRITICA
   MENSAJE_ENTRANTE
 }
+
+// ═════════════════════════════════════════════════════════════════════
+// MOTOR HISTÓRICO DE SNAPSHOTS — Velocity Operating System
+//
+// Capa SEPARADA del snapshot vivo. El motor histórico es la MEMORIA
+// VIVA del sistema: cada carga operacional relevante deja una huella
+// que después permite ver si el negocio mejora o empeora en velocidad,
+// cumplimiento, capital, stock, entrega y disciplina gerencial.
+//
+// Dos modelos, dos comportamientos:
+//
+//   A) SnapshotHistoricoArchivo — INMUTABLE
+//      Registro inmutable de cada Excel cargado. Una fila por
+//      (fuente, snapshotDate, hashSha256). Auditoría pura.
+//
+//   B) OperationalSnapshot — UPSERT mientras esté draft
+//      Foto consolidada mensual del Velocity OS. Una fila por
+//      (snapshotPeriod, snapshotType). Se va completando con cada
+//      fuente nueva que llega del mismo período. Al cerrar el mes
+//      pasa a `status = closed` y queda inmutable. Correcciones
+//      posteriores se persisten como nuevo snapshotType="correction".
+//
+// Reglas (decisión usuario 2026-06):
+//   · La fecha de corte canónica se DERIVA: archivos de días 01-03
+//     se interpretan como cierre del mes anterior (regla "Informe
+//     02-Marzo = cierre Febrero").
+//   · Construcción orgánica — no hay backfill obligatorio. El motor
+//     se llena mes a mes con cada cierre operacional.
+//   · Series parciales aceptadas — si falta FNE o Provisiones de un
+//     mes, esos campos quedan null. NO se inventa ni se interpola.
+//   · Recálculo seguro — si un selector falla durante la consolidación,
+//     se guarda warning y se persiste lo que sí se pudo calcular.
+// ═════════════════════════════════════════════════════════════════════
+
+model SnapshotHistoricoArchivo {
+  id                  String   @id @default(cuid())
+  fuente              Fuente
+  /// Fecha de corte CANÓNICA derivada (último día del mes representado).
+  snapshotDate        DateTime
+  /// "2026-02", "2026-03" — facilita queries por mes.
+  snapshotPeriod      String
+  nombreOriginal      String
+  hashSha256          String
+  tamano              Int
+  /// Fecha que dice el archivo internamente (raw, antes de derivar).
+  fechaCorteDeclarada DateTime?
+  /// Fecha que detectó el parser interno.
+  fechaCorteDetectada DateTime?
+  /// "ok" | "parcial" | "error"
+  parseStatus         String   @default("ok")
+  warnings            String[] @default([])
+  /// "ingesta" | "backfill" | "manual"
+  origenDeteccion     String   @default("ingesta")
+  /// Payload parseado opcional (solo si necesario para auditoría).
+  payload             Json?
+  userId              String
+  user                User     @relation(fields: [userId], references: [id])
+  createdAt           DateTime @default(now())
+
+  /// Único por contenido — dos archivos con el mismo hash NO duplican,
+  /// pero un mismo período puede tener varios archivos (corrección).
+  @@unique([fuente, snapshotDate, hashSha256])
+  @@index([snapshotPeriod])
+  @@index([snapshotDate])
+  @@index([hashSha256])
+}
+
+model OperationalSnapshot {
+  id                   String   @id @default(cuid())
+  /// Último día del mes representado.
+  snapshotDate         DateTime
+  /// "2026-02", "2026-03" — identificador del período.
+  snapshotPeriod       String
+  /// "monthly" | "interim" | "correction" | "manual"
+  snapshotType         String   @default("monthly")
+
+  // ── ESTADO DEL SNAPSHOT ──────────────────────────────────────────
+  /// "draft" | "closed". Draft = se puede actualizar con nuevas
+  /// fuentes del mismo período. Closed = inmutable.
+  status               String   @default("draft")
+  /// Incremento cada vez que el snapshot se actualiza (audit trail).
+  version              Int      @default(1)
+  /// Última vez que se recalcularon los KPIs.
+  lastRecalculatedAt   DateTime?
+  /// Cuándo se cerró el período (null si está draft).
+  closedAt             DateTime?
+  closedByUserId       String?
+
+  // ── TRAZABILIDAD ─────────────────────────────────────────────────
+  sourceFiles          String[] @default([])  // nombres originales
+  sourceHashes         String[] @default([])  // hashes SHA-256
+  fuentesUsadas        String[] @default([])  // ["BASE_STOCK","SALDOS","FNE","PROVISIONES"]
+  /// Fuentes que se esperan para considerar el snapshot completo.
+  fuentesEsperadas     String[] @default(["BASE_STOCK", "SALDOS", "FNE", "PROVISIONES"])
+  /// 0-100. fuentesUsadas.length / fuentesEsperadas.length * 100.
+  completionPct        Int      @default(0)
+  warnings             String[] @default([])
+
+  // ── STOCK ────────────────────────────────────────────────────────
+  stockUnidades         Int?
+  stockMontoTotal       Decimal? @db.Decimal(18, 2)
+  stockPagadoMonto      Decimal? @db.Decimal(18, 2)
+  stockFinanciadoMonto  Decimal? @db.Decimal(18, 2)
+
+  // ── LÍNEAS DE CRÉDITO ────────────────────────────────────────────
+  lineaAutorizada      Decimal? @db.Decimal(18, 2)
+  lineaUtilizada       Decimal? @db.Decimal(18, 2)
+  lineaDisponible      Decimal? @db.Decimal(18, 2)
+  lineaUtilizacionPct  Decimal? @db.Decimal(5, 2)
+
+  // ── CAPITAL DE TRABAJO ───────────────────────────────────────────
+  capitalTrabajoTotal      Decimal? @db.Decimal(18, 2)
+  capitalTrabajoUtilizado  Decimal? @db.Decimal(18, 2)
+  capitalTrabajoDisponible Decimal? @db.Decimal(18, 2)
+
+  // ── FNE ──────────────────────────────────────────────────────────
+  fneUnidades              Int?
+  fneMonto                 Decimal? @db.Decimal(18, 2)
+  fneDiasPromedio          Decimal? @db.Decimal(8, 2)
+  fneListosEntrega         Int?
+  fneBloqueadosCp          Int?
+  fneBloqueadosInscripcion Int?
+  fneBloqueadosLogistica   Int?
+  fneBloqueadosComercial   Int?
+
+  // ── CRÉDITO POMPEYO ──────────────────────────────────────────────
+  creditoPompeyoMonto Decimal? @db.Decimal(18, 2)
+  creditoPompeyoCasos Int?
+
+  // ── SALDOS ───────────────────────────────────────────────────────
+  saldosMontoTotal     Decimal? @db.Decimal(18, 2)
+  saldosVehiculoMonto  Decimal? @db.Decimal(18, 2)
+  saldosBonosMonto     Decimal? @db.Decimal(18, 2)
+  saldosServiciosMonto Decimal? @db.Decimal(18, 2)
+
+  // ── PROVISIONES ──────────────────────────────────────────────────
+  provisionesTotalMonto           Decimal? @db.Decimal(18, 2)
+  provisionesNoFacturadasMonto    Decimal? @db.Decimal(18, 2)
+  provisionesNoFacturadasUnidades Int?
+
+  // ── AGING (unidades + monto · 6 buckets) ─────────────────────────
+  aging0_30Unidades    Int?
+  aging31_60Unidades   Int?
+  aging61_90Unidades   Int?
+  aging91_120Unidades  Int?
+  aging121_180Unidades Int?
+  aging180MasUnidades  Int?
+  aging0_30Monto       Decimal? @db.Decimal(18, 2)
+  aging31_60Monto      Decimal? @db.Decimal(18, 2)
+  aging61_90Monto      Decimal? @db.Decimal(18, 2)
+  aging91_120Monto     Decimal? @db.Decimal(18, 2)
+  aging121_180Monto    Decimal? @db.Decimal(18, 2)
+  aging180MasMonto     Decimal? @db.Decimal(18, 2)
+
+  // ── SCORES (0-100) ───────────────────────────────────────────────
+  scoreGerencial    Int?
+  scoreOperacional  Int?
+  scoreCumplimiento Int?
+  scoreVelocidad    Int?
+  scoreCapital      Int?
+
+  // ── CUMPLIMIENTO ─────────────────────────────────────────────────
+  cumplimientoGlobalPct         Decimal? @db.Decimal(5, 2)
+  cumplimientoComercialPct      Decimal? @db.Decimal(5, 2)
+  cumplimientoControlNegocioPct Decimal? @db.Decimal(5, 2)
+  cumplimientoLogisticaPct      Decimal? @db.Decimal(5, 2)
+  cumplimientoSucursalPct       Decimal? @db.Decimal(5, 2)
+
+  // ── ALERTAS ──────────────────────────────────────────────────────
+  alertasCriticas Int?
+  alertasAltas    Int?
+  alertasMedias   Int?
+
+  // ── BRECHAS ──────────────────────────────────────────────────────
+  responsablesConAtrasos Int?
+  sucursalesConBrechas   Int?
+  marcasConBrechas       Int?
+
+  // ── AUDITORÍA ────────────────────────────────────────────────────
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Un snapshot por período + tipo. Correcciones se crean con
+  /// snapshotType = "correction" para no pisar el cerrado.
+  @@unique([snapshotPeriod, snapshotType])
+  @@index([snapshotDate])
+  @@index([snapshotPeriod])
+  @@index([status])
+}
+

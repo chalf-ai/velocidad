@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Fuente } from "@prisma/client";
+import { persistirHistorico } from "@/lib/historico/persistir";
 
 // El Stock master puede pesar varios MB y tomar tiempo en serializarse a JSONB.
 // Subimos el timeout y forzamos Node runtime (DecompressionStream necesita Node).
@@ -133,5 +134,46 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(snapshot, { status: 201 });
+  // ── Motor histórico (Fase 1a) ──────────────────────────────────────────
+  // Persistencia paralela del snapshot histórico mensual. Nunca bloquea la
+  // respuesta principal: si falla, se loguea y se sigue. El snapshot vivo
+  // que el cliente espera ya quedó persistido arriba.
+  let historico: {
+    ok: boolean;
+    snapshotPeriod: string | null;
+    archivoCreado: boolean;
+    snapshotActualizado: boolean;
+    warnings: string[];
+    error?: string;
+  } = {
+    ok: true,
+    snapshotPeriod: null,
+    archivoCreado: false,
+    snapshotActualizado: false,
+    warnings: [],
+  };
+  try {
+    const res = await persistirHistorico({
+      fuente: fuente as Fuente,
+      payload,
+      nombreArchivo: nombre,
+      tamano: tamano ?? 0,
+      fechaCorteArchivo: fechaCorte ? new Date(fechaCorte) : null,
+      userId: session.user.id,
+    });
+    historico = { ok: true, ...res };
+  } catch (e) {
+    const detalle = e instanceof Error ? e.message : String(e);
+    console.error("[snapshot/historico] falló persistirHistorico:", detalle);
+    historico = {
+      ok: false,
+      snapshotPeriod: null,
+      archivoCreado: false,
+      snapshotActualizado: false,
+      warnings: [],
+      error: detalle,
+    };
+  }
+
+  return NextResponse.json({ ...snapshot, historico }, { status: 201 });
 }
