@@ -21,11 +21,13 @@ import {
   ChevronDown,
   ClipboardCheck,
   Coins,
+  Database,
   Gauge,
   ShieldAlert,
   TrendingUp,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -298,25 +300,59 @@ export default async function TendenciasPage({
   const vista: "diaria" | "mensual" =
     params.vista === "mensual" ? "mensual" : "diaria";
 
-  const snapshotsDesc = await prisma.operationalSnapshot.findMany({
-    where: { snapshotType: "monthly" },
-    orderBy: { snapshotDate: "desc" },
-    take: 4,
-    select: {
-      id: true,
-      snapshotPeriod: true,
-      snapshotDate: true,
-      scoreCapital: true,
-      scoreGerencial: true,
-      scoreVelocidad: true,
-      fuentesUsadas: true,
-      fuentesEsperadas: true,
-      completionPct: true,
-      warnings: true,
-      scoreComponentes: true,
-      lastRecalculatedAt: true,
-    },
-  });
+  // Defensa en profundidad: si el motor histórico no está inicializado en la
+  // DB (tabla `OperationalSnapshot` inexistente, o columnas faltantes), NO
+  // botar toda la página. Mostrar estado controlado.
+  //
+  // P2021 = table does not exist
+  // P2022 = column does not exist
+  //
+  // Este catch existe específicamente para sobrevivir a un Railway donde
+  // `prisma migrate deploy` aún no se aplicó. Si el resto del schema está OK
+  // pero hay un fallo de DB no relacionado, re-tiramos.
+  let snapshotsDesc: Array<{
+    id: string;
+    snapshotPeriod: string;
+    snapshotDate: Date;
+    scoreCapital: number | null;
+    scoreGerencial: number | null;
+    scoreVelocidad: number | null;
+    fuentesUsadas: string[];
+    fuentesEsperadas: string[];
+    completionPct: number;
+    warnings: string[];
+    scoreComponentes: Prisma.JsonValue;
+    lastRecalculatedAt: Date | null;
+  }>;
+  try {
+    snapshotsDesc = await prisma.operationalSnapshot.findMany({
+      where: { snapshotType: "monthly" },
+      orderBy: { snapshotDate: "desc" },
+      take: 4,
+      select: {
+        id: true,
+        snapshotPeriod: true,
+        snapshotDate: true,
+        scoreCapital: true,
+        scoreGerencial: true,
+        scoreVelocidad: true,
+        fuentesUsadas: true,
+        fuentesEsperadas: true,
+        completionPct: true,
+        warnings: true,
+        scoreComponentes: true,
+        lastRecalculatedAt: true,
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      (err.code === "P2021" || err.code === "P2022")
+    ) {
+      return <HistoricoNoInicializado detalle={err.message} />;
+    }
+    throw err;
+  }
 
   let filas = [...snapshotsDesc].reverse().map((s) => mapSnapshot(s, marca));
   if (marca) filas = recalcularAtribucionPorMarca(filas);
@@ -341,31 +377,63 @@ export default async function TendenciasPage({
   const periodoApertura =
     filas.length > 0 ? filas[filas.length - 1].periodo : null;
   // Cargas solo si vista=mensual (en diaria las trae calcularSGLegacyPorDia).
-  const cargasPeriodo =
-    vista === "mensual" && periodoApertura
-      ? await prisma.snapshotHistoricoArchivo.findMany({
-          where: { snapshotPeriod: periodoApertura },
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            fuente: true,
-            nombreOriginal: true,
-            prioridadCierre: true,
-            esCierreMensual: true,
-            createdAt: true,
-            parseStatus: true,
-          },
-        })
-      : [];
+  // Mismo catch defensivo que arriba: si la tabla histórica de archivos no
+  // existe en DB, no botar la página — degradar a array vacío.
+  let cargasPeriodo: Array<{
+    id: string;
+    fuente: string;
+    nombreOriginal: string;
+    prioridadCierre: number;
+    esCierreMensual: boolean;
+    createdAt: Date;
+    parseStatus: string;
+  }> = [];
+  if (vista === "mensual" && periodoApertura) {
+    try {
+      cargasPeriodo = await prisma.snapshotHistoricoArchivo.findMany({
+        where: { snapshotPeriod: periodoApertura },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          fuente: true,
+          nombreOriginal: true,
+          prioridadCierre: true,
+          esCierreMensual: true,
+          createdAt: true,
+          parseStatus: true,
+        },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        (err.code === "P2021" || err.code === "P2022")
+      ) {
+        cargasPeriodo = [];
+      } else {
+        throw err;
+      }
+    }
+  }
 
   // ── Puntos diarios para vista=diaria (solo SG legacy · Etapa A) ──
-  const puntosDiarios: PuntoDiario[] =
-    vista === "diaria" && periodoApertura
-      ? await calcularSGLegacyPorDia({
-          snapshotPeriod: periodoApertura,
-          marca,
-        })
-      : [];
+  let puntosDiarios: PuntoDiario[] = [];
+  if (vista === "diaria" && periodoApertura) {
+    try {
+      puntosDiarios = await calcularSGLegacyPorDia({
+        snapshotPeriod: periodoApertura,
+        marca,
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        (err.code === "P2021" || err.code === "P2022")
+      ) {
+        puntosDiarios = [];
+      } else {
+        throw err;
+      }
+    }
+  }
 
   // Diagnóstico de cobertura por marca: si todos los snapshots de esta marca
   // tienen score capital/gerencial/velocidad null, la marca no tiene data
@@ -608,6 +676,47 @@ function SinDatos() {
         medida que se consoliden cierres mensuales.
       </p>
     </div>
+  );
+}
+
+/**
+ * Estado controlado cuando el motor histórico no está inicializado en la DB.
+ * Causa típica en producción: Railway no aplicó la migration baseline
+ * (tabla `OperationalSnapshot` o `SnapshotHistoricoArchivo` inexistente).
+ *
+ * No es un error de la UI — es un estado legítimo del sistema. La vista
+ * sobrevive con mensaje claro en vez de devolver 500.
+ */
+function HistoricoNoInicializado({ detalle }: { detalle: string }) {
+  return (
+    <main className="px-6 py-16 max-w-2xl mx-auto">
+      <div className="surface bg-white p-8">
+        <div className="flex items-start gap-4">
+          <div className="rounded-full bg-amber-50 p-3 flex-shrink-0">
+            <Database className="w-6 h-6 text-amber-600" strokeWidth={1.8} />
+          </div>
+          <div className="flex-1">
+            <h1 className="text-[20px] font-semibold text-[--color-fg] mb-2">
+              Histórico no inicializado todavía
+            </h1>
+            <p className="text-[14px] text-[--color-fg-muted] leading-relaxed">
+              Las tablas del motor histórico aún no están creadas en la base de
+              datos. Esta vista se activará automáticamente cuando se aplique la
+              migration de baseline al ambiente. Si esto persiste, revisar el
+              pipeline de despliegue (<code>prisma migrate deploy</code>).
+            </p>
+            <details className="mt-4">
+              <summary className="text-[12px] text-[--color-fg-muted] cursor-pointer hover:text-[--color-fg]">
+                Detalle técnico
+              </summary>
+              <pre className="mt-2 text-[11px] font-mono text-[--color-fg-muted] bg-[--color-bg-subtle] p-3 rounded overflow-x-auto whitespace-pre-wrap">
+                {detalle}
+              </pre>
+            </details>
+          </div>
+        </div>
+      </div>
+    </main>
   );
 }
 
