@@ -7,7 +7,8 @@ buildCommand = "npm ci && npm run build"
 # Estándar Prisma: `migrate deploy` solo aplica migraciones nuevas que aún no
 # están en `_prisma_migrations`. Es la forma segura de mantener Railway en
 # sync con `prisma/migrations/`. NO usar `db push` (puede ser destructivo).
-startCommand = "npx prisma migrate deploy && npm start"
+preDeployCommand = "npx prisma migrate deploy"
+startCommand = "npm start"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
