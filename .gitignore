@@ -42,3 +42,10 @@ next-env.d.ts
 
 # Outputs de auditoría (regenerables)
 diag/output/
+
+# Metadata local de Claude Code (no versionar)
+.claude/
+
+# PDFs de documentación interna (no versionar sin confirmar caso a caso)
+SISTEMA-SNAPSHOT.pdf
+

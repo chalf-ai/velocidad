@@ -3,6 +3,13 @@
 /**
  * /score-gerencial · Score Gerencial de Eficiencia de Capital · V2 visual.
  *
+ * Decisión nomenclatura 2026-06: el "Score Gerencial" de esta pantalla mide
+ * la capacidad del gerente de administrar el capital bajo su responsabilidad
+ * (Stock Propio, Provisiones >90d, CP >15d, Saldos T3+, pesos 40/40/10/10) —
+ * eso es exactamente lo que un gerente controla y gestiona. Coherente.
+ * El score histórico de DISCIPLINA OPERACIONAL del Velocity OS se llama
+ * "Score Cumplimiento Operacional" y vive en /tendencias.
+ *
  * Layout en 5 bloques:
  *   1. PageHeader · kicker + título + corte
  *   2. HeroScore · banner ejecutivo gradiente (score + barra + llegar a 100)

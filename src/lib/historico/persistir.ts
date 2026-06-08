@@ -43,6 +43,13 @@ export interface PersistirHistoricoInput {
   tamano: number;
   /** Fecha de corte declarada por el archivo (la del POST). */
   fechaCorteArchivo: Date | null;
+  /**
+   * Fallback opcional cuando el parser no detectó fecha de corte interna.
+   * Se guarda con `fuenteFechaCorte: "fallback"` y warning explícito.
+   * No interrumpe el flujo: si tampoco hay fallback y la fecha sigue null,
+   * el snapshot no se persiste (return temprano).
+   */
+  fechaCorteFallback?: Date | null;
   userId: string;
 }
 
@@ -59,6 +66,42 @@ export interface PersistirHistoricoResult {
 // ─────────────────────────────────────────────────────────────────────────────
 // Reglas de derivación
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Detecta "Cierre <Mes> <Año>" en el nombre del archivo. Devuelve el período
+ * canónico que el nombre declara, o null si no se reconoce el patrón.
+ *
+ * Casos típicos del proveedor de informes:
+ *   · "Informe Stock y Lineas - Cierre Abril 2026 - Pompeyo Carrasco.xlsx"
+ *     → fechaCorteExcel interna = 04-may-2026 (primer día hábil del mes siguiente).
+ *     La derivación por fecha lo asignaría a Mayo (incorrecto).
+ *     El nombre dice "Cierre Abril" → override a 2026-04.
+ *
+ * Esto es estrictamente un override DECLARATIVO del cliente: si el archivo
+ * dice explícitamente "Cierre <Mes>", confiamos en eso por sobre la fecha
+ * interna del Excel.
+ */
+const MESES_ES: Record<string, number> = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6,
+  julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10,
+  noviembre: 11, diciembre: 12,
+};
+
+export function derivarPeriodoDeNombre(
+  nombreArchivo: string,
+): { snapshotDate: Date; snapshotPeriod: string } | null {
+  const n = nombreArchivo.toLowerCase();
+  // patrón: "cierre <mes> <año>"
+  const m = n.match(/\bcierre\s+([a-záéíóú]+)\s+(\d{4})\b/i);
+  if (!m) return null;
+  const mes = MESES_ES[m[1].toLowerCase()];
+  const year = parseInt(m[2], 10);
+  if (!mes || !Number.isFinite(year)) return null;
+  // mes 0-indexed
+  const snapshotDate = new Date(Date.UTC(year, mes, 0)); // día 0 del mes siguiente = último día del mes
+  const snapshotPeriod = `${year}-${String(mes).padStart(2, "0")}`;
+  return { snapshotDate, snapshotPeriod };
+}
 
 /**
  * Deriva el período canónico desde la fecha de corte declarada.
@@ -91,9 +134,73 @@ export function derivarPeriodo(
   return { snapshotDate, snapshotPeriod };
 }
 
-/** Hash determinístico del payload — idempotencia. */
+/**
+ * Hash determinístico del payload — idempotencia.
+ *
+ * Excluye campos NO estables que cambian entre parseos del mismo archivo:
+ *   · `report.fechaCarga` (new Date() del momento del parseo)
+ *   · `report.durMs` (tiempo de parseo, varía)
+ *   · `*.report.fechaCarga` / `*.report.durMs` (mismo patrón en sub-parsers
+ *     como saldos/fne/provisiones)
+ *
+ * Sin esto, el mismo Excel subido dos veces produce hashes distintos y
+ * el chequeo de idempotencia falla — la DB acumula duplicados.
+ */
 export function hashPayload(payload: unknown): string {
-  return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  const norm: unknown = JSON.parse(JSON.stringify(payload));
+  // Limpieza recursiva acotada a objetos `report` directamente
+  function stripReport(o: unknown): void {
+    if (!o || typeof o !== "object") return;
+    const obj = o as Record<string, unknown>;
+    const rep = obj.report;
+    if (rep && typeof rep === "object") {
+      const r = rep as Record<string, unknown>;
+      delete r.fechaCarga;
+      delete r.durMs;
+    }
+  }
+  stripReport(norm);
+  return crypto.createHash("sha256").update(JSON.stringify(norm)).digest("hex");
+}
+
+/**
+ * Calcula prioridad de cierre de un archivo · 0-100.
+ *
+ * Mayor prioridad = mejor candidato a "ganar" los KPIs del período cuando
+ * hay múltiples archivos de la misma fuente. Reglas:
+ *
+ *   1. Distancia al fin de mes (max 60 pts)
+ *      · Día del archivo = último día del mes canónico → +60
+ *      · Cada día de distancia resta 2 pts
+ *   2. Palabra "cierre" en el nombre → +30 pts
+ *   3. Fecha fin de mes en el nombre (28/29/30/31 - MM) → +10 pts
+ *
+ * Umbral `esCierreMensual = prioridad >= 70`.
+ *
+ * Ejemplos:
+ *   · "Cierre Mayo 2026" (fecha 31-may, snapshotDate 31-may) → 60 + 30 = 90 → cierre
+ *   · "08 Mayo 2026"      (fecha 08-may, snapshotDate 31-may) → 60-46+0+0 ≈ 14 → intermedio
+ *   · "Cierre Mayo" sin fecha → 0+30 = 30 → bajo pero marcado por nombre
+ */
+export function calcularPrioridadCierre(
+  fechaCorteArchivo: Date | null,
+  nombreArchivo: string,
+  snapshotDate: Date,
+): { prioridad: number; esCierreMensual: boolean } {
+  let prioridad = 0;
+  if (fechaCorteArchivo && Number.isFinite(fechaCorteArchivo.getTime())) {
+    const dias = Math.abs(
+      (snapshotDate.getTime() - fechaCorteArchivo.getTime()) / 86_400_000,
+    );
+    prioridad = Math.max(0, 60 - dias * 2);
+  }
+  const nombreNorm = nombreArchivo.toLowerCase();
+  if (/\bcierre\b/.test(nombreNorm)) prioridad += 30;
+  if (/\b(?:28|29|30|31)[-_\s](?:0?[1-9]|1[0-2])\b/.test(nombreNorm)) {
+    prioridad += 10;
+  }
+  prioridad = Math.min(100, Math.round(prioridad));
+  return { prioridad, esCierreMensual: prioridad >= 70 };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,27 +446,71 @@ export async function persistirHistorico(
 ): Promise<PersistirHistoricoResult> {
   const warnings: string[] = [];
 
-  const periodo = derivarPeriodo(input.fechaCorteArchivo);
+  // ── Resolución de fecha de corte (con fallback opcional) ───────────────
+  let fechaCorteEfectiva: Date | null = input.fechaCorteArchivo;
+  let fuenteFechaCorte: "excel" | "fallback" = "excel";
+  if (!fechaCorteEfectiva && input.fechaCorteFallback) {
+    fechaCorteEfectiva = input.fechaCorteFallback;
+    fuenteFechaCorte = "fallback";
+    warnings.push(
+      `Fecha de corte asignada por fallback (parser no detectó): ${fechaCorteEfectiva.toISOString()}`,
+    );
+  }
+  // Override declarativo por nombre · si el archivo declara "Cierre <Mes>"
+  // y la fecha interna apunta a OTRO mes (caso típico: informe de cierre
+  // generado el primer día hábil del mes siguiente), confiamos en el nombre.
+  const periodoNombre = derivarPeriodoDeNombre(input.nombreArchivo);
+  const periodoFecha = derivarPeriodo(fechaCorteEfectiva);
+  let periodo = periodoFecha;
+  if (periodoNombre && (!periodoFecha || periodoFecha.snapshotPeriod !== periodoNombre.snapshotPeriod)) {
+    periodo = periodoNombre;
+    warnings.push(
+      `Período derivado del NOMBRE del archivo (${periodoNombre.snapshotPeriod}) — fecha interna sugería ${periodoFecha?.snapshotPeriod ?? "n/d"}. Override declarativo "Cierre <Mes>".`,
+    );
+  }
   if (!periodo) {
     return {
       archivoCreado: false,
       snapshotPeriod: null,
       snapshotActualizado: false,
-      warnings: ["No se pudo derivar período: fecha de corte ausente o inválida"],
+      warnings: [
+        ...warnings,
+        "No se pudo derivar período: fecha de corte ausente o inválida (sin fallback)",
+      ],
     };
   }
 
   const hashSha256 = hashPayload(input.payload);
 
-  // Idempotencia · si ya existe el mismo (fuente, fecha, hash) no hacemos nada.
+  // Idempotencia · si ya existe el mismo (fuente, fecha, hash) NO duplicamos
+  // el registro. Pero si el existente NO tiene payload guardado (cargado en
+  // versión previa de Fase 1a) y ahora sí lo tenemos, hacemos UPDATE
+  // retroactivo solo del payload. Esto destraba el motor 1b-A para archivos
+  // viejos sin re-cargar todo el flujo.
   const archivoExistente = await prisma.snapshotHistoricoArchivo.findFirst({
     where: {
       fuente: input.fuente,
       snapshotDate: periodo.snapshotDate,
       hashSha256,
     },
+    select: { id: true, payload: true },
   });
   if (archivoExistente) {
+    if (archivoExistente.payload == null && input.payload != null) {
+      await prisma.snapshotHistoricoArchivo.update({
+        where: { id: archivoExistente.id },
+        data: { payload: input.payload as object },
+      });
+      return {
+        archivoCreado: false,
+        snapshotPeriod: periodo.snapshotPeriod,
+        snapshotActualizado: false,
+        warnings: [
+          ...warnings,
+          "Archivo ya registrado (mismo hash) — payload retroactivo añadido para destrabar 1b-A",
+        ],
+      };
+    }
     return {
       archivoCreado: false,
       snapshotPeriod: periodo.snapshotPeriod,
@@ -368,11 +519,38 @@ export async function persistirHistorico(
     };
   }
 
+  // ── Calcular prioridad de cierre de ESTE archivo ───────────────────────
+  const { prioridad: prioridadNueva, esCierreMensual } = calcularPrioridadCierre(
+    fechaCorteEfectiva,
+    input.nombreArchivo,
+    periodo.snapshotDate,
+  );
+
   const extract = extraerKpisPorFuente(input.fuente, input.payload);
   warnings.push(...extract.warnings);
 
   // Transacción · archivo inmutable + upsert snapshot
   const { snapshotActualizado } = await prisma.$transaction(async (tx) => {
+    // Consultar prioridad del archivo GANADOR actual para esta (fuente, período).
+    // Si el nuevo tiene menor prioridad, NO sobrescribe los KPIs (solo registra archivo).
+    const ganadorActual = await tx.snapshotHistoricoArchivo.findFirst({
+      where: {
+        fuente: input.fuente,
+        snapshotPeriod: periodo.snapshotPeriod,
+      },
+      orderBy: { prioridadCierre: "desc" },
+      select: { prioridadCierre: true, nombreOriginal: true },
+    });
+    const prioridadGanadora = ganadorActual?.prioridadCierre ?? -1;
+    const debeEscribirKpis = prioridadNueva >= prioridadGanadora;
+    if (!debeEscribirKpis) {
+      warnings.push(
+        `KPIs no actualizados: "${input.nombreArchivo}" prioridad=${prioridadNueva}` +
+          ` < ganador "${ganadorActual?.nombreOriginal ?? "?"}" prioridad=${prioridadGanadora}.` +
+          ` Cierre real no debe ser pisado por corte intermedio.`,
+      );
+    }
+
     await tx.snapshotHistoricoArchivo.create({
       data: {
         fuente: input.fuente,
@@ -383,9 +561,17 @@ export async function persistirHistorico(
         tamano: input.tamano,
         fechaCorteDeclarada: input.fechaCorteArchivo,
         fechaCorteDetectada: input.fechaCorteArchivo,
+        fuenteFechaCorte,
+        esCierreMensual,
+        prioridadCierre: prioridadNueva,
         parseStatus: extract.warnings.length > 0 ? "parcial" : "ok",
         warnings: extract.warnings,
         origenDeteccion: "ingesta",
+        // Payload duplicado intencionalmente: el archivo histórico debe ser
+        // AUTOCONTENIDO. Si mañana se rota/borra el Snapshot vivo, el motor
+        // 1b-A sigue pudiendo reconstruir VUs del período. Cost: ~10 MB por
+        // ingesta de Stock; aceptable para el horizonte histórico actual.
+        payload: input.payload as object,
         userId: input.userId,
       },
     });
@@ -437,7 +623,7 @@ export async function persistirHistorico(
     }
 
     if (existente) {
-      // Update · merge fuentes/files/hashes y campos nuevos
+      // Update · siempre merge trazabilidad; KPIs solo si tiene prioridad >= ganador.
       const nuevosFiles = Array.from(new Set([...existente.sourceFiles, input.nombreArchivo]));
       const nuevosHashes = Array.from(new Set([...existente.sourceHashes, hashSha256]));
       const nuevasFuentes = Array.from(new Set([...existente.fuentesUsadas, fuenteStr]));
@@ -446,7 +632,8 @@ export async function persistirHistorico(
       await tx.operationalSnapshot.update({
         where: { id: existente.id },
         data: {
-          ...extract.kpis,
+          // KPIs solo si este archivo tiene prioridad ≥ que el ganador previo
+          ...(debeEscribirKpis ? extract.kpis : {}),
           sourceFiles: nuevosFiles,
           sourceHashes: nuevosHashes,
           fuentesUsadas: nuevasFuentes,

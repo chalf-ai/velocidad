@@ -221,6 +221,16 @@ model SnapshotHistoricoArchivo {
   fechaCorteDeclarada DateTime?
   /// Fecha que detectó el parser interno.
   fechaCorteDetectada DateTime?
+  /// Origen de la fechaCorte: "excel" (parser) | "filename" | "fallback" | "manual".
+  fuenteFechaCorte    String   @default("excel")
+  /// true cuando el archivo califica como cierre mensual (prioridad >= 70).
+  esCierreMensual     Boolean  @default(false)
+  /// Prioridad 0-100. Determina qué archivo "gana" los KPIs cuando hay
+  /// múltiples archivos de la misma fuente para el mismo período.
+  /// Regla: el archivo con mayor prioridadCierre escribe los KPIs.
+  /// Un corte intermedio (08-May, prioridad ~40) NO pisa el cierre real
+  /// (31-May, prioridad >= 90).
+  prioridadCierre     Int      @default(0)
   /// "ok" | "parcial" | "error"
   parseStatus         String   @default("ok")
   warnings            String[] @default([])
@@ -238,6 +248,7 @@ model SnapshotHistoricoArchivo {
   @@index([snapshotPeriod])
   @@index([snapshotDate])
   @@index([hashSha256])
+  @@index([fuente, snapshotPeriod, prioridadCierre])
 }
 
 model OperationalSnapshot {
@@ -350,6 +361,13 @@ model OperationalSnapshot {
   responsablesConAtrasos Int?
   sucursalesConBrechas   Int?
   marcasConBrechas       Int?
+
+  // ── COMPONENTES DE SCORES (1b) ───────────────────────────────────
+  // JSON flexible con la descomposición de cada score por indicador,
+  // metadata Venn de bloqueos FNE, lista de marcas bajo umbral, y
+  // warnings de cálculo. Permite explicar variaciones sin recalcular.
+  // Shape documentado en src/lib/historico/score-componentes.ts.
+  scoreComponentes Json?
 
   // ── AUDITORÍA ────────────────────────────────────────────────────
   createdAt DateTime @default(now())

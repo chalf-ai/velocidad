@@ -247,6 +247,23 @@ input::placeholder {
   color: var(--color-fg-dim);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * Fix Windows: cuando un <select> está sobre fondo oscuro (ej. Header) y
+ * tiene `text-white`, Chrome/Edge en Windows hereda ese color en el popup
+ * nativo del dropdown — y como el popup pinta su fondo en blanco, las
+ * opciones quedan invisibles (blanco sobre blanco).
+ *
+ * Mac no tiene este bug porque Safari/Chrome usan su propio popup nativo
+ * que ignora el color del select.
+ *
+ * Forzamos contraste explícito en <option>: fondo blanco + texto oscuro.
+ * Esto no afecta a Mac (donde ya se ve bien) y arregla Windows.
+ * ───────────────────────────────────────────────────────────────────── */
+select option {
+  background-color: #ffffff;
+  color: var(--color-fg);
+}
+
 /* Progress bar */
 .progress-track {
   background: var(--color-bg-elev-3);
