@@ -348,3 +348,26 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     },
   };
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Velocity OS rename · "Score Gerencial" antiguo → "Score Higiene Capital"
+//
+// Decisión usuario 2026-06 (Fase 1b-B): el nuevo Score Gerencial del
+// Velocity OS mide DISCIPLINA OPERACIONAL (alertas, brechas, reincidencia),
+// no higiene financiera. El score histórico que vive en este archivo mide
+// HIGIENE DE CAPITAL (Stock Propio, Provisiones >90d, CP >15d, Saldos T3+).
+//
+// Para evitar convivencia ambigua de dos "Scores Gerenciales", el legacy
+// se renombra a `calcularScoreHigieneCapital`. Mantenemos `calcularScoreGerencial`
+// como alias DEPRECATED por compatibilidad con la UI vivo — se migra cuando
+// se toque UI en una fase posterior (NO en 1b-B).
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Score de HIGIENE de capital (Stock Propio, Provisiones >90d, CP >15d, Saldos T3+).
+ * Lectura financiera. NO es el Score Gerencial del Velocity OS histórico
+ * (ese mide disciplina operacional · ver `extraer-1b-b.ts`).
+ */
+export const calcularScoreHigieneCapital = calcularScoreGerencial;
+export type ScoreHigieneCapitalResultado = ScoreGerencialResultado;
+export type ScoreHigieneCapitalInput = ScoreGerencialInput;

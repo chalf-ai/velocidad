@@ -24,6 +24,7 @@ import {
   Receipt,
   ScrollText,
   TestTube2,
+  TrendingUp,
   Trophy,
   Truck,
   LogOut,
@@ -69,6 +70,9 @@ const NAV_EXEC: NavItem[] = [
   { href: "/provisiones", label: "Provisiones", icon: ClipboardList },
   { href: "/facturados-no-entregados", label: "Facturados no entregados", icon: Truck },
   { href: "/capital-trabajo", label: "Capital de trabajo", icon: Banknote },
+  // Tendencias es la lectura HISTÓRICA del sistema de Capital de Trabajo y
+  // Velocity OS — por eso vive inmediatamente debajo (no es módulo aparte).
+  { href: "/tendencias", label: "Tendencias", icon: TrendingUp },
 ];
 
 const NAV_MARCAS: NavItem[] = [
