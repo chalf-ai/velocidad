@@ -3,7 +3,11 @@ builder = "NIXPACKS"
 buildCommand = "npm ci && npm run build"
 
 [deploy]
-startCommand = "npm start"
+# Aplicar migrations versionadas (idempotente) ANTES de levantar el server.
+# Estándar Prisma: `migrate deploy` solo aplica migraciones nuevas que aún no
+# están en `_prisma_migrations`. Es la forma segura de mantener Railway en
+# sync con `prisma/migrations/`. NO usar `db push` (puede ser destructivo).
+startCommand = "npx prisma migrate deploy && npm start"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
