@@ -481,10 +481,7 @@ export default async function TendenciasPage({
                     sgLegacyPorPeriodo={sgLegacyPorPeriodo}
                     marca={marca}
                   />
-                  <HeroQuePaso
-                    filas={filas}
-                    sgLegacyPorPeriodo={sgLegacyPorPeriodo}
-                  />
+                  <HeroQuePaso filas={filas} />
                   <Sparklines
                     filas={filas}
                     sgLegacyPorPeriodo={sgLegacyPorPeriodo}
@@ -497,7 +494,6 @@ export default async function TendenciasPage({
                     <AperturaPorCargas
                       periodo={periodoApertura}
                       cargas={cargasPeriodo}
-                      sgLegacyActual={sgLegacyPorPeriodo[periodoApertura]}
                       scoresActual={filas[filas.length - 1]}
                     />
                   )}
@@ -807,10 +803,8 @@ function HeroCard({
 
 function HeroQuePaso({
   filas,
-  sgLegacyPorPeriodo,
 }: {
   filas: SnapshotFila[];
-  sgLegacyPorPeriodo: Record<string, ResultadoScoreGerencialHistorico>;
 }) {
   const ultimo = filas[filas.length - 1];
   const previo = filas.length >= 2 ? filas[filas.length - 2] : null;
@@ -819,17 +813,8 @@ function HeroQuePaso({
 
   const periodoLabel = nombrePeriodo(ultimo.periodo, ultimo);
 
-  // Score Gerencial legacy: delta solo si AMBOS períodos son confiables.
-  const sgUlt = sgLegacyPorPeriodo[ultimo.periodo];
-  const sgPrev = previo ? sgLegacyPorPeriodo[previo.periodo] : null;
-  const sgDelta =
-    sgUlt?.esConfiable && sgPrev?.esConfiable && sgUlt.score !== null && sgPrev.score !== null
-      ? sgUlt.score - sgPrev.score
-      : null;
-  const sgDeltaTexto =
-    sgUlt?.esConfiable && !sgDelta && sgDelta !== 0
-      ? "sin comparable confiable"
-      : null;
+  // Score Gerencial legacy oculto (stop-the-bleeding) — se reemplaza por
+  // <HeroCardOcultoLegacy /> que dirige a /score-gerencial canónico.
 
   return (
     <section className="mb-8">
@@ -849,14 +834,10 @@ function HeroQuePaso({
         </span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <HeroCard
-          titulo="Score Gerencial"
-          subtitulo="presión / higiene financiera (legacy)"
-          score={sgUlt?.esConfiable ? sgUlt.score : null}
-          delta={sgDelta}
-          deltaTextoOverride={sgDeltaTexto}
-          causa={sgUlt?.esConfiable ? sgUlt.causaRaizPrincipal : null}
-        />
+        {/* Score Gerencial legacy reconstruido → temporalmente oculto.
+            Stop-the-bleeding 2026-06: la reconstrucción desde payload histórico
+            no es confiable. Vease /score-gerencial para el canónico vivo. */}
+        <HeroCardOcultoLegacy />
         <HeroCard
           titulo="Score Capital"
           subtitulo="presión financiera"
@@ -880,6 +861,34 @@ function HeroQuePaso({
         />
       </div>
     </section>
+  );
+}
+
+/**
+ * Card que sustituye al HeroCard de Score Gerencial legacy. No muestra número.
+ * Stop-the-bleeding 2026-06 — ver AvisoScoreLegacyOculto para contexto.
+ */
+function HeroCardOcultoLegacy() {
+  return (
+    <div className="surface bg-white p-4 flex flex-col gap-2">
+      <div className="text-[11px] uppercase tracking-[0.14em] text-[--color-fg-dim] font-semibold">
+        Score Gerencial
+      </div>
+      <div className="text-[12px] text-[--color-fg-muted]">
+        higiene financiera (legacy)
+      </div>
+      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-900 leading-snug">
+        <span className="font-semibold">Temporalmente oculto.</span> El score
+        canónico vigente se consulta en{" "}
+        <a
+          href="/score-gerencial"
+          className="font-semibold underline decoration-amber-700/40 underline-offset-2 hover:decoration-amber-700"
+        >
+          /score-gerencial
+        </a>
+        .
+      </div>
+    </div>
   );
 }
 
@@ -1092,78 +1101,40 @@ function Sparklines({
 /**
  * Tarjeta dedicada para Score Gerencial legacy.
  *
- * Política: sólo mostramos los puntos CONFIABLES (con las 4 fuentes). Si hay
- * < 2 puntos confiables NO dibujamos sparkline (sería engañoso) — mostramos
- * texto "Histórico insuficiente para tendencia" + score actual si existe.
+ * Stop-the-bleeding 2026-06: el sparkline se ocultó porque sus puntos
+ * vienen de reconstrucción no confiable. Se conserva el componente para
+ * mantener la estructura visual; el contenido es ahora un mensaje claro.
  */
 function SparklineSGLegacyCard({
   puntos,
 }: {
   puntos: { periodo: string; score: number; fila: SnapshotFila }[];
 }) {
-  const tieneTendencia = puntos.length >= 2;
-  const ultimoPunto = puntos.length > 0 ? puntos[puntos.length - 1] : null;
-  const primerPunto = puntos.length > 0 ? puntos[0] : null;
-
+  // `puntos` se sigue recibiendo (firma estable) pero no se grafica.
+  void puntos;
   return (
     <div className="surface bg-white p-4">
       <div className="text-[11px] uppercase tracking-[0.14em] text-[--color-fg-dim] font-semibold">
         Score Gerencial · legacy
       </div>
       <div className="text-[12px] text-[--color-fg-muted] mt-0.5 mb-2">
-        presión / higiene financiera
+        higiene financiera
       </div>
-      {tieneTendencia ? (
-        <Sparkline
-          valores={puntos.map((p) => p.score)}
-          etiquetas={puntos.map((p) => {
-            const m = parseInt(p.periodo.split("-")[1], 10);
-            return MESES_ES[m - 1] ?? "?";
-          })}
-        />
-      ) : ultimoPunto ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] text-neutral-800">
-          <div className="font-bold mb-1.5 text-amber-900">
-            Sin histórico mensual confiable antes de Junio.
-          </div>
-          <div className="text-neutral-700 leading-relaxed">
-            Primer período confiable:{" "}
-            <span className="font-bold">
-              {nombrePeriodo(ultimoPunto.periodo, ultimoPunto.fila)}
-            </span>{" "}
-            con score{" "}
-            <span
-              className="font-bold"
-              style={{ color: zonaColorHex(ultimoPunto.score) }}
-            >
-              {ultimoPunto.score}
-            </span>
-            .
-          </div>
-          <div className="text-[11px] text-neutral-600 mt-2 leading-relaxed">
-            Los meses anteriores no tienen las 4 fuentes (BASE_STOCK + SALDOS +
-            PROVISIONES + FNE) cargadas y por política no se inventan puntos
-            mensuales. Capital, Cumplimiento y Velocidad sí tienen tendencia
-            histórica (ver más abajo).
-          </div>
-          {primerPunto !== ultimoPunto && (
-            <div className="text-[11px] text-[--color-fg-dim] mt-1.5 italic">
-              Puntos disponibles: {puntos.length}.
-            </div>
-          )}
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] text-amber-900 leading-relaxed">
+        <div className="font-semibold mb-1">Tendencia temporalmente oculta.</div>
+        <div className="text-neutral-800">
+          La reconstrucción del score desde payload histórico no conserva todos
+          los datos vivos usados por Score Gerencial. El score canónico
+          vigente se consulta en{" "}
+          <a
+            href="/score-gerencial"
+            className="font-semibold underline decoration-amber-700/40 underline-offset-2 hover:decoration-amber-700"
+          >
+            /score-gerencial
+          </a>
+          .
         </div>
-      ) : (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] text-neutral-800">
-          <div className="font-bold mb-1 text-amber-900">
-            Sin histórico mensual confiable.
-          </div>
-          <div className="text-neutral-700 leading-relaxed">
-            Ningún cierre tiene las 4 fuentes cargadas (BASE_STOCK + SALDOS +
-            PROVISIONES + FNE). El Score Gerencial legacy aparecerá apenas un
-            período tenga cobertura completa.
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -2064,7 +2035,7 @@ function EvolucionDiariaJunio({
     <section className="mb-8">
       <div className="flex items-baseline gap-3 mb-3">
         <h2 className="text-[18px] font-semibold text-[--color-fg] tracking-tight">
-          Evolución diaria · {periodoLabel}
+          Cargas del período · {periodoLabel}
         </h2>
         {marca && (
           <span className="text-[12px] text-[--color-fg-muted]">
@@ -2073,7 +2044,7 @@ function EvolucionDiariaJunio({
         )}
       </div>
 
-      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 mb-5 text-[12.5px] text-neutral-800 leading-relaxed">
+      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 mb-3 text-[12.5px] text-neutral-800 leading-relaxed">
         {periodoLabel} se muestra por día porque es un mes vivo. Cada hito
         muestra <span className="font-semibold">fecha de corte</span> del archivo
         y <span className="font-semibold">fecha de carga</span> al sistema.{" "}
@@ -2081,6 +2052,8 @@ function EvolucionDiariaJunio({
           Política: sólo días con cargas reales; sin inventar puntos.
         </span>
       </div>
+
+      <AvisoScoreLegacyOculto />
 
       {puntos.length === 0 ? (
         <div className="surface bg-white p-5 text-[13px] text-[--color-fg-muted]">
@@ -2106,6 +2079,32 @@ function EvolucionDiariaJunio({
 }
 
 /**
+ * Aviso ejecutivo · stop-the-bleeding 2026-06.
+ *
+ * El score legacy reconstruido desde payloads históricos no es confiable
+ * (pérdida de fidelidad al rehidratar — ver diagnóstico). Hasta que se
+ * persista al momento de ingesta, esta vista oculta cualquier número de
+ * Score Gerencial reconstruido y dirige al usuario al canónico vivo.
+ */
+function AvisoScoreLegacyOculto() {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 mb-5 text-[12px] text-amber-900 leading-relaxed">
+      <span className="font-semibold">Score diario histórico temporalmente oculto.</span>{" "}
+      La reconstrucción desde payload histórico no conserva todos los datos
+      vivos usados por Score Gerencial. El score canónico vigente se consulta
+      en{" "}
+      <a
+        href="/score-gerencial"
+        className="font-semibold underline decoration-amber-700/40 underline-offset-2 hover:decoration-amber-700"
+      >
+        /score-gerencial
+      </a>
+      .
+    </div>
+  );
+}
+
+/**
  * Timeline horizontal de hitos. Cada hito = 1 día de carga con su corte/score.
  * Pensada para 2-5 puntos. No es sparkline estadístico; es narrativa.
  */
@@ -2119,13 +2118,13 @@ function TimelineHitosSG({ puntos }: { puntos: PuntoDiario[] }) {
     return (
       <div className="surface bg-white p-5 mb-5">
         <div className="text-[11px] uppercase tracking-[0.14em] text-[--color-fg-dim] font-semibold mb-3">
-          Score Gerencial · presión financiera crítica · evolución diaria
+          Cargas del período
         </div>
         <div className="flex flex-col items-center gap-2 py-2">
-          <HitoCircle punto={p} esUltimo />
+          <HitoCircle punto={p} esUltimo numHito={1} />
           <div className="text-[12px] text-[--color-fg-muted] mt-2 italic">
             Primer hito disponible. Cuando se sume otra carga aparecerá un
-            segundo hito y se verá la transición real.
+            segundo hito.
           </div>
         </div>
       </div>
@@ -2136,10 +2135,10 @@ function TimelineHitosSG({ puntos }: { puntos: PuntoDiario[] }) {
   return (
     <div className="surface bg-white p-5 mb-5">
       <div className="text-[11px] uppercase tracking-[0.14em] text-[--color-fg-dim] font-semibold mb-1">
-        Score Gerencial · presión financiera crítica
+        Cargas del período
       </div>
       <div className="text-[12px] text-[--color-fg-muted] mb-5">
-        evolución diaria por hitos · {puntos.length} cargas
+        evolución por archivos reales cargados · sin reconstruir score
       </div>
       <div className="relative">
         {/* Línea horizontal conectora (más discreta que sparkline) */}
@@ -2153,6 +2152,7 @@ function TimelineHitosSG({ puntos }: { puntos: PuntoDiario[] }) {
               key={p.dia}
               punto={p}
               esUltimo={idx === puntos.length - 1}
+              numHito={idx + 1}
             />
           ))}
         </div>
@@ -2164,22 +2164,27 @@ function TimelineHitosSG({ puntos }: { puntos: PuntoDiario[] }) {
 function HitoCircle({
   punto,
   esUltimo,
+  numHito,
 }: {
   punto: PuntoDiario;
   esUltimo: boolean;
+  numHito: number;
 }) {
-  const { sgLegacy, fechaCorteMin, fechaCorteMax } = punto;
-  const score = sgLegacy.esConfiable ? sgLegacy.score : null;
-  const color = score !== null ? zonaColorHex(score) : "#a3a3a3";
+  const { fechaCorteMin, fechaCorteMax } = punto;
+  // NOTA stop-the-bleeding 2026-06: el score legacy reconstruido desde payload
+  // histórico no es confiable (ver diagnóstico). Hasta que se persista al
+  // momento de ingesta, el círculo NO muestra score ejecutivo, solo el orden
+  // de hito. Color neutro (no semáforo) para no implicar estado.
+  const colorNeutro = esUltimo ? "#1d4ed8" : "#94a3b8";
 
   return (
     <div className="relative flex flex-col items-center">
-      {/* Punto */}
+      {/* Punto (sin score, etiqueta neutra) */}
       <div
-        className="size-14 rounded-full grid place-items-center text-white font-bold text-[20px] shadow-md ring-4 ring-white relative z-10"
-        style={{ background: color }}
+        className="size-14 rounded-full grid place-items-center text-white font-bold text-[14px] uppercase tracking-wider shadow-md ring-4 ring-white relative z-10"
+        style={{ background: colorNeutro }}
       >
-        {score !== null ? score : "—"}
+        Hito {numHito}
       </div>
       {/* Fechas debajo */}
       <div className="mt-3 text-center">
@@ -2194,20 +2199,7 @@ function HitoCircle({
             última carga
           </div>
         )}
-        {punto.deltaSG !== null && (
-          <div
-            className={`text-[11px] font-semibold mt-1 ${
-              Math.abs(punto.deltaSG) < 2
-                ? "text-neutral-500"
-                : punto.deltaSG > 0
-                  ? "text-emerald-700"
-                  : "text-red-700"
-            }`}
-          >
-            {punto.deltaSG > 0 ? "↑ +" : punto.deltaSG < 0 ? "↓ " : "→ "}
-            {punto.deltaSG} vs hito previo
-          </div>
-        )}
+        {/* Delta ocultado · venía de sgLegacy.score que no es confiable. */}
       </div>
     </div>
   );
@@ -2220,11 +2212,15 @@ function CardDiaria({
   punto: PuntoDiario;
   esUltimo: boolean;
 }) {
-  const { sgLegacy, deltaSG, diaLabel, cargasDelDia, fechaCorteMin, fechaCorteMax } = punto;
-  const colorScore = zonaColorHex(sgLegacy.score);
+  const { diaLabel, cargasDelDia, fechaCorteMin, fechaCorteMax } = punto;
 
   // Conjunto de fuentes que se subieron ese día
   const fuentesDelDia = Array.from(new Set(cargasDelDia.map((c) => c.fuente)));
+
+  // NOTA stop-the-bleeding 2026-06: el bloque del score (sgLegacy.score, delta,
+  // causa raíz, confianza basada en fuentes acumuladas) se oculta porque viene
+  // de reconstrucción no confiable. Se conserva la trazabilidad de cargas y
+  // fechas — la parte ejecutiva del número se quita hasta persistir al ingestar.
 
   return (
     <div className="surface bg-white p-4 flex flex-col gap-3">
@@ -2243,67 +2239,14 @@ function CardDiaria({
           )}
         </div>
         <div className="text-right">
-          {sgLegacy.esConfiable && sgLegacy.score !== null ? (
-            <>
-              <div
-                className="text-[36px] font-bold leading-none tracking-tight"
-                style={{ color: colorScore }}
-              >
-                {sgLegacy.score}
-              </div>
-              <div className="text-[10px] uppercase tracking-wider text-[--color-fg-dim] mt-0.5">
-                Score Ger.
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="text-[16px] font-semibold leading-none text-[--color-fg-muted]">
-                —
-              </div>
-              <div className="text-[10px] uppercase tracking-wider text-[--color-fg-dim] mt-0.5">
-                Datos insuf.
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Delta vs día anterior */}
-      <div className="text-[12px]">
-        {deltaSG !== null ? (
-          <span
-            className={
-              Math.abs(deltaSG) < 2
-                ? "text-[--color-fg-muted]"
-                : deltaSG > 0
-                  ? "text-[--color-success] font-semibold"
-                  : "text-[--color-danger] font-semibold"
-            }
-          >
-            {deltaSG > 0 ? "↑ +" : deltaSG < 0 ? "↓ " : "→ "}
-            {deltaSG > 0 ? deltaSG : deltaSG}
-            <span className="text-[--color-fg-muted] font-normal ml-1">
-              vs día anterior
-            </span>
-          </span>
-        ) : (
-          <span className="text-[--color-fg-dim] italic">
-            sin comparable confiable
-          </span>
-        )}
-      </div>
-
-      {/* Causa raíz */}
-      {sgLegacy.esConfiable && sgLegacy.causaRaizPrincipal && (
-        <div className="pt-2 border-t border-[--color-border-soft]">
-          <div className="text-[10px] uppercase tracking-wider text-[--color-fg-dim] font-semibold">
-            Causa raíz
+          <div className="text-[28px] font-bold leading-none tracking-tight text-[--color-fg]">
+            {cargasDelDia.length}
           </div>
-          <div className="text-[12.5px] text-[--color-fg] mt-0.5 leading-snug">
-            {sgLegacy.causaRaizPrincipal}
+          <div className="text-[10px] uppercase tracking-wider text-[--color-fg-dim] mt-0.5">
+            archivo{cargasDelDia.length === 1 ? "" : "s"}
           </div>
         </div>
-      )}
+      </div>
 
       {/* Archivos cargados ese día */}
       <div className="pt-2 border-t border-[--color-border-soft]">
@@ -2326,22 +2269,6 @@ function CardDiaria({
         <div className="text-[10px] text-[--color-fg-dim] mt-1.5">
           Fuentes ese día: {fuentesDelDia.join(" · ")}
         </div>
-      </div>
-
-      {/* Confianza */}
-      <div className="text-[11px] text-[--color-fg-dim]">
-        Confianza:{" "}
-        <span
-          className={
-            sgLegacy.esConfiable
-              ? "text-[--color-success] font-semibold"
-              : "text-[--color-warning] font-semibold"
-          }
-        >
-          {sgLegacy.esConfiable
-            ? "alta · 4 fuentes acumuladas hasta este día"
-            : `incompleta · faltan ${sgLegacy.fuentesFaltantes.join(", ")}`}
-        </span>
       </div>
     </div>
   );
@@ -2392,130 +2319,43 @@ function HeroScoreGerencialLegacy({
   sgLegacyPorPeriodo: Record<string, ResultadoScoreGerencialHistorico>;
   marca: string | null;
 }) {
-  const ultimo = filas[filas.length - 1];
-  const res = sgLegacyPorPeriodo[ultimo.periodo];
-
-  // Estado visual del score legacy: 85+ bueno · 60+ riesgo · <60 crítico
-  // (umbrales históricos del selector, ver score-gerencial.ts)
-  const estado =
-    res?.esConfiable && res.score !== null
-      ? res.score >= 85
-        ? "bueno"
-        : res.score >= 60
-          ? "riesgo"
-          : "critico"
-      : null;
-
-  const gradiente =
-    estado === "bueno"
-      ? "linear-gradient(135deg, #047857 0%, #10b981 100%)"
-      : estado === "riesgo"
-        ? "linear-gradient(135deg, #b45309 0%, #d97706 100%)"
-        : estado === "critico"
-          ? "linear-gradient(135deg, #991b1b 0%, #dc2626 100%)"
-          : "linear-gradient(135deg, #475569 0%, #64748b 100%)";
-
+  // Stop-the-bleeding 2026-06 · banner hero ocultado.
+  // El número grande venía de sgLegacyPorPeriodo[ultimo.periodo].score, que es
+  // la reconstrucción legacy desde payload histórico — no confiable hoy.
+  // Hasta persistir el score al momento de ingesta, no se muestra ejecutivo.
+  void filas;
+  void sgLegacyPorPeriodo;
   return (
     <section className="mb-8">
-      <div
-        className="rounded-2xl text-white shadow-lg px-6 py-6 relative overflow-hidden"
-        style={{ background: gradiente }}
-      >
-        <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_280px] gap-6 items-center">
-          {/* Score grande */}
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] opacity-85">
-              Score Gerencial · presión financiera crítica
-            </div>
-            <div className="text-[12px] opacity-80 mt-0.5">
-              fórmula legacy 40 / 40 / 10 / 10
+      <div className="rounded-2xl bg-white border border-amber-200 shadow-sm px-6 py-5">
+        <div className="flex items-start gap-4">
+          <div className="rounded-full bg-amber-50 px-3 py-2 text-[10px] uppercase tracking-[0.16em] font-bold text-amber-800 shrink-0">
+            Score Gerencial
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[14px] font-semibold text-[--color-fg]">
+              Banner ejecutivo temporalmente oculto
               {marca && (
-                <>
+                <span className="text-[--color-fg-muted] font-normal">
                   {" "}
-                  ·{" "}
-                  <span className="font-semibold">{marca}</span>
-                </>
+                  · {marca}
+                </span>
               )}
             </div>
-            <div className="flex items-baseline gap-2 mt-3">
-              <span className="text-[72px] font-bold tracking-tight leading-none mono">
-                {res?.esConfiable && res.score !== null ? res.score : "—"}
-              </span>
-              <span className="text-[18px] font-semibold opacity-80">/ 100</span>
-            </div>
-            {estado && (
-              <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/15 text-[11px] uppercase tracking-wider font-semibold">
-                {estado === "bueno" ? "Bueno" : estado === "riesgo" ? "Atención" : "Crítico"}
-              </div>
-            )}
-          </div>
-
-          {/* Centro · estado */}
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] opacity-85 mb-1.5">
-              Período · {nombrePeriodo(ultimo.periodo, ultimo)}
-            </div>
-            {res?.esConfiable ? (
-              <>
-                <p className="text-[13.5px] leading-relaxed opacity-90 max-w-xl">
-                  {res.score !== null && res.score < 60 && (
-                    <>
-                      Presión financiera crítica concentrada en{" "}
-                      <span className="font-semibold">{res.causaRaizPrincipal}</span>.
-                    </>
-                  )}
-                  {res.score !== null && res.score >= 60 && res.score < 85 && (
-                    <>
-                      Presión financiera moderada · principal foco:{" "}
-                      <span className="font-semibold">{res.causaRaizPrincipal}</span>.
-                    </>
-                  )}
-                  {res.score !== null && res.score >= 85 && (
-                    <>
-                      Higiene financiera saludable · indicadores en meta.
-                    </>
-                  )}
-                </p>
-                <div className="text-[11px] opacity-75 mt-2">
-                  Fuentes: {res.fuentesPresentes.join(" · ")} · {res.nVUs} VUs
-                </div>
-              </>
-            ) : (
-              <p className="text-[13px] opacity-90 leading-relaxed max-w-xl">
-                Score Gerencial legacy no disponible para este período.
-                Requiere las 4 fuentes (BASE_STOCK + SALDOS + PROVISIONES + FNE).
-                {res?.fuentesFaltantes && res.fuentesFaltantes.length > 0 && (
-                  <>
-                    {" "}
-                    <span className="font-semibold">
-                      Faltan: {res.fuentesFaltantes.join(", ")}
-                    </span>
-                    .
-                  </>
-                )}
-              </p>
-            )}
-          </div>
-
-          {/* Derecha · indicadores legacy resumen */}
-          <div className="space-y-1.5">
-            {res?.esConfiable && res.indicadores ? (
-              res.indicadores.map((ind) => (
-                <div
-                  key={ind.id}
-                  className="flex items-center justify-between gap-3 text-[12px]"
-                >
-                  <span className="opacity-85 truncate">{ind.nombre}</span>
-                  <span className="font-semibold tabular-nums">
-                    {ind.puntos.toFixed(0)} / {ind.peso}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <div className="text-[11px] opacity-70 italic">
-                Sin desglose de indicadores
-              </div>
-            )}
+            <p className="text-[12.5px] text-[--color-fg-muted] leading-relaxed mt-1">
+              La reconstrucción del Score Gerencial legacy desde payload
+              histórico no conserva todos los datos vivos usados por la
+              fórmula 40 / 40 / 10 / 10. Para evitar mostrar números
+              inconsistentes, el banner está oculto. El score canónico
+              vigente se consulta en{" "}
+              <a
+                href="/score-gerencial"
+                className="font-semibold underline decoration-amber-700/40 underline-offset-2 hover:decoration-amber-700"
+              >
+                /score-gerencial
+              </a>
+              .
+            </p>
           </div>
         </div>
       </div>
@@ -2540,12 +2380,10 @@ interface CargaRow {
 function AperturaPorCargas({
   periodo,
   cargas,
-  sgLegacyActual,
   scoresActual,
 }: {
   periodo: string;
   cargas: CargaRow[];
-  sgLegacyActual: ResultadoScoreGerencialHistorico | undefined;
   scoresActual: SnapshotFila;
 }) {
   const mes = parseInt(periodo.split("-")[1], 10);
@@ -2583,23 +2421,23 @@ function AperturaPorCargas({
 
       {/* Resumen score vigente */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-5">
-        <div className="surface bg-white p-3 text-center">
-          <div className="text-[10px] uppercase tracking-wider text-[--color-fg-dim] font-semibold">
+        {/* Score Gerencial legacy reconstruido → oculto stop-the-bleeding 2026-06 */}
+        <div className="surface bg-white p-3 text-center border border-amber-200">
+          <div className="text-[10px] uppercase tracking-wider text-amber-800 font-semibold">
             Score Gerencial
           </div>
-          <div
-            className="text-[28px] font-bold tracking-tight mt-1 leading-none"
-            style={{
-              color: sgLegacyActual?.esConfiable && sgLegacyActual.score !== null
-                ? zonaColorHex(sgLegacyActual.score)
-                : "#8b94a3",
-            }}
-          >
-            {sgLegacyActual?.esConfiable && sgLegacyActual.score !== null
-              ? sgLegacyActual.score
-              : "—"}
+          <div className="text-[18px] font-semibold tracking-tight mt-2 leading-none text-amber-700">
+            oculto
           </div>
-          <div className="text-[10px] text-[--color-fg-muted] mt-1">vigente</div>
+          <div className="text-[10px] text-[--color-fg-muted] mt-1 leading-snug">
+            ver{" "}
+            <a
+              href="/score-gerencial"
+              className="font-semibold underline decoration-amber-700/40 underline-offset-2 hover:decoration-amber-700"
+            >
+              /score-gerencial
+            </a>
+          </div>
         </div>
         <div className="surface bg-white p-3 text-center">
           <div className="text-[10px] uppercase tracking-wider text-[--color-fg-dim] font-semibold">
