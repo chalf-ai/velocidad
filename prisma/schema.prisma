@@ -31,6 +31,8 @@ model User {
   alertaLogs         AlertaLog[]
   alertaConfs        AlertaConfig[]
   historicoArchivos  SnapshotHistoricoArchivo[]
+  tareasAsignadas    TareaOperacional[] @relation("TareasAsignadas")
+  tareasCreadas      TareaOperacional[] @relation("TareasCreadas")
 }
 
 enum Rol {
@@ -160,10 +162,15 @@ model AlertaLog {
   enviado   Boolean    @default(false)
   errorMsg  String?    // mensaje de error si falló el envío
   waMsgId   String?    // ID del mensaje en WhatsApp
+  /// Tarea operacional que originó esta alerta (solo tipo TAREA_ASIGNADA).
+  /// César (agent/) NO lee esta columna todavía — F2 le agregará el poller.
+  tareaId   String?
+  tarea     TareaOperacional? @relation(fields: [tareaId], references: [id], onDelete: SetNull)
   createdAt DateTime   @default(now())
 
   @@index([userId])
   @@index([createdAt])
+  @@index([tipo, enviado])
 }
 
 enum AlertaTipo {
@@ -172,6 +179,62 @@ enum AlertaTipo {
   CASO_SIN_MOVIMIENTO
   PRIORIDAD_CRITICA
   MENSAJE_ENTRANTE
+  TAREA_ASIGNADA
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// TAREAS OPERACIONALES — asignación de trabajo por caso
+//
+// Una tarea = unidad de trabajo asignada a un usuario sobre un caso
+// gestionable (VIN o clave documental SALDO-/BONO-/PROV-). N tareas por
+// caso. NO reemplaza GestionVIN (que sigue siendo el estado 1:1 del
+// caso) — lo complementa.
+//
+// La notificación de la asignación se registra como AlertaLog con tipo
+// TAREA_ASIGNADA y enviado=false. En F1 el envío es manual (panel
+// /notificaciones · copiar mensaje + marcar enviada). En F2 César
+// procesará las pendientes vía su cron + whatsapp.py.
+//
+// Snapshot del caso (vin/patente/marca/modelo) congelado al crear:
+// el mensaje histórico no muta si la base cambia después.
+// ═════════════════════════════════════════════════════════════════════
+
+model TareaOperacional {
+  id              String      @id @default(cuid())
+  /// VIN limpio · o clave documental (SALDO-…, BONO-…, PROV-…).
+  claveCaso       String
+  /// "vin" | "saldo" | "bono" | "provision"
+  tipoCaso        String      @default("vin")
+  /// Texto libre del solicitante ("Por favor revisa este caso").
+  mensaje         String      @db.Text
+  /// Contexto del caso ("Auto pagado pendiente de gestión").
+  motivo          String?
+  // ── Snapshot del caso al momento de crear ──
+  vin             String?
+  patente         String?
+  marca           String?
+  modelo          String?
+  // ── Asignación ──
+  asignadoId      String
+  asignado        User        @relation("TareasAsignadas", fields: [asignadoId], references: [id])
+  creadorId       String
+  creador         User        @relation("TareasCreadas", fields: [creadorId], references: [id])
+  estado          EstadoTarea @default(PENDIENTE)
+  fechaCompromiso DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  alertas         AlertaLog[]
+
+  @@index([asignadoId, estado])
+  @@index([claveCaso])
+}
+
+enum EstadoTarea {
+  PENDIENTE
+  EN_CURSO
+  COMPLETADA
+  CANCELADA
 }
 
 // ═════════════════════════════════════════════════════════════════════
