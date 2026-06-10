@@ -59,6 +59,7 @@ export function GestionInline({
   vin,
   variant = "trigger",
   descripcionCaso,
+  defaultExpanded = false,
 }: {
   /** Clave del caso: VIN real o clave documental (SALDO-/BONO-/PROV-…). */
   vin: string;
@@ -66,11 +67,13 @@ export function GestionInline({
   /** Descripción corta del caso documental (concepto/origen) — enriquece
    *  el mensaje de Asignar / Notificar. */
   descripcionCaso?: string | null;
+  /** Abrir el panel de entrada (deep-link ?clave= aterrizando en el caso). */
+  defaultExpanded?: boolean;
 }) {
   const gestion = useGestionStore((s) => s.byVin[vin]);
   const setG = useGestionStore((s) => s.setGestion);
   const clearG = useGestionStore((s) => s.clearGestion);
-  const [expanded, setExpanded] = useState(variant === "panel");
+  const [expanded, setExpanded] = useState(variant === "panel" || defaultExpanded);
   const [verHistorial, setVerHistorial] = useState(false);
   // Asignar / Notificar — mismo modal y cola que la FichaOperacionalVIN.
   // La tarea solo EMPUJA; el seguimiento sigue viviendo acá (store del caso).
