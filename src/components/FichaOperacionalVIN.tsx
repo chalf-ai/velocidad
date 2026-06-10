@@ -493,6 +493,7 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
       {asignarOpen && (
         <AsignarTareaModal
           vin={id.vin}
+          cliente={vu.cliente}
           patente={id.patente ?? vu.patente}
           marca={vu.marca ?? id.marcaOperacional}
           modelo={vu.modelo}

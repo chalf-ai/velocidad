@@ -30,6 +30,8 @@ interface UsuarioAsignable {
 
 export interface AsignarTareaModalProps {
   vin: string;
+  /** Cliente del caso — primera línea de identificación en el mensaje. */
+  cliente?: string | null;
   patente?: string | null;
   marca?: string | null;
   modelo?: string | null;
@@ -40,6 +42,7 @@ export interface AsignarTareaModalProps {
 
 export function AsignarTareaModal({
   vin,
+  cliente,
   patente,
   marca,
   modelo,
@@ -68,6 +71,7 @@ export function AsignarTareaModal({
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     return renderMensajeTarea({
       nombreAsignado: primerNombre(asignado?.name ?? "—"),
+      cliente: cliente ?? null,
       vin,
       patente: patente ?? null,
       marca: marca ?? null,
@@ -78,7 +82,7 @@ export function AsignarTareaModal({
       fechaCompromiso: fechaCompromiso ? new Date(`${fechaCompromiso}T12:00:00`) : null,
       link: `${origin}/centro-accion?vin=${encodeURIComponent(vin)}`,
     });
-  }, [asignado, vin, patente, marca, modelo, motivo, mensaje, fechaCompromiso]);
+  }, [asignado, vin, cliente, patente, marca, modelo, motivo, mensaje, fechaCompromiso]);
 
   async function crear() {
     if (!asignadoId || !mensaje.trim()) {
@@ -97,6 +101,7 @@ export function AsignarTareaModal({
           tipoCaso: "vin",
           mensaje,
           motivo: motivo.trim() || null,
+          cliente: cliente ?? null,
           vin,
           patente: patente ?? null,
           marca: marca ?? null,

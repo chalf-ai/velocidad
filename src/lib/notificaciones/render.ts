@@ -14,6 +14,8 @@
 export interface RenderTareaInput {
   /** Primer nombre del asignado ("Francisco"). */
   nombreAsignado: string;
+  /** Cliente del caso ("Juan Pérez"). Si no existe, la línea se omite. */
+  cliente?: string | null;
   vin: string | null;
   patente: string | null;
   marca: string | null;
@@ -55,18 +57,25 @@ const FECHA_CL = new Intl.DateTimeFormat("es-CL", {
 });
 
 export function renderMensajeTarea(input: RenderTareaInput): string {
-  const lineas: string[] = [];
-  lineas.push(`${input.nombreAsignado}, tienes una nueva gestión asignada:`);
-  if (input.vin) lineas.push(`VIN: ${input.vin}`);
-  if (input.patente) lineas.push(`Patente: ${input.patente}`);
+  // Bloques separados por línea en blanco (formato WhatsApp legible).
+  // Identificación en orden de prioridad: Cliente → Patente → Marca/modelo → VIN
+  // — el asignado reconoce el caso por el cliente sin abrir el VIN.
+  const identificacion: string[] = [];
+  if (input.cliente?.trim()) identificacion.push(`Cliente: ${input.cliente.trim()}`);
+  if (input.patente) identificacion.push(`Patente: ${input.patente}`);
   const marcaModelo = [input.marca, input.modelo].filter(Boolean).join(" ");
-  if (marcaModelo) lineas.push(`Marca/modelo: ${marcaModelo}`);
-  if (input.motivo) lineas.push(`Motivo: ${input.motivo}`);
-  if (input.mensaje.trim()) lineas.push(`Mensaje: ${input.mensaje.trim()}`);
+  if (marcaModelo) identificacion.push(`Marca/modelo: ${marcaModelo}`);
+  if (input.vin) identificacion.push(`VIN: ${input.vin}`);
+
+  const bloques: string[] = [];
+  bloques.push(`${input.nombreAsignado}, tienes una nueva gestión asignada:`);
+  if (identificacion.length) bloques.push(identificacion.join("\n"));
+  if (input.motivo) bloques.push(`Motivo: ${input.motivo}`);
+  if (input.mensaje.trim()) bloques.push(`Mensaje: ${input.mensaje.trim()}`);
   if (input.fechaCompromiso) {
-    lineas.push(`Fecha compromiso: ${FECHA_CL.format(input.fechaCompromiso)}`);
+    bloques.push(`Fecha compromiso: ${FECHA_CL.format(input.fechaCompromiso)}`);
   }
-  lineas.push(`Solicitado por: ${input.nombreCreador}`);
-  lineas.push(`Abrir caso: ${input.link}`);
-  return lineas.join("\n");
+  bloques.push(`Solicitado por: ${input.nombreCreador}`);
+  bloques.push(`Abrir caso:\n${input.link}`);
+  return bloques.join("\n\n");
 }

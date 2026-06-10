@@ -53,6 +53,9 @@ export async function POST(req: NextRequest) {
     tipoCaso?: string;
     mensaje: string;
     motivo?: string | null;
+    /** Cliente del caso — solo enriquece el mensaje renderizado (no se
+     *  persiste en TareaOperacional; queda congelado en AlertaLog.mensaje). */
+    cliente?: string | null;
     vin?: string | null;
     patente?: string | null;
     marca?: string | null;
@@ -99,6 +102,7 @@ export async function POST(req: NextRequest) {
   const link = linkCaso(body.vin ?? null, body.claveCaso);
   const mensajeRender = renderMensajeTarea({
     nombreAsignado: primerNombre(asignado.name),
+    cliente: body.cliente ?? null,
     vin: body.vin ?? null,
     patente: body.patente ?? null,
     marca: body.marca ?? null,
