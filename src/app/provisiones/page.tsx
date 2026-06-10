@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ClipboardList,
   FileSpreadsheet,
-  MessageSquarePlus,
   Receipt,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -15,15 +14,10 @@ import { Button } from "@/components/ui/Button";
 import { UploadProvisionesButton } from "@/components/UploadProvisionesButton";
 import { useDatosFiltrados } from "@/lib/marca-filtro";
 import { useGestionStore } from "@/lib/gestion/store";
-import { SeguimientoBadge } from "@/components/SeguimientoBadge";
+import { GestionInline } from "@/components/GestionInline";
 import { useVinContexto, VinContextoBanner } from "@/components/VinContexto";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
 import { getMarcaOperacional, normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
-import {
-  ESTADOS_GESTION_ORDEN,
-  ESTADO_GESTION_LABEL,
-  type EstadoGestion,
-} from "@/lib/gestion/types";
 import { cn } from "@/lib/cn";
 import { fmtCLP, fmtCLPCompact, fmtNum, fmtPct } from "@/lib/format";
 import {
@@ -653,102 +647,14 @@ function ProvisionRow({
       </td>
       {mostrarGestion && (
         <td className="px-4 py-3">
-          <GestionProvision clave={r.claveGestion} />
+          {/* Patrón documental unificado: mismo popover que saldos/bonos,
+              con prioridad + historial + Asignar / Notificar. */}
+          <GestionInline
+            vin={r.claveGestion}
+            descripcionCaso={[r.concepto, r.origen].filter(Boolean).join(" · ") || null}
+          />
         </td>
       )}
     </tr>
-  );
-}
-
-function GestionProvision({ clave }: { clave: string }) {
-  const gestion = useGestionStore((s) => s.byVin[clave]);
-  const setG = useGestionStore((s) => s.setGestion);
-  const clearG = useGestionStore((s) => s.clearGestion);
-  const [expanded, setExpanded] = useState(false);
-
-  const estadoActual: EstadoGestion = gestion?.estadoGestion ?? "abierto";
-  const tieneNota = !!(gestion?.comentario || gestion?.responsable || gestion?.fechaCompromiso);
-
-  return (
-    <div className="space-y-1">
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className={cn(
-          "inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md transition border",
-          tieneNota
-            ? "border-[--color-accent]/30 bg-[--color-accent]/5 text-[--color-fg] hover:bg-[--color-accent]/10"
-            : "border-[--color-border] bg-[--color-bg-elev-2] text-[--color-fg-muted] hover:text-[--color-fg]",
-        )}
-      >
-        {tieneNota ? (
-          <>
-            <SeguimientoBadge vin={clave} />
-            {gestion?.responsable && (
-              <span className="text-[--color-fg-dim] truncate max-w-[100px]">
-                {gestion.responsable}
-              </span>
-            )}
-          </>
-        ) : (
-          <>
-            <MessageSquarePlus className="size-3" />
-            Agregar
-          </>
-        )}
-      </button>
-      {expanded && (
-        <div className="rounded-md border border-[--color-border] bg-[--color-bg-elev-1] p-2.5 space-y-2 w-[280px]">
-          <select
-            value={estadoActual}
-            onChange={(e) => setG(clave, { estadoGestion: e.target.value as EstadoGestion })}
-            className="w-full rounded-md border border-[--color-border-strong] bg-white px-2 py-1 text-[12px]"
-          >
-            {ESTADOS_GESTION_ORDEN.map((s) => (
-              <option key={s} value={s}>
-                {ESTADO_GESTION_LABEL[s]}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            placeholder="Responsable"
-            defaultValue={gestion?.responsable ?? ""}
-            onBlur={(e) => setG(clave, { responsable: e.target.value || null })}
-            className="w-full rounded-md border border-[--color-border-strong] bg-white px-2 py-1 text-[12px]"
-          />
-          <input
-            type="date"
-            defaultValue={gestion?.fechaCompromiso ?? ""}
-            onChange={(e) => setG(clave, { fechaCompromiso: e.target.value || null })}
-            className="w-full rounded-md border border-[--color-border-strong] bg-white px-2 py-1 text-[12px]"
-          />
-          <textarea
-            placeholder="Comentario · próximo paso, blocker, etc."
-            defaultValue={gestion?.comentario ?? ""}
-            onBlur={(e) => setG(clave, { comentario: e.target.value || null })}
-            rows={3}
-            className="w-full rounded-md border border-[--color-border-strong] bg-white px-2 py-1 text-[12px] resize-none"
-          />
-          <div className="flex items-center justify-between">
-            <div className="text-[10px] text-[--color-fg-dim]">
-              {gestion?.ultimaActualizacion
-                ? `act. ${new Date(gestion.ultimaActualizacion).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" })}`
-                : "Sin guardar"}
-            </div>
-            {gestion && (
-              <button
-                onClick={() => {
-                  clearG(clave);
-                  setExpanded(false);
-                }}
-                className="text-[10.5px] text-[--color-danger] hover:underline"
-              >
-                Limpiar
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
   );
 }

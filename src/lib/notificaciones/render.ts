@@ -14,6 +14,11 @@
 export interface RenderTareaInput {
   /** Primer nombre del asignado ("Francisco"). */
   nombreAsignado: string;
+  /** Clave del caso documental ("PROV-123", "SALDO-…"). Solo se muestra
+   *  cuando NO hay VIN — los casos VIN se identifican por sus datos. */
+  claveCaso?: string | null;
+  /** Descripción corta del caso documental (concepto/origen). */
+  descripcionCaso?: string | null;
   /** Cliente del caso ("Juan Pérez"). Si no existe, la línea se omite. */
   cliente?: string | null;
   vin: string | null;
@@ -62,6 +67,11 @@ export function renderMensajeTarea(input: RenderTareaInput): string {
   // — el asignado reconoce el caso por el cliente sin abrir el VIN.
   const lineas: string[] = [];
   lineas.push(`${input.nombreAsignado}, tienes una nueva gestión asignada:`);
+  // Caso documental (sin VIN): se identifica por clave + descripción.
+  if (!input.vin && input.claveCaso) lineas.push(`Caso: ${input.claveCaso}`);
+  if (!input.vin && input.descripcionCaso?.trim()) {
+    lineas.push(`Detalle: ${input.descripcionCaso.trim()}`);
+  }
   if (input.cliente?.trim()) lineas.push(`Cliente: ${input.cliente.trim()}`);
   if (input.patente) lineas.push(`Patente: ${input.patente}`);
   const marcaModelo = [input.marca, input.modelo].filter(Boolean).join(" ");

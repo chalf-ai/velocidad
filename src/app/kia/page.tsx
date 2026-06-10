@@ -39,7 +39,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FilterChips } from "@/components/ui/FilterChips";
-import { GestionInline } from "@/components/GestionInline";
+import { AbrirCasoButton } from "@/components/AbrirCasoButton";
 import { ScoreChip } from "@/components/ScoreBadge";
 import { ComponentesBars, RazonesScore } from "@/components/RazonesScore";
 import { useExcelStore } from "@/lib/store";
@@ -964,7 +964,7 @@ function KiaVinRow({
                   Gestión del caso · global por VIN
                 </span>
               </div>
-              <GestionInline vin={vu.vinLimpio} variant="panel" />
+              <AbrirCasoButton vin={vu.vinLimpio} origen="KIA Operating View" />
             </div>
           </div>
         </div>
@@ -1193,7 +1193,7 @@ function LineaVinRow({ vu, score }: { vu: VehiculoUnificado; score: ScoreVIN }) 
       {open && (
         <div className="border-t border-[--color-border-soft] px-4 py-3 bg-[--color-bg-elev-1]/40">
           <div className="max-w-[640px]">
-            <GestionInline vin={vu.vinLimpio} variant="panel" />
+            <AbrirCasoButton vin={vu.vinLimpio} origen="KIA Operating View" />
           </div>
         </div>
       )}
@@ -1328,7 +1328,7 @@ function FneKia({ fneKia }: { fneKia: FNERealCruzado[] }) {
                   {open === vin && (
                     <div className="border-t border-[--color-border-soft] px-4 py-3 bg-[--color-bg-elev-1]/40">
                       <div className="max-w-[640px]">
-                        <GestionInline vin={vin} variant="panel" />
+                        <AbrirCasoButton vin={vin} origen="KIA Operating View" />
                       </div>
                     </div>
                   )}

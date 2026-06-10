@@ -20,6 +20,7 @@ import {
   CheckCheck,
   Copy,
   ExternalLink,
+  Mail,
   MessageCircle,
   RefreshCw,
   TriangleAlert,
@@ -34,6 +35,8 @@ interface AlertaRow {
   enviado: boolean;
   errorMsg: string | null;
   waMsgId: string | null;
+  /** "WHATSAPP" | "EMAIL" · null = pendiente de canal (registros previos). */
+  canal: string | null;
   createdAt: string;
   user: { name: string | null; email: string; telefono: string | null };
   tarea: {
@@ -58,7 +61,16 @@ const TIPO_LABEL: Record<string, string> = {
   MENSAJE_ENTRANTE: "Mensaje entrante",
 };
 
-type Filtro = "pendientes" | "enviadas" | "todas";
+type Filtro = "pendientes" | "enviadas" | "asignadas_mi" | "creadas_mi" | "todas";
+
+/** Query string por filtro — la asignación interna siempre es visible acá. */
+const FILTRO_QS: Record<Filtro, string> = {
+  pendientes: "?enviado=false",
+  enviadas: "?enviado=true",
+  asignadas_mi: "?mias=asignadas",
+  creadas_mi: "?mias=creadas",
+  todas: "",
+};
 
 export default function NotificacionesPage() {
   const [alertas, setAlertas] = useState<AlertaRow[]>([]);
@@ -70,13 +82,7 @@ export default function NotificacionesPage() {
   const cargar = useCallback(async () => {
     setCargando(true);
     try {
-      const qs =
-        filtro === "pendientes"
-          ? "?enviado=false"
-          : filtro === "enviadas"
-            ? "?enviado=true"
-            : "";
-      const res = await fetch(`/api/notificaciones${qs}`, { credentials: "include" });
+      const res = await fetch(`/api/notificaciones${FILTRO_QS[filtro]}`, { credentials: "include" });
       setAlertas(res.ok ? await res.json() : []);
     } catch {
       setAlertas([]);
@@ -153,6 +159,8 @@ export default function NotificacionesPage() {
             [
               ["pendientes", "Pendientes"],
               ["enviadas", "Enviadas"],
+              ["asignadas_mi", "Asignadas a mí"],
+              ["creadas_mi", "Creadas por mí"],
               ["todas", "Todas"],
             ] as [Filtro, string][]
           ).map(([key, label]) => (
@@ -196,9 +204,13 @@ export default function NotificacionesPage() {
         <div className="space-y-3">
           {alertas.map((a) => {
             const esTarea = a.tipo === "TAREA_ASIGNADA";
+            // VIN → deep-link por vin. Documental → deep-link por clave
+            // (SALDO-/BONO-/PROV-), procesado por /centro-accion.
             const linkCaso = a.vin
               ? `/centro-accion?vin=${encodeURIComponent(a.vin)}`
-              : null;
+              : a.tarea?.claveCaso
+                ? `/centro-accion?clave=${encodeURIComponent(a.tarea.claveCaso)}`
+                : null;
             return (
               <div key={a.id} className="surface bg-white p-4">
                 {/* Header fila */}
@@ -237,6 +249,29 @@ export default function NotificacionesPage() {
                       <span className="text-amber-700"> · sin WhatsApp registrado</span>
                     )}
                   </span>
+                  {/* Canal externo (opcional — la asignación interna ya está hecha). */}
+                  {esTarea && (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                        a.canal
+                          ? "bg-[--color-bg-elev-2] text-[--color-fg-muted]"
+                          : "bg-slate-100 text-slate-500",
+                      )}
+                    >
+                      {a.canal === "WHATSAPP" ? (
+                        <>
+                          <MessageCircle className="size-3" /> WhatsApp simulado
+                        </>
+                      ) : a.canal === "EMAIL" ? (
+                        <>
+                          <Mail className="size-3" /> Email simulado
+                        </>
+                      ) : (
+                        "Pendiente de canal"
+                      )}
+                    </span>
+                  )}
                   <span className="ml-auto text-[--color-fg-dim]">
                     {new Date(a.createdAt).toLocaleString("es-CL", {
                       day: "2-digit",

@@ -619,10 +619,45 @@ function CentroAccionInner() {
     if (cmd) setTab(cmd.id);
     setVinExpanded(vinParam);
     vinAplicadoRef.current = vinParam;
-    requestAnimationFrame(() =>
-      listaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-    );
+    // Doble rAF + timeout: el scroll recién cuando la cola del tab ya montó la
+    // fila expandida (fix race de hidratación — el efecto re-corre vía deps
+    // [vinParam, conScore] cuando el snapshot hidrata después del mount).
+    const t = setTimeout(() => {
+      requestAnimationFrame(() =>
+        listaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      );
+    }, 150);
+    return () => clearTimeout(t);
   }, [vinParam, conScore]);
+
+  // Deep-link documental: ?clave=SALDO-… / BONO-… / PROV-… abre la sección
+  // correspondiente con la fila destacada y su gestión expandida. Re-corre
+  // cuando los datasets hidratan (mismo patrón retry que ?vin=).
+  const claveParam = useMemo(() => searchParams.get("clave"), [searchParams]);
+  const claveAplicadaRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!claveParam || claveAplicadaRef.current === claveParam) return;
+    let ref: React.RefObject<HTMLDivElement | null> | null = null;
+    if (claveParam.startsWith("SALDO-") && saldosAutos30d.length > 0) {
+      setShowSaldosAutos(true);
+      ref = saldosAutosRef;
+    } else if (claveParam.startsWith("BONO-") && bonos30d.length > 0) {
+      setShowBonos(true);
+      ref = bonosRef;
+    } else if (claveParam.startsWith("PROV-") && provNoFact30d.length > 0) {
+      setShowProvNoFact(true);
+      ref = provNoFactRef;
+    }
+    if (!ref) return;
+    claveAplicadaRef.current = claveParam;
+    const target = ref;
+    const t = setTimeout(() => {
+      requestAnimationFrame(() =>
+        target.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      );
+    }, 150);
+    return () => clearTimeout(t);
+  }, [claveParam, saldosAutos30d, bonos30d, provNoFact30d]);
 
   // ¿El VIN del contexto cae en algún comando (cola activa)? Si NO, mostramos el
   // fallback "Caso" para que todo VIN con contexto tenga su casa.
@@ -941,6 +976,7 @@ function CentroAccionInner() {
           tono="warning"
           refContainer={saldosAutosRef}
           onClose={() => setShowSaldosAutos(false)}
+          claveDestacada={claveParam}
           filas={[...saldosAutos30d]
             .sort((a, b) => b.saldoXDocumentar - a.saldoXDocumentar)
             .map<FilaCola>((r) => {
@@ -974,6 +1010,7 @@ function CentroAccionInner() {
           tono="warning"
           refContainer={bonosRef}
           onClose={() => setShowBonos(false)}
+          claveDestacada={claveParam}
           filas={[...bonos30d]
             .sort((a, b) => b.saldoXDocumentar - a.saldoXDocumentar)
             .map<FilaCola>((r) => {
@@ -1004,6 +1041,7 @@ function CentroAccionInner() {
           tono="warning"
           refContainer={provNoFactRef}
           onClose={() => setShowProvNoFact(false)}
+          claveDestacada={claveParam}
           filas={[...provNoFact30d]
             .sort((a, b) => (b.agingDias ?? 0) - (a.agingDias ?? 0))
             .map<FilaCola>((p) => ({
@@ -2136,6 +2174,7 @@ function ColaGestionableInline({
   filas,
   refContainer,
   onClose,
+  claveDestacada,
 }: {
   titulo: string;
   subtitulo?: string;
@@ -2144,6 +2183,8 @@ function ColaGestionableInline({
   filas: FilaCola[];
   refContainer: React.RefObject<HTMLDivElement | null>;
   onClose: () => void;
+  /** Deep-link ?clave= → fila resaltada con su gestión abierta. */
+  claveDestacada?: string | null;
 }) {
   const [tramo, setTramo] = useState<TramoDias>("all");
   const [vinExpandido, setVinExpandido] = useState<string | null>(null);
@@ -2180,7 +2221,26 @@ function ColaGestionableInline({
     [filtradas],
   );
 
-  const slice = filtradas.slice(0, 50);
+  // Top-50 por monto. Si llega una clave destacada (deep-link) que el corte
+  // o el filtro temporal dejarían fuera, se antepone para que siempre aterrice.
+  const slice = useMemo(() => {
+    const base = filtradas.slice(0, 50);
+    if (!claveDestacada || base.some((f) => f.clave === claveDestacada)) return base;
+    const extra = filas.find((f) => f.clave === claveDestacada);
+    return extra ? [extra, ...base] : base;
+  }, [filtradas, filas, claveDestacada]);
+
+  // Scroll a la fila destacada una vez montada.
+  useEffect(() => {
+    if (!claveDestacada) return;
+    if (!slice.some((f) => f.clave === claveDestacada)) return;
+    const t = setTimeout(() => {
+      document
+        .getElementById(`caso-${claveDestacada}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
+    return () => clearTimeout(t);
+  }, [claveDestacada, slice]);
 
   return (
     <div ref={refContainer} className={cn("surface bg-white px-6 py-5 top-strip space-y-3", stripClass)}>
@@ -2281,13 +2341,16 @@ function ColaGestionableInline({
                       : "";
                 const expandido = !!f.vin && vinExpandido === f.vin;
                 const puedeExpandir = !!f.vin;
+                const destacada = claveDestacada === f.clave;
                 return (
                   <Fragment key={f.clave}>
                     <tr
+                      id={`caso-${f.clave}`}
                       className={cn(
                         "align-top hover:bg-[--color-bg-elev-1] transition",
                         sevClass,
                         puedeExpandir && "cursor-pointer",
+                        destacada && "bg-[--color-accent-dim] ring-2 ring-inset ring-[--color-accent]/40",
                       )}
                       onClick={() => {
                         if (puedeExpandir && f.vin) {
@@ -2410,7 +2473,12 @@ function ColaGestionableInline({
                           </button>
                         ) : (
                           <div onClick={(e) => e.stopPropagation()}>
-                            <GestionInline vin={f.clave} variant="trigger" />
+                            <GestionInline
+                              vin={f.clave}
+                              variant="trigger"
+                              descripcionCaso={f.primario ?? null}
+                              defaultExpanded={destacada}
+                            />
                           </div>
                         )}
                       </td>

@@ -60,6 +60,9 @@ export async function POST(req: NextRequest) {
      *  AlertaLog no tiene campo canal (waMsgId es del envío real WhatsApp).
      *  Agregar columna requiere decisión de schema — reportado en PR #26. */
     canal?: "WHATSAPP" | "EMAIL" | null;
+    /** Descripción corta del caso documental (concepto/origen) — solo
+     *  enriquece el mensaje renderizado, igual que cliente. */
+    descripcionCaso?: string | null;
     vin?: string | null;
     patente?: string | null;
     marca?: string | null;
@@ -78,6 +81,10 @@ export async function POST(req: NextRequest) {
       { error: "Faltan campos: claveCaso, asignadoId, mensaje" },
       { status: 400 },
     );
+  }
+  const tipoCaso = body.tipoCaso ?? "vin";
+  if (tipoCaso !== "vin" && tipoCaso !== "documental") {
+    return NextResponse.json({ error: "tipoCaso inválido (vin | documental)" }, { status: 400 });
   }
 
   const [asignado, creador] = await Promise.all([
@@ -100,6 +107,8 @@ export async function POST(req: NextRequest) {
 
   // Canal: Email exige email del asignado (bloquea). WhatsApp sin teléfono
   // solo advierte — la notificación queda pendiente para copia manual.
+  // El canal externo es opcional (F1 no envía nada); la ASIGNACIÓN INTERNA
+  // es la obligatoria: tarea + alerta visibles en /notificaciones siempre.
   const canal = body.canal ?? "WHATSAPP";
   if (canal !== "WHATSAPP" && canal !== "EMAIL") {
     return NextResponse.json({ error: "Canal inválido (WHATSAPP | EMAIL)" }, { status: 400 });
@@ -119,6 +128,8 @@ export async function POST(req: NextRequest) {
   const link = linkCaso(body.vin ?? null, body.claveCaso);
   const mensajeRender = renderMensajeTarea({
     nombreAsignado: primerNombre(asignado.name),
+    claveCaso: body.claveCaso,
+    descripcionCaso: body.descripcionCaso ?? null,
     cliente: body.cliente ?? null,
     vin: body.vin ?? null,
     patente: body.patente ?? null,
@@ -136,7 +147,7 @@ export async function POST(req: NextRequest) {
     const t = await tx.tareaOperacional.create({
       data: {
         claveCaso: body.claveCaso,
-        tipoCaso: body.tipoCaso ?? "vin",
+        tipoCaso,
         mensaje: body.mensaje.trim(),
         motivo: body.motivo ?? null,
         vin: body.vin ?? null,
@@ -155,6 +166,7 @@ export async function POST(req: NextRequest) {
         vin: body.vin ?? null,
         mensaje: mensajeRender,
         enviado: false,
+        canal,
         tareaId: t.id,
       },
     });

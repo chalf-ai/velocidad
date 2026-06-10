@@ -17,11 +17,15 @@
 
 "use client";
 
-import { useState } from "react";
-import { History, MessageSquarePlus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { History, MessageSquarePlus, Send } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useGestionStore } from "@/lib/gestion/store";
 import { SeguimientoBadge } from "@/components/SeguimientoBadge";
+import { AsignarTareaModal } from "@/components/AsignarTareaModal";
+
+/** Clave documental (sin VIN físico): SALDO-…, BONO-…, PROV-… */
+const esClaveDocumental = (clave: string) => /^(SALDO|BONO|PROV)-/.test(clave);
 import {
   ESTADO_GESTION_LABEL,
   ESTADOS_GESTION_ORDEN,
@@ -54,15 +58,32 @@ function fmtFechaCorta(iso: string): string {
 export function GestionInline({
   vin,
   variant = "trigger",
+  descripcionCaso,
+  defaultExpanded = false,
 }: {
+  /** Clave del caso: VIN real o clave documental (SALDO-/BONO-/PROV-…). */
   vin: string;
   variant?: "trigger" | "panel";
+  /** Descripción corta del caso documental (concepto/origen) — enriquece
+   *  el mensaje de Asignar / Notificar. */
+  descripcionCaso?: string | null;
+  /** Abrir el panel de entrada (deep-link ?clave= aterrizando en el caso). */
+  defaultExpanded?: boolean;
 }) {
   const gestion = useGestionStore((s) => s.byVin[vin]);
   const setG = useGestionStore((s) => s.setGestion);
   const clearG = useGestionStore((s) => s.clearGestion);
-  const [expanded, setExpanded] = useState(variant === "panel");
+  const [expanded, setExpanded] = useState(variant === "panel" || defaultExpanded);
+  // El deep-link puede llegar después del mount (hidratación) — abrir también
+  // cuando la prop se activa tarde, no solo en el estado inicial.
+  useEffect(() => {
+    if (defaultExpanded) setExpanded(true);
+  }, [defaultExpanded]);
   const [verHistorial, setVerHistorial] = useState(false);
+  // Asignar / Notificar — mismo modal y cola que la FichaOperacionalVIN.
+  // La tarea solo EMPUJA; el seguimiento sigue viviendo acá (store del caso).
+  const [asignarOpen, setAsignarOpen] = useState(false);
+  const documental = esClaveDocumental(vin);
 
   const estadoActual: EstadoGestion = gestion?.estadoGestion ?? "abierto";
   const tieneNota = !!(
@@ -199,24 +220,45 @@ export function GestionInline({
         </div>
       )}
 
-      <div className="flex items-center justify-between pt-0.5">
-        <div className="text-[10px] text-[--color-fg-dim]">
-          {gestion?.ultimaActualizacion
-            ? `Actualizado ${fmtFechaCorta(gestion.ultimaActualizacion)}`
-            : "Sin guardar"}
+      <div className="flex items-center justify-between gap-2 pt-0.5">
+        <button
+          type="button"
+          onClick={() => setAsignarOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[10.5px] font-semibold bg-[color:var(--color-accent)] text-white hover:opacity-90 transition"
+        >
+          <Send className="size-3" strokeWidth={2} />
+          Asignar / Notificar
+        </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="text-[10px] text-[--color-fg-dim] truncate">
+            {gestion?.ultimaActualizacion
+              ? `Actualizado ${fmtFechaCorta(gestion.ultimaActualizacion)}`
+              : "Sin guardar"}
+          </div>
+          {gestion && (
+            <button
+              onClick={() => {
+                clearG(vin);
+                if (variant === "trigger") setExpanded(false);
+              }}
+              className="text-[10.5px] text-[--color-danger] hover:underline shrink-0"
+            >
+              Limpiar
+            </button>
+          )}
         </div>
-        {gestion && (
-          <button
-            onClick={() => {
-              clearG(vin);
-              if (variant === "trigger") setExpanded(false);
-            }}
-            className="text-[10.5px] text-[--color-danger] hover:underline"
-          >
-            Limpiar
-          </button>
-        )}
       </div>
+
+      {asignarOpen && (
+        <AsignarTareaModal
+          claveCaso={vin}
+          tipoCaso={documental ? "documental" : "vin"}
+          vin={documental ? null : vin}
+          descripcionCaso={descripcionCaso ?? null}
+          motivoSugerido={gestion?.comentario ?? null}
+          onClose={() => setAsignarOpen(false)}
+        />
+      )}
     </div>
   );
 
