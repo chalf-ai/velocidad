@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FilterChips } from "@/components/ui/FilterChips";
 import { Sheet } from "@/components/ui/Sheet";
-import { FichaOperacionalVIN } from "@/components/FichaOperacionalVIN";
+import { useCasoModal } from "@/lib/caso-modal";
 import { useVinContexto, VinContextoBanner } from "@/components/VinContexto";
 import { useDatosFiltrados, useMarcaFilter } from "@/lib/marca-filtro";
 import { useGestionStore } from "@/lib/gestion/store";
@@ -149,10 +149,10 @@ function StockExplorerInner() {
   /** Cuántas páginas (de PAGE_SIZE c/u) están visibles. Se resetea al cambiar
    *  filtros u orden para evitar "lagunas" de scroll. */
   const [visiblePages, setVisiblePages] = useState(1);
-  /** VIN con ficha operacional expandida inline · solo uno a la vez.
-   *  Reemplaza el modal del AbrirCasoButton anterior. Misma UX que Centro de
-   *  Acción: al abrir otro VIN, el actual se cierra automáticamente. */
-  const [vinExpanded, setVinExpanded] = useState<string | null>(null);
+  /** Gestionar abre la FichaOperacionalVIN en el CasoModal global — mismo
+   *  patrón superpuesto que FNE/Saldos/Dashboard. Cerrar devuelve la tabla
+   *  exactamente como estaba (scroll y filtros intactos). */
+  const abrirCaso = useCasoModal((s) => s.abrir);
 
   // Gestión persistente compartida — hidratar localStorage (igual que el resto).
   useEffect(() => {
@@ -468,11 +468,10 @@ function StockExplorerInner() {
                         ? "text-[--color-warning]"
                         : "text-[--color-fg]";
                   const vinKey = limpiarVIN(v.vin);
-                  const isExpanded = vinExpanded === vinKey;
 
                   return (
                     <Fragment key={`${v.vin}-${v.rowIndex}`}>
-                    <tr className={cn(isExpanded && "bg-[--color-bg-elev-2]")}>
+                    <tr>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-[13px] text-[--color-fg]">
@@ -549,17 +548,10 @@ function StockExplorerInner() {
                       <td className="px-4 py-3">
                         <button
                           type="button"
-                          onClick={() =>
-                            setVinExpanded(isExpanded ? null : vinKey)
-                          }
-                          className={cn(
-                            "inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2.5 py-1 rounded-md border transition",
-                            isExpanded
-                              ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent)] text-white hover:opacity-90"
-                              : "border-[--color-border] bg-white text-[--color-fg] hover:bg-[--color-bg-elev-2]",
-                          )}
+                          onClick={() => abrirCaso(vinKey, "Stock Explorer")}
+                          className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2.5 py-1 rounded-md border border-[--color-border] bg-white text-[--color-fg] hover:bg-[--color-bg-elev-2] transition"
                         >
-                          {isExpanded ? "Cerrar" : "Gestionar"}
+                          Gestionar
                         </button>
                       </td>
                     </tr>
@@ -614,28 +606,6 @@ function StockExplorerInner() {
           )}
         </div>
 
-        {/* Ficha Operacional del VIN seleccionado · panel FUERA del scroll
-            horizontal de la tabla. Antes vivía como <tr> dentro del <table
-            min-w-[1400px]>, lo que cortaba el contenido por la izquierda al
-            scrollear. Como panel independiente respeta el ancho del viewport. */}
-        {vinExpanded && (
-          <div className="surface bg-white top-strip strip-info p-5">
-            <div className="flex items-baseline justify-between gap-3 mb-3">
-              <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-info] font-semibold">
-                Gestión inline · {vinExpanded}
-              </div>
-              <button
-                type="button"
-                onClick={() => setVinExpanded(null)}
-                className="text-[11.5px] text-[--color-fg-muted] hover:text-[--color-fg] inline-flex items-center gap-1"
-              >
-                <X className="size-3" />
-                Cerrar
-              </button>
-            </div>
-            <FichaOperacionalVIN vin={vinExpanded} />
-          </div>
-        )}
       </div>
 
       {/* Drawer de filtros */}
