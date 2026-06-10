@@ -7,6 +7,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import {
   AlertTriangle,
+  BellRing,
   Bug,
   CalendarClock,
   Car,
@@ -62,6 +63,7 @@ const ROL_COLOR: Record<string, string> = {
 
 const NAV_EXEC: NavItem[] = [
   { href: "/centro-accion", label: "Centro de Acción", icon: Gauge },
+  { href: "/notificaciones", label: "Notificaciones", icon: BellRing },
   { href: "/score-gerencial", label: "Score Gerencial", icon: Trophy },
   { href: "/dashboard", label: "Sistema de Velocidad Operacional", icon: LayoutDashboard },
   { href: "/stock", label: "Stock Explorer", icon: Warehouse },

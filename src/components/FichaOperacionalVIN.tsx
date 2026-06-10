@@ -12,7 +12,7 @@
  * inventar nada. NO toca score, detecciones, filtros ni gestión persistente.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -24,10 +24,12 @@ import {
   ExternalLink,
   FileText,
   MapPin,
+  Send,
   Truck,
   User,
 } from "lucide-react";
 import { Flame } from "lucide-react";
+import { AsignarTareaModal } from "@/components/AsignarTareaModal";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
 import { fmtCLPCompact } from "@/lib/format";
@@ -73,6 +75,8 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
   const provisiones = useExcelStore((s) => s.provisiones);
   const logisticaPorVin = useExcelStore((s) => s.logisticaPorVin);
   const gestion = useGestionStore((s) => s.byVin[vin]);
+  // Modal "Asignar / Notificar" — crea TareaOperacional + notificación pendiente.
+  const [asignarOpen, setAsignarOpen] = useState(false);
 
   // Resuelve caso + vu en UNA construcción (sin depender de gestión: se lee viva).
   const resuelto = useMemo(
@@ -466,7 +470,7 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
           <span className="inline-flex items-center justify-center size-6 rounded-lg bg-[--color-accent]/10 text-[--color-accent]">
             <Activity className="size-3.5" />
           </span>
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold text-[--color-fg] leading-none">
               Mesa de gestión del caso
             </div>
@@ -474,9 +478,28 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
               Responsable · prioridad · compromiso · próxima acción · bitácora — se guarda por VIN
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setAsignarOpen(true)}
+            className="inline-flex items-center gap-1.5 shrink-0 rounded-lg px-3 py-1.5 text-[11.5px] font-semibold bg-[color:var(--color-accent)] text-white hover:opacity-90 transition"
+          >
+            <Send className="size-3" strokeWidth={2} />
+            Asignar / Notificar
+          </button>
         </div>
         <MesaGestionCaso vin={id.vin} score={scoreVivo} />
       </div>
+
+      {asignarOpen && (
+        <AsignarTareaModal
+          vin={id.vin}
+          patente={id.patente ?? vu.patente}
+          marca={vu.marca ?? id.marcaOperacional}
+          modelo={vu.modelo}
+          motivoSugerido={proximaAccion !== "—" ? proximaAccion : null}
+          onClose={() => setAsignarOpen(false)}
+        />
+      )}
 
       {/* Navegación contextual: abrir el MISMO VIN en otros módulos (secundario). */}
       <div className="flex flex-wrap items-center gap-2 pt-1">
