@@ -17,10 +17,12 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from .config import settings
 from . import database as db
 from . import tools as t
+from .tareas import procesar_tareas_asignadas
 from .whatsapp import send_text
 
 logger = logging.getLogger(__name__)
@@ -126,6 +128,27 @@ def build_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
         misfire_grace_time=600,
     )
+
+    # Job 3 — F2: poller de tareas asignadas → WhatsApp. Solo se registra si
+    # el master switch está activo (cambiar la env var en Railway = restart,
+    # así que registrar condicional es equivalente y más limpio). La función
+    # además se auto-guarda con los flags — doble seguro.
+    if settings.tareas_whatsapp_enabled:
+        scheduler.add_job(
+            procesar_tareas_asignadas,
+            trigger=IntervalTrigger(seconds=settings.tareas_poll_seconds),
+            id="tareas_asignadas",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Poller tareas F2 ACTIVO — cada %ds · dry_run=%s",
+            settings.tareas_poll_seconds,
+            settings.tareas_dry_run,
+        )
+    else:
+        logger.info("Poller tareas F2 deshabilitado (TAREAS_WHATSAPP_ENABLED=0)")
 
     logger.info(
         "Scheduler listo — briefing %s · seguimiento %s (L-V, Santiago)",

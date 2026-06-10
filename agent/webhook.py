@@ -11,6 +11,7 @@ from .config import settings
 from .cron import build_scheduler
 from . import database as db
 from .agent import chat, get_agent
+from .tareas import estado_tareas, procesar_tareas_asignadas
 from .whatsapp import extract_messages, send_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -129,6 +130,28 @@ async def debug_estado():
     except Exception as e:
         return {"error": str(e)}
 
+
+
+@app.get("/debug/tareas")
+async def debug_tareas():
+    """F2 · Estado del poller de tareas: flags, cola por canal/estado, últimas 10."""
+    try:
+        return await estado_tareas()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/debug/tareas/ciclo")
+async def debug_tareas_ciclo():
+    """
+    F2 · Ejecuta UN ciclo del poller a demanda (para validar dry-run sin
+    esperar el intervalo). Respeta todos los flags: deshabilitado → no hace
+    nada; dry_run → solo loguea, no llama Meta ni marca enviada.
+    """
+    try:
+        return await procesar_tareas_asignadas()
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/debug/user/{telefono}")

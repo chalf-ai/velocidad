@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     seguimiento_hora: str = "15:00" # HH:MM, hora Chile — seguimiento tarde (GERENTE + JEFE_MARCA)
     agent_port: int = 8000
 
+    # F2 · Poller de tareas asignadas → WhatsApp (agent/tareas.py)
+    # Primer deploy SIEMPRE con enabled=0 + dry_run=1. Activación real solo
+    # con OK explícito y allowlist del piloto.
+    tareas_whatsapp_enabled: bool = False  # master switch del poller
+    tareas_dry_run: bool = True            # True = loguea qué enviaría; NO llama Meta, NO marca enviada
+    tareas_whatsapp_piloto: str = ""       # allowlist CSV de emails del ASIGNADO (vacía = no procesa nada)
+    tareas_poll_seconds: int = 60          # cadencia del poller
+    tareas_desde: str = ""                 # ISO datetime · solo alertas creadas después; vacío = arranque del proceso
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
