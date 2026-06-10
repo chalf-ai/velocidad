@@ -45,7 +45,13 @@ interface UsuarioAsignable {
 type Canal = "WHATSAPP" | "EMAIL";
 
 export interface AsignarTareaModalProps {
-  vin: string;
+  /** Clave única del caso: VIN o clave documental (SALDO-/BONO-/PROV-…). */
+  claveCaso: string;
+  tipoCaso: "vin" | "documental";
+  /** VIN real — solo para tipoCaso "vin". */
+  vin?: string | null;
+  /** Descripción corta del caso documental (concepto/origen) para el mensaje. */
+  descripcionCaso?: string | null;
   /** Cliente del caso — primera línea de identificación en el mensaje. */
   cliente?: string | null;
   patente?: string | null;
@@ -77,7 +83,10 @@ function BadgeWhatsApp({ tieneTelefono }: { tieneTelefono: boolean }) {
 }
 
 export function AsignarTareaModal({
+  claveCaso,
+  tipoCaso,
   vin,
+  descripcionCaso,
   cliente,
   patente,
   marca,
@@ -130,10 +139,15 @@ export function AsignarTareaModal({
 
   const preview = useMemo(() => {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const path = vin
+      ? `/centro-accion?vin=${encodeURIComponent(vin)}`
+      : `/centro-accion?clave=${encodeURIComponent(claveCaso)}`;
     return renderMensajeTarea({
       nombreAsignado: primerNombre(asignado?.name ?? "—"),
+      claveCaso,
+      descripcionCaso: descripcionCaso ?? null,
       cliente: cliente ?? null,
-      vin,
+      vin: vin ?? null,
       patente: patente ?? null,
       marca: marca ?? null,
       modelo: modelo ?? null,
@@ -141,9 +155,9 @@ export function AsignarTareaModal({
       mensaje,
       nombreCreador: "Tú",
       fechaCompromiso: fechaCompromiso ? new Date(`${fechaCompromiso}T12:00:00`) : null,
-      link: `${origin}/centro-accion?vin=${encodeURIComponent(vin)}`,
+      link: `${origin}${path}`,
     });
-  }, [asignado, vin, cliente, patente, marca, modelo, motivo, mensaje, fechaCompromiso]);
+  }, [asignado, claveCaso, descripcionCaso, vin, cliente, patente, marca, modelo, motivo, mensaje, fechaCompromiso]);
 
   async function crear() {
     if (!asignadoId || !mensaje.trim()) {
@@ -162,12 +176,13 @@ export function AsignarTareaModal({
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          claveCaso: vin,
-          tipoCaso: "vin",
+          claveCaso,
+          tipoCaso,
           mensaje,
           motivo: motivo.trim() || null,
           cliente: cliente ?? null,
-          vin,
+          descripcionCaso: descripcionCaso ?? null,
+          vin: vin ?? null,
           patente: patente ?? null,
           marca: marca ?? null,
           modelo: modelo ?? null,
@@ -205,11 +220,14 @@ export function AsignarTareaModal({
               Asignar / Notificar
             </div>
             <div className="text-[13px] text-[--color-fg] mt-1 truncate">
-              <span className="mono text-[12px]">{vin}</span>
-              {(marca || modelo) && (
+              <span className="mono text-[12px]">{vin ?? claveCaso}</span>
+              {tipoCaso === "vin" && (marca || modelo) && (
                 <span className="text-[--color-fg-muted]">
                   {" "}· {[marca, modelo].filter(Boolean).join(" ")}
                 </span>
+              )}
+              {tipoCaso === "documental" && descripcionCaso && (
+                <span className="text-[--color-fg-muted]"> · {descripcionCaso}</span>
               )}
             </div>
           </div>

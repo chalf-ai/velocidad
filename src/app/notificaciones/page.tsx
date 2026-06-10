@@ -196,9 +196,13 @@ export default function NotificacionesPage() {
         <div className="space-y-3">
           {alertas.map((a) => {
             const esTarea = a.tipo === "TAREA_ASIGNADA";
+            // VIN → deep-link por vin. Documental → deep-link por clave
+            // (SALDO-/BONO-/PROV-), procesado por /centro-accion.
             const linkCaso = a.vin
               ? `/centro-accion?vin=${encodeURIComponent(a.vin)}`
-              : null;
+              : a.tarea?.claveCaso
+                ? `/centro-accion?clave=${encodeURIComponent(a.tarea.claveCaso)}`
+                : null;
             return (
               <div key={a.id} className="surface bg-white p-4">
                 {/* Header fila */}

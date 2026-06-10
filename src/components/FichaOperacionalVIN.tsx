@@ -492,6 +492,8 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
 
       {asignarOpen && (
         <AsignarTareaModal
+          claveCaso={id.vin}
+          tipoCaso="vin"
           vin={id.vin}
           cliente={vu.cliente}
           patente={id.patente ?? vu.patente}
