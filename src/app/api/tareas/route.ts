@@ -56,6 +56,10 @@ export async function POST(req: NextRequest) {
     /** Cliente del caso — solo enriquece el mensaje renderizado (no se
      *  persiste en TareaOperacional; queda congelado en AlertaLog.mensaje). */
     cliente?: string | null;
+    /** Canal simulado elegido en el modal. Se VALIDA pero NO se persiste:
+     *  AlertaLog no tiene campo canal (waMsgId es del envío real WhatsApp).
+     *  Agregar columna requiere decisión de schema — reportado en PR #26. */
+    canal?: "WHATSAPP" | "EMAIL" | null;
     vin?: string | null;
     patente?: string | null;
     marca?: string | null;
@@ -92,6 +96,19 @@ export async function POST(req: NextRequest) {
   }
   if (!creador) {
     return NextResponse.json({ error: "Usuario creador no resuelto" }, { status: 400 });
+  }
+
+  // Canal: Email exige email del asignado (bloquea). WhatsApp sin teléfono
+  // solo advierte — la notificación queda pendiente para copia manual.
+  const canal = body.canal ?? "WHATSAPP";
+  if (canal !== "WHATSAPP" && canal !== "EMAIL") {
+    return NextResponse.json({ error: "Canal inválido (WHATSAPP | EMAIL)" }, { status: 400 });
+  }
+  if (canal === "EMAIL" && !asignado.email) {
+    return NextResponse.json(
+      { error: "El usuario asignado no tiene email — canal Email no disponible" },
+      { status: 400 },
+    );
   }
 
   const fechaCompromiso = body.fechaCompromiso ? new Date(body.fechaCompromiso) : null;
@@ -148,6 +165,7 @@ export async function POST(req: NextRequest) {
     {
       tarea,
       alerta: { id: alerta.id, enviado: alerta.enviado },
+      canal,
       // Aviso para la UI: sin teléfono → solo copia manual posible.
       asignadoSinTelefono: !asignado.telefono,
     },

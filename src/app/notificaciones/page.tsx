@@ -130,9 +130,11 @@ export default function NotificacionesPage() {
               Notificaciones operativas
             </h1>
             <p className="text-[13px] text-[--color-fg-muted] mt-1.5 max-w-2xl leading-snug">
-              Cola de notificaciones WhatsApp. Las pendientes se copian
-              manualmente y se marcan como enviadas — el envío automático por
-              César llega en la fase siguiente.
+              Cola de notificaciones (WhatsApp / email simulados). Las
+              pendientes se copian manualmente y se marcan como enviadas — el
+              envío automático por César llega en la fase siguiente. La
+              notificación solo lleva al caso: el seguimiento se deja en la
+              ficha del auto.
             </p>
           </div>
           <button
@@ -262,8 +264,24 @@ export default function NotificacionesPage() {
                   <div className="mt-2 text-[11.5px] text-red-700">Error: {a.errorMsg}</div>
                 )}
 
-                {/* Acciones */}
+                {/* Resolución: la notificación solo lleva al caso */}
+                {esTarea && linkCaso && (
+                  <div className="mt-2.5 text-[11.5px] text-[--color-fg-muted]">
+                    Para resolver, abre el caso y deja seguimiento en la ficha
+                    del auto.
+                  </div>
+                )}
+
+                {/* Acciones — Abrir caso es la acción principal */}
                 <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  {linkCaso && (
+                    <a
+                      href={linkCaso}
+                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold bg-[color:var(--color-accent)] text-white hover:opacity-90"
+                    >
+                      <ExternalLink className="size-3.5" /> Abrir caso
+                    </a>
+                  )}
                   <button
                     type="button"
                     onClick={() => void copiar(a)}
@@ -284,19 +302,11 @@ export default function NotificacionesPage() {
                       type="button"
                       onClick={() => void marcarEnviada(a)}
                       disabled={marcandoId === a.id}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold bg-[color:var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[--color-border] px-3 py-1.5 text-[12px] font-medium text-[--color-fg] hover:bg-[--color-bg-elev-2] disabled:opacity-50"
                     >
                       <CheckCheck className="size-3.5" />
                       {marcandoId === a.id ? "Marcando…" : "Marcar enviada"}
                     </button>
-                  )}
-                  {linkCaso && (
-                    <a
-                      href={linkCaso}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[--color-border] px-3 py-1.5 text-[12px] font-medium text-[--color-info] hover:bg-[--color-bg-elev-2]"
-                    >
-                      <ExternalLink className="size-3.5" /> Abrir caso
-                    </a>
                   )}
                 </div>
               </div>

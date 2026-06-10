@@ -4,8 +4,9 @@
  *
  * Separado de /api/users (que es de ADMINISTRACIÓN y exige canManageUsers):
  * cualquier usuario autenticado puede asignar una tarea, así que este
- * endpoint solo expone lo mínimo: id, nombre, email, rol y si tiene
- * teléfono WhatsApp (para el warning de copia manual).
+ * endpoint solo expone lo mínimo: id, nombre, email, rol y teléfono —
+ * necesarios para el buscador del modal (búsqueda por nombre/email/teléfono)
+ * y la validación de canal (WhatsApp ↔ teléfono, Email ↔ email).
  */
 
 import { NextResponse } from "next/server";
@@ -28,6 +29,7 @@ export async function GET() {
       name: u.name ?? u.email,
       email: u.email,
       rol: u.rol,
+      telefono: u.telefono,
       tieneTelefono: !!u.telefono,
     })),
   );
