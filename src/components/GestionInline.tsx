@@ -17,7 +17,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { History, MessageSquarePlus, Send } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useGestionStore } from "@/lib/gestion/store";
@@ -74,6 +74,11 @@ export function GestionInline({
   const setG = useGestionStore((s) => s.setGestion);
   const clearG = useGestionStore((s) => s.clearGestion);
   const [expanded, setExpanded] = useState(variant === "panel" || defaultExpanded);
+  // El deep-link puede llegar después del mount (hidratación) — abrir también
+  // cuando la prop se activa tarde, no solo en el estado inicial.
+  useEffect(() => {
+    if (defaultExpanded) setExpanded(true);
+  }, [defaultExpanded]);
   const [verHistorial, setVerHistorial] = useState(false);
   // Asignar / Notificar — mismo modal y cola que la FichaOperacionalVIN.
   // La tarea solo EMPUJA; el seguimiento sigue viviendo acá (store del caso).
