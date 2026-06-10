@@ -689,6 +689,52 @@ async def create_alerta_log(
     return alerta_id
 
 
+async def get_tareas_pendientes_whatsapp(
+    emails: list[str],
+    desde: datetime,
+    limit: int = 10,
+) -> list[dict]:
+    """
+    F2 · Alertas TAREA_ASIGNADA listas para enviar por WhatsApp.
+
+    Condiciones (todas obligatorias — ver reglas F2):
+      tipo=TAREA_ASIGNADA · enviado=false · errorMsg IS NULL (un intento) ·
+      tareaId IS NOT NULL · canal WhatsApp · createdAt >= fecha activación ·
+      asignado activo, con teléfono y dentro de la allowlist del piloto.
+
+    Las alertas canal EMAIL o sin canal NUNCA entran acá (quedan manuales).
+    """
+    if not emails:
+        return []
+    # Prisma guarda createdAt como TIMESTAMP sin zona (UTC implícito);
+    # asyncpg exige naive para ese tipo → convertir aware → naive UTC.
+    if desde.tzinfo is not None:
+        desde = desde.astimezone(timezone.utc).replace(tzinfo=None)
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        SELECT a.id, a.mensaje, a."createdAt", u.email, u.name, u.telefono
+        FROM "AlertaLog" a
+        JOIN "User" u ON u.id = a."userId"
+        WHERE a.tipo = 'TAREA_ASIGNADA'
+          AND a.enviado = false
+          AND a."errorMsg" IS NULL
+          AND a."tareaId" IS NOT NULL
+          AND a.canal IN ('WHATSAPP', 'WHATSAPP_SIMULADO')
+          AND a."createdAt" >= $1
+          AND u.activo = true
+          AND u.telefono IS NOT NULL
+          AND LOWER(u.email) = ANY($2::text[])
+        ORDER BY a."createdAt" ASC
+        LIMIT $3
+        """,
+        desde,
+        emails,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_snapshots_historicos(limit: int = 5) -> list[dict]:
     """Últimos N snapshots de BASE_STOCK con metadata (id, fecha, registros)."""
     pool = await get_pool()
