@@ -162,6 +162,10 @@ model AlertaLog {
   enviado   Boolean    @default(false)
   errorMsg  String?    // mensaje de error si falló el envío
   waMsgId   String?    // ID del mensaje en WhatsApp
+  /// Canal elegido al asignar: "WHATSAPP" | "EMAIL". Null = registros previos
+  /// a la columna ("pendiente de canal"). El envío externo sigue simulado —
+  /// la asignación interna es la obligatoria.
+  canal     String?
   /// Tarea operacional que originó esta alerta (solo tipo TAREA_ASIGNADA).
   /// César (agent/) NO lee esta columna todavía — F2 le agregará el poller.
   tareaId   String?

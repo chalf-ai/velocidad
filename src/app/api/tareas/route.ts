@@ -107,6 +107,8 @@ export async function POST(req: NextRequest) {
 
   // Canal: Email exige email del asignado (bloquea). WhatsApp sin teléfono
   // solo advierte — la notificación queda pendiente para copia manual.
+  // El canal externo es opcional (F1 no envía nada); la ASIGNACIÓN INTERNA
+  // es la obligatoria: tarea + alerta visibles en /notificaciones siempre.
   const canal = body.canal ?? "WHATSAPP";
   if (canal !== "WHATSAPP" && canal !== "EMAIL") {
     return NextResponse.json({ error: "Canal inválido (WHATSAPP | EMAIL)" }, { status: 400 });
@@ -164,6 +166,7 @@ export async function POST(req: NextRequest) {
         vin: body.vin ?? null,
         mensaje: mensajeRender,
         enviado: false,
+        canal,
         tareaId: t.id,
       },
     });
