@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Calendar, ChevronDown, Check, Loader2 } from "lucide-react";
+import { Calendar, ChevronDown, Check, Loader2, Menu } from "lucide-react";
 import { MarcaFilterSelect } from "@/components/MarcaFilterSelect";
 import { SucursalFilterSelect } from "@/components/SucursalFilterSelect";
 import { useExcelStore } from "@/lib/store";
@@ -136,9 +136,21 @@ function CorteSelector() {
   );
 }
 
-export function Header() {
+export function Header({ onMenuClick }: { onMenuClick?: () => void } = {}) {
   return (
-    <header className="flex h-18 w-full shrink-0 items-center gap-6 border-b border-[#2a4bc4] bg-[#3358e8] px-6">
+    <header className="flex h-18 w-full shrink-0 items-center gap-3 border-b border-[#2a4bc4] bg-[#3358e8] px-4 sm:gap-6 sm:px-6">
+      {/* Hamburger · solo mobile/tablet (sidebar es drawer abajo de lg) */}
+      {onMenuClick && (
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="grid size-10 shrink-0 place-items-center rounded-md text-white/90 hover:bg-white/10 lg:hidden"
+          aria-label="Abrir menú"
+        >
+          <Menu className="size-6" strokeWidth={2} />
+        </button>
+      )}
+
       <Link href="/" className="flex shrink-0 items-center gap-3 transition hover:opacity-90">
         <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-white shadow-sm">
           <Image
@@ -150,7 +162,7 @@ export function Header() {
             className="size-8"
           />
         </div>
-        <div className="leading-tight">
+        <div className="hidden leading-tight sm:block">
           <div className="text-[14px] font-semibold tracking-tight text-white">Stock Command</div>
           <div className="text-[10px] uppercase tracking-[0.12em] text-white/70">
             Pompeyo Carrasco
@@ -164,7 +176,7 @@ export function Header() {
         <CorteSelector />
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-3.5">
+      <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3.5">
         <MarcaFilterSelect onHeader />
         <SucursalFilterSelect onHeader />
       </div>

@@ -1,10 +1,14 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, useEffect, useMemo, useState, type ComponentType } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowLeft,
+  Banknote,
+  Clock,
+  Coins,
   Download,
   Filter,
   RotateCcw,
@@ -18,7 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FilterChips } from "@/components/ui/FilterChips";
 import { Sheet } from "@/components/ui/Sheet";
-import { AbrirCasoButton } from "@/components/AbrirCasoButton";
+import { FichaOperacionalVIN } from "@/components/FichaOperacionalVIN";
 import { useVinContexto, VinContextoBanner } from "@/components/VinContexto";
 import { useDatosFiltrados, useMarcaFilter } from "@/lib/marca-filtro";
 import { useGestionStore } from "@/lib/gestion/store";
@@ -145,6 +149,10 @@ function StockExplorerInner() {
   /** Cuántas páginas (de PAGE_SIZE c/u) están visibles. Se resetea al cambiar
    *  filtros u orden para evitar "lagunas" de scroll. */
   const [visiblePages, setVisiblePages] = useState(1);
+  /** VIN con ficha operacional expandida inline · solo uno a la vez.
+   *  Reemplaza el modal del AbrirCasoButton anterior. Misma UX que Centro de
+   *  Acción: al abrir otro VIN, el actual se cierra automáticamente. */
+  const [vinExpanded, setVinExpanded] = useState<string | null>(null);
 
   // Gestión persistente compartida — hidratar localStorage (igual que el resto).
   useEffect(() => {
@@ -209,6 +217,49 @@ function StockExplorerInner() {
 
   const stats = useMemo(() => statsFromFiltered(filtered), [filtered]);
 
+  // ── KPI cards ejecutivas (Velocity OS · alineadas al patrón del Hero) ────
+  // Métricas DERIVADAS de `filtered` (no agrega nuevas queries ni selectores).
+  // El usuario las usa como lectura rápida del universo actualmente visible.
+  const kpis = useMemo(() => {
+    let sumDias = 0;
+    let nConDias = 0;
+    let criticosCount = 0;
+    let criticosCapital = 0;
+    let propioCount = 0;
+    let propioCapital = 0;
+    let fpCount = 0;
+    let fpCapital = 0;
+    for (const v of filtered) {
+      const dias = v.diasStock ?? 0;
+      const costo = v.costoNeto ?? 0;
+      if (v.diasStock != null && Number.isFinite(v.diasStock)) {
+        sumDias += dias;
+        nConDias++;
+      }
+      if (dias >= 180) {
+        criticosCount++;
+        criticosCapital += costo;
+      }
+      if (v.tipoStock === "Propio" || v.tipoStock === "FinPropio") {
+        propioCount++;
+        propioCapital += costo;
+      }
+      if (v.tipoStock === "FloorPlan" || v.tipoStock === "Financiado") {
+        fpCount++;
+        fpCapital += costo;
+      }
+    }
+    return {
+      agingPromedio: nConDias > 0 ? sumDias / nConDias : null,
+      criticosCount,
+      criticosCapital,
+      propioCount,
+      propioCapital,
+      fpCount,
+      fpCapital,
+    };
+  }, [filtered]);
+
   if (!data) {
     return (
       <div className="p-10 max-w-3xl mx-auto fade-in">
@@ -244,50 +295,42 @@ function StockExplorerInner() {
 
   return (
     <div className="fade-in">
-      {/* Page hero — premium gradient + title fuerte */}
-      <div className="relative overflow-hidden border-b border-[--color-border] bg-gradient-to-br from-[#eff3ff] via-[#f5f0ff] to-white">
-        <div className="absolute -top-16 -right-16 size-64 rounded-full bg-[--color-accent] opacity-[0.10] blur-3xl pointer-events-none" />
-        <div className="relative max-w-[1600px] mx-auto px-10 pt-10 pb-8">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-8 space-y-6">
+        {/* Hero — alineado al estándar Velocity OS: surface + top-strip.
+            Antes era un gradient custom full-width que se sentía "de otro
+            programa" frente al resto del sistema. */}
+        <section className="surface bg-white top-strip strip-operativo p-5">
           {/* Back button cuando se llegó desde un drilldown */}
           {hasFilters && (
             <button
               onClick={() => router.back()}
-              className="inline-flex items-center gap-1.5 text-[12px] text-[--color-fg-muted] hover:text-[--color-fg] mb-4 transition"
+              className="inline-flex items-center gap-1.5 text-[12px] text-[--color-fg-muted] hover:text-[--color-fg] mb-3 transition"
             >
               <ArrowLeft className="size-3.5" strokeWidth={1.75} />
               Volver
             </button>
           )}
           <div className="flex items-start justify-between gap-6 flex-wrap">
-            <div>
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[--color-accent] font-semibold">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-[0.14em] text-[--color-info] font-semibold">
                 <Warehouse className="size-3.5" strokeWidth={2} />
                 Explorador
               </div>
-              <h1 className="text-[36px] font-semibold tracking-tight mt-2 leading-[1.05] text-[--color-fg]">
+              <h1 className="text-[24px] sm:text-[28px] font-semibold tracking-tight mt-1.5 leading-tight text-[--color-fg]">
                 Stock Explorer
               </h1>
-              <div className="text-[14px] text-[--color-fg-muted] mt-3">
-                <span className="mono text-[--color-fg] text-[16px] font-semibold">
+              <p className="text-[13px] text-[--color-fg-muted] mt-1.5 max-w-2xl leading-snug">
+                <span className="mono text-[--color-fg] font-semibold">
                   {fmtNum(stats.unidades)}
-                </span>
-                <span className="text-[--color-fg-muted]">
-                  {" "}de {fmtNum(totalUniverse)} vehículos
-                </span>
-                <span className="text-[--color-fg-dim] mx-2">·</span>
-                Capital{" "}
-                <span className="mono text-[--color-fg] font-medium">
-                  {fmtCLPCompact(stats.capital)}
-                </span>
-                <span className="text-[--color-fg-dim] mx-2">·</span>
-                {stats.marcasUnicas} marcas
-                <span className="text-[--color-fg-dim] mx-2">·</span>
-                {stats.sucursalesUnicas} sucursales
-              </div>
+                </span>{" "}
+                de <span className="mono text-[--color-fg]">{fmtNum(totalUniverse)}</span> vehículos
+                · <span className="mono text-[--color-fg] font-medium">{fmtCLPCompact(stats.capital)}</span> capital
+                · {stats.marcasUnicas} marcas · {stats.sucursalesUnicas} sucursales
+              </p>
             </div>
 
             {/* Search + actions */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="relative">
                 <Search
                   className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-[--color-fg-dim]"
@@ -298,7 +341,7 @@ function StockExplorerInner() {
                   value={filters.q}
                   onChange={(e) => setFilters({ ...filters, q: e.target.value })}
                   placeholder="Buscar VIN, patente, modelo…"
-                  className="w-[300px] h-10 text-[13px] pl-10 pr-3 rounded-lg bg-white border border-[--color-border] focus:border-[--color-accent] outline-none transition placeholder:text-[--color-fg-dim] shadow-sm"
+                  className="w-full sm:w-[280px] h-10 text-[13px] pl-10 pr-3 rounded-lg bg-white border border-[--color-border] focus:border-[--color-accent] outline-none transition placeholder:text-[--color-fg-dim]"
                 />
                 {filters.q && (
                   <button
@@ -314,7 +357,7 @@ function StockExplorerInner() {
                 <Filter className="size-3.5" strokeWidth={1.75} />
                 Filtros
                 {activeCount > 0 && (
-                  <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 text-[10px] rounded-full bg-[--color-accent] text-white font-semibold mono">
+                  <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 text-[10px] rounded-full bg-[color:var(--color-accent)] text-white font-semibold mono">
                     {activeCount}
                   </span>
                 )}
@@ -329,16 +372,49 @@ function StockExplorerInner() {
 
           {/* Active filter pills */}
           {active && (
-            <div className="mt-6">
+            <div className="mt-4">
               <ActiveFilterPills filters={filters} setFilters={setFilters} />
             </div>
           )}
-        </div>
-      </div>
+        </section>
 
-      <div className="max-w-[1600px] mx-auto px-10 py-8">
+        {/* KPI cards ejecutivas — lectura rápida del universo filtrado.
+            Aging promedio · Críticos >180d · Stock Propio · Floor Plan/Fin.
+            Derivadas de `filtered` (cero queries / fórmulas nuevas). */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <KpiCard
+            kicker="Aging promedio"
+            icon={Clock}
+            tone="info"
+            value={kpis.agingPromedio != null ? `${Math.round(kpis.agingPromedio)}d` : "—"}
+            sub="días stock promedio"
+          />
+          <KpiCard
+            kicker="Críticos >180d"
+            icon={AlertTriangle}
+            tone="danger"
+            value={fmtNum(kpis.criticosCount)}
+            sub={fmtCLPCompact(kpis.criticosCapital)}
+          />
+          <KpiCard
+            kicker="Stock propio"
+            icon={Coins}
+            tone="warning"
+            value={fmtNum(kpis.propioCount)}
+            sub={fmtCLPCompact(kpis.propioCapital)}
+          />
+          <KpiCard
+            kicker="Floor Plan · Financiado"
+            icon={Banknote}
+            tone="muted"
+            value={fmtNum(kpis.fpCount)}
+            sub={fmtCLPCompact(kpis.fpCapital)}
+          />
+        </div>
+
         {vinCtx && <VinContextoBanner vin={vinCtx} presentes={filtered.length} />}
-        {/* Tabla — Linear/Attio style */}
+        {/* Tabla densa — patrón Explorer (sortable + 200+ filas + filtros densos
+            justifican mantener `<table>` plana en vez de cardificar c/u). */}
         <div className="rounded-2xl border border-[--color-border] bg-[--color-bg-elev-1] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[1400px] linear-table thead-sticky">
@@ -392,9 +468,11 @@ function StockExplorerInner() {
                         ? "text-[--color-warning]"
                         : "text-[--color-fg]";
                   const vinKey = limpiarVIN(v.vin);
+                  const isExpanded = vinExpanded === vinKey;
 
                   return (
-                    <tr key={`${v.vin}-${v.rowIndex}`}>
+                    <Fragment key={`${v.vin}-${v.rowIndex}`}>
+                    <tr className={cn(isExpanded && "bg-[--color-bg-elev-2]")}>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-[13px] text-[--color-fg]">
@@ -469,9 +547,23 @@ function StockExplorerInner() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <AbrirCasoButton vin={vinKey} origen="Stock Explorer" />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setVinExpanded(isExpanded ? null : vinKey)
+                          }
+                          className={cn(
+                            "inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2.5 py-1 rounded-md border transition",
+                            isExpanded
+                              ? "border-[color:var(--color-accent)] bg-[color:var(--color-accent)] text-white hover:opacity-90"
+                              : "border-[--color-border] bg-white text-[--color-fg] hover:bg-[--color-bg-elev-2]",
+                          )}
+                        >
+                          {isExpanded ? "Cerrar" : "Gestionar"}
+                        </button>
                       </td>
                     </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -521,6 +613,29 @@ function StockExplorerInner() {
             />
           )}
         </div>
+
+        {/* Ficha Operacional del VIN seleccionado · panel FUERA del scroll
+            horizontal de la tabla. Antes vivía como <tr> dentro del <table
+            min-w-[1400px]>, lo que cortaba el contenido por la izquierda al
+            scrollear. Como panel independiente respeta el ancho del viewport. */}
+        {vinExpanded && (
+          <div className="surface bg-white top-strip strip-info p-5">
+            <div className="flex items-baseline justify-between gap-3 mb-3">
+              <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-info] font-semibold">
+                Gestión inline · {vinExpanded}
+              </div>
+              <button
+                type="button"
+                onClick={() => setVinExpanded(null)}
+                className="text-[11.5px] text-[--color-fg-muted] hover:text-[--color-fg] inline-flex items-center gap-1"
+              >
+                <X className="size-3" />
+                Cerrar
+              </button>
+            </div>
+            <FichaOperacionalVIN vin={vinExpanded} />
+          </div>
+        )}
       </div>
 
       {/* Drawer de filtros */}
@@ -704,6 +819,87 @@ function StockExplorerInner() {
           </label>
         </div>
       </Sheet>
+    </div>
+  );
+}
+
+// ─── Subcomponente · KPI card ejecutiva (patrón Velocity OS) ─────────────────
+// Mismo lenguaje visual que las cards Hero del Centro de Acción · surface +
+// top-strip + tinte de fondo y borde semántico para que el color "respire"
+// más allá del strip de 3px arriba (feedback usuario: "colores apagados").
+type KpiTone = "info" | "danger" | "warning" | "muted";
+const KPI_TONE: Record<
+  KpiTone,
+  { strip: string; text: string; bg: string; border: string; iconBg: string }
+> = {
+  info: {
+    strip: "strip-info",
+    text: "text-[--color-info]",
+    bg: "bg-blue-50/50",
+    border: "border-blue-200",
+    iconBg: "bg-blue-100 text-blue-700",
+  },
+  danger: {
+    strip: "strip-danger",
+    text: "text-[--color-danger]",
+    bg: "bg-red-50/60",
+    border: "border-red-200",
+    iconBg: "bg-red-100 text-red-700",
+  },
+  warning: {
+    strip: "strip-warning",
+    text: "text-[--color-warning]",
+    bg: "bg-amber-50/60",
+    border: "border-amber-200",
+    iconBg: "bg-amber-100 text-amber-800",
+  },
+  muted: {
+    strip: "strip-muted",
+    text: "text-[--color-fg-muted]",
+    bg: "bg-slate-50",
+    border: "border-slate-200",
+    iconBg: "bg-slate-200 text-slate-700",
+  },
+};
+
+function KpiCard({
+  kicker,
+  icon: Icon,
+  tone,
+  value,
+  sub,
+}: {
+  kicker: string;
+  icon: ComponentType<{ className?: string; strokeWidth?: number }>;
+  tone: KpiTone;
+  value: string;
+  sub: string;
+}) {
+  const t = KPI_TONE[tone];
+  return (
+    <div className={cn("surface top-strip p-4", t.strip, t.bg, t.border)}>
+      <div
+        className={cn(
+          "text-[10.5px] uppercase tracking-[0.14em] font-semibold flex items-center gap-2",
+          t.text,
+        )}
+      >
+        <span
+          className={cn(
+            "grid place-items-center size-5 rounded",
+            t.iconBg,
+          )}
+        >
+          <Icon className="size-3" strokeWidth={2.25} />
+        </span>
+        {kicker}
+      </div>
+      <div className="display text-[28px] mt-2.5 leading-none text-[--color-fg] mono font-bold">
+        {value}
+      </div>
+      <div className="text-[11.5px] text-[--color-fg-muted] mt-2 leading-snug">
+        {sub}
+      </div>
     </div>
   );
 }

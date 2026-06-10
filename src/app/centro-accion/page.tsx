@@ -7,6 +7,7 @@ import { limpiarVIN } from "@/lib/parser/venta-apc";
 import {
   AlertOctagon,
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   Banknote,
   ChevronDown,
@@ -69,6 +70,7 @@ import {
   type ScoreVIN,
   type Severidad,
 } from "@/lib/selectors/score";
+import { STATUS_DPS_LABEL } from "@/lib/selectors/saldos";
 
 /** Tramos T3+ (>30 días) según `StatusDPS` — para alertas de saldos viejos. */
 const TRAMOS_T3PLUS = new Set(["T3", "T4", "T5", "T6", "T7"]);
@@ -126,8 +128,8 @@ const COMMANDS: TabDef[] = [
   },
   {
     id: "fne_detenidos",
-    label: "FNE detenidos >15d",
-    desc: "Facturados sin avanzar más de 15 días en el estado actual.",
+    label: "FNE estancados >15d",
+    desc: "Estancados >15d en un mismo paso del flujo (CP, logística, inscripción) · atascamiento operacional.",
     icon: <AlertOctagon className="size-4" />,
     tone: "danger",
     filter: (vu) =>
@@ -292,11 +294,15 @@ export default function CentroAccionPage() {
 function CentroAccionInner() {
   const { data, fne, saldos, provisiones } = useDatosFiltrados();
   const [tab, setTab] = useState<TabId>("criticos");
+  // Ref al TOP de la página · destino del botón "Volver al Centro de Acción".
+  // OJO: el scroll real vive en <main className="overflow-auto"> del AppShell,
+  // por eso usamos scrollIntoView (no window.scrollTo, que sería no-op).
+  const pageTopRef = useRef<HTMLDivElement>(null);
   // Toggles de secciones inline gestionables del hero ejecutivo (cards 1–8).
   const [showCajaAtrapada, setShowCajaAtrapada] = useState(false);
   const cajaAtrapadaRef = useRef<HTMLDivElement>(null);
-  const [showMaximaAlerta, setShowMaximaAlerta] = useState(false);
-  const maximaAlertaRef = useRef<HTMLDivElement>(null);
+  // Máxima alerta · sin state ni ref propios (Opción A · P2 2026-06-09):
+  // la cola vive solo en el comando "criticos", la card del hero es atajo.
   const [showCp7d, setShowCp7d] = useState(false);
   const cp7dRef = useRef<HTMLDivElement>(null);
   const [showSeguimientos, setShowSeguimientos] = useState(false);
@@ -628,7 +634,7 @@ function CentroAccionInner() {
   const insights = useMemo(() => computeInsights(atrapados, gestionMap), [atrapados, gestionMap]);
 
   return (
-    <div className="max-w-[1500px] mx-auto px-10 py-10 space-y-6 fade-in">
+    <div ref={pageTopRef} className="max-w-[1500px] mx-auto px-10 py-10 space-y-6 fade-in scroll-mt-2">
       {/* Hero */}
       <div className="relative overflow-hidden rounded-3xl border border-[--color-border] bg-gradient-to-br from-[#fef2f2] via-[#fff7ed] to-white px-10 py-8">
         <div className="absolute -top-12 -right-12 size-56 rounded-full bg-[--color-danger] opacity-[0.10] blur-3xl pointer-events-none" />
@@ -695,15 +701,13 @@ function CentroAccionInner() {
           </div>
         </button>
 
-        {/* 2 · Máxima alerta → cola gestionable inline */}
+        {/* 2 · Máxima alerta → atajo al tab "criticos" (cola real vive UNA sola vez ahí).
+                Antes esta card abría una <ColaGestionableInline> propia, duplicando el universo
+                que ya muestra el comando. Opción A aprobada (P2 · 2026-06-09): card queda como
+                termómetro ejecutivo; el click activa el tab y scrollea a la cola principal. */}
         <button
           type="button"
-          onClick={() => {
-            setShowMaximaAlerta(true);
-            requestAnimationFrame(() =>
-              maximaAlertaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-            );
-          }}
+          onClick={() => selCmd("criticos")}
           className="surface surface-hover top-strip strip-operativo bg-white px-6 py-5 text-left"
         >
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-accent] font-semibold">
@@ -720,7 +724,7 @@ function CentroAccionInner() {
             en juego
           </div>
           <div className="inline-flex items-center gap-1 text-[12px] text-[--color-accent] font-medium mt-3">
-            Atacar primero <ArrowRight className="size-3.5" />
+            Ir al comando <ArrowRight className="size-3.5" />
           </div>
         </button>
 
@@ -796,13 +800,13 @@ function CentroAccionInner() {
           className="surface surface-hover top-strip strip-danger bg-white px-6 py-5 text-left"
         >
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-danger] font-semibold">
-            FNE &gt;7d
+            FNE sin entregar &gt;7d
           </div>
           <div className="display text-[36px] mt-2 leading-none text-[--color-fg]">
             {fmtNum(fne7d.length)} casos
           </div>
           <div className="text-[13px] text-[--color-fg-muted] mt-2">
-            facturados sin entregar ·{" "}
+            tiempo desde la factura · presión sobre el cliente ·{" "}
             <span className="text-[--color-danger] font-semibold">
               {fmtCLPCompact(montoFne7d)}
             </span>
@@ -830,7 +834,7 @@ function CentroAccionInner() {
             {fmtNum(saldosAutos30d.length)} saldos
           </div>
           <div className="text-[13px] text-[--color-fg-muted] mt-2">
-            tramos T3+ ·{" "}
+            30 días o más ·{" "}
             <span className="text-[--color-warning] font-semibold">
               {fmtCLPCompact(montoSaldosAutos30d)}
             </span>
@@ -858,7 +862,7 @@ function CentroAccionInner() {
             {fmtNum(bonos30d.length)} saldos
           </div>
           <div className="text-[13px] text-[--color-fg-muted] mt-2">
-            tramos T3+ ·{" "}
+            30 días o más ·{" "}
             <span className="text-[--color-warning] font-semibold">
               {fmtCLPCompact(montoBonos30d)}
             </span>
@@ -905,8 +909,8 @@ function CentroAccionInner() {
           - claveGestion (PROV-{id}) para provisiones */}
       {showFne7d && (
         <ColaGestionableInline
-          titulo="FNE >7d"
-          subtitulo="facturados sin entregar con >7 días desde factura"
+          titulo="FNE sin entregar >7d"
+          subtitulo="tiempo desde la factura · presión sobre el cliente"
           tono="danger"
           refContainer={fne7dRef}
           onClose={() => setShowFne7d(false)}
@@ -932,8 +936,8 @@ function CentroAccionInner() {
 
       {showSaldosAutos && (
         <ColaGestionableInline
-          titulo="Saldos autos >30d (T3+)"
-          subtitulo="saldos de vehículos en tramos T3 y superiores"
+          titulo="Saldos autos >30d"
+          subtitulo="con 30+ días sin cobrar"
           tono="warning"
           refContainer={saldosAutosRef}
           onClose={() => setShowSaldosAutos(false)}
@@ -954,7 +958,7 @@ function CentroAccionInner() {
                 modelo: r.modelo,
                 primario: r.cajonLimpio ?? r.cajon ?? `Fila ${r.rowIndex}`,
                 diasRetenido: r.diasArchivo ?? null,
-                diasSublabel: r.statusDPS,
+                diasSublabel: STATUS_DPS_LABEL[r.statusDPS],
                 monto: r.saldoXDocumentar,
                 tieneCp: r.cPompeyoCLP > 0,
                 montoCp: r.cPompeyoCLP,
@@ -965,8 +969,8 @@ function CentroAccionInner() {
 
       {showBonos && (
         <ColaGestionableInline
-          titulo="Bonos / comisiones >30d (T3+)"
-          subtitulo="facturas de bonos y comisiones en tramos T3+"
+          titulo="Bonos / comisiones >30d"
+          subtitulo="bonos / comisiones con 30+ días sin cobrar"
           tono="warning"
           refContainer={bonosRef}
           onClose={() => setShowBonos(false)}
@@ -985,7 +989,7 @@ function CentroAccionInner() {
                 modelo: r.subTipo,
                 primario: String(r.numeroFactura ?? r.numNota ?? `Fila ${r.rowIndex}`),
                 diasRetenido: r.diasArchivo ?? null,
-                diasSublabel: r.statusDPS,
+                diasSublabel: STATUS_DPS_LABEL[r.statusDPS],
                 monto: r.saldoXDocumentar,
                 tieneCp: false,
               };
@@ -1048,32 +1052,8 @@ function CentroAccionInner() {
         />
       )}
 
-      {showMaximaAlerta && (
-        <ColaGestionableInline
-          titulo="Máxima alerta"
-          subtitulo="2+ factores críticos en el mismo VIN (o judicial)"
-          tono="accent"
-          refContainer={maximaAlertaRef}
-          onClose={() => setShowMaximaAlerta(false)}
-          filas={[...urgentes]
-            .sort((a, b) => b.vu.capitalComprometido - a.vu.capitalComprometido)
-            .map<FilaCola>((x) => ({
-              clave: x.vu.vinLimpio,
-              vin: x.vu.vinLimpio,
-              cliente: x.vu.cliente,
-              vendedor: x.vu.vendedor,
-              sucursal: x.vu.sucursal,
-              patente: x.vu.patente,
-              marca: x.vu.marca,
-              modelo: x.vu.modelo,
-              diasRetenido: diasDesdeFacturaDe(x.vu),
-              diasSublabel: "desde factura",
-              monto: x.vu.capitalComprometido,
-              tieneCp: x.vu.creditoPompeyo > 0,
-              montoCp: x.vu.creditoPompeyo,
-            }))}
-        />
-      )}
+      {/* Sección inline "Máxima alerta" eliminada (P2 · 2026-06-09).
+          La cola real vive solo en el comando "criticos" abajo · cero duplicación. */}
 
       {showCp7d && (
         <ColaGestionableInline
@@ -1197,6 +1177,19 @@ function CentroAccionInner() {
       <div ref={listaRef} className="space-y-3 scroll-mt-6">
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <div>
+            <button
+              type="button"
+              onClick={() =>
+                pageTopRef.current?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
+                })
+              }
+              className="inline-flex items-center gap-1.5 text-[11.5px] text-[--color-info] hover:underline mb-1 font-medium"
+            >
+              <ArrowLeft className="size-3.5" strokeWidth={2} />
+              Volver al Centro de Acción
+            </button>
             <h2 className="text-[16px] font-semibold tracking-tight text-[--color-fg]">
               {tabDef.label}
               {tab === "logistica" && logBloqueoFilter && (
