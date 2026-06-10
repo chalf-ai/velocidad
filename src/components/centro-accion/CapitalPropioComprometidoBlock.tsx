@@ -115,37 +115,31 @@ export function CapitalPropioComprometidoBlock({
   // ── Estado vacío ─────────────────────────────────────────────────────
   if (unidadesCPC === 0) {
     return (
-      <div className="rounded-2xl border border-[--color-border] bg-white px-5 py-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Wallet className="size-4 text-[--color-fg-muted]" />
-          <h3 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[--color-fg]">
-            Capital Propio Comprometido · {marcaLabel}
-          </h3>
+      <section className="surface bg-white top-strip strip-info p-5">
+        <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-info] font-semibold flex items-center gap-2">
+          <Wallet className="size-3.5" />
+          Capital Propio Comprometido · {marcaLabel}
         </div>
-        <p className="text-[12px] text-[--color-fg-muted]">
+        <p className="text-[12px] text-[--color-fg-muted] mt-1.5">
           Sin VINs en stock propio / pagado para los filtros actuales.
         </p>
-      </div>
+      </section>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-[--color-border] bg-gradient-to-br from-white to-[--color-bg-elev-2] p-5 shadow-sm">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="inline-flex items-center justify-center size-7 rounded-lg bg-[--color-accent]/10 text-[--color-accent]">
-              <Wallet className="size-4" />
-            </span>
-            <h2 className="text-[14px] font-semibold tracking-tight text-[--color-fg]">
-              Capital Propio Comprometido · {marcaLabel}
-            </h2>
-          </div>
-          <p className="text-[11.5px] text-[--color-fg-muted] leading-snug max-w-2xl">
-            Caja propia inmovilizada · ¿cuánta caja está detenida y dónde?
-          </p>
+    <section className="surface bg-white top-strip strip-info p-5">
+      {/* Header · mismo lenguaje visual que las cards del Hero (kicker uppercase
+          + título + subtítulo). Antes era un card con gradient propio + icono
+          en chip — se veía "de otro programa". Ahora respira con el resto. */}
+      <div className="mb-4">
+        <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-info] font-semibold flex items-center gap-2">
+          <Wallet className="size-3.5" />
+          Capital Propio Comprometido · {marcaLabel}
         </div>
+        <p className="text-[13px] text-[--color-fg-muted] mt-1.5 leading-snug max-w-2xl">
+          Caja propia inmovilizada · ¿cuánta caja está detenida y dónde?
+        </p>
       </div>
 
       {/* Grid de métricas primarias */}
@@ -182,15 +176,17 @@ export function CapitalPropioComprometidoBlock({
         />
       </div>
 
-      {/* Potencial liberable (secundario) */}
+      {/* Potencial liberable (secundario) · fondos sólidos sin /60 /40 para
+          que el bloque sea visible sobre el outer bg-white. Antes los fondos
+          con transparencia se diluían y dejaban un rectángulo casi vacío. */}
       <div
         className={cn(
           "rounded-xl border px-4 py-3 mb-4",
           enMeta
-            ? "border-[--color-ok]/30 bg-[--color-success-dim]/60"
+            ? "border-emerald-200 bg-emerald-50"
             : potencialLiberable != null
-              ? "border-[--color-warning]/40 bg-[--color-warning-dim]/40"
-              : "border-[--color-border-soft] bg-[--color-bg-elev-1]/40",
+              ? "border-amber-200 bg-amber-50"
+              : "border-[--color-border] bg-[--color-bg-elev-2]",
         )}
       >
         <div className="flex items-center gap-2 mb-1.5">
@@ -247,13 +243,17 @@ export function CapitalPropioComprometidoBlock({
         )}
       </div>
 
-      {/* CTA · Ver todos los VINs */}
+      {/* CTA · Ver todos los VINs.
+          NOTA: usar bg-[color:var(--color-X)] (no bg-[--color-X]). La segunda
+          forma NO resuelve la custom property en Tailwind v4 — queda transparente
+          y el texto blanco se vuelve invisible. Mismo patrón documentado en
+          FunnelHitosFactura.tsx:41 y ResumenEjecutivoProceso.tsx. */}
       <button
         type="button"
         onClick={onVerVins}
         className={cn(
           "inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-[12.5px] font-semibold",
-          "bg-[--color-accent] text-white hover:bg-[--color-accent]/90 transition",
+          "bg-[color:var(--color-accent)] text-white hover:opacity-90 transition",
           "shadow-sm",
         )}
       >
@@ -263,7 +263,7 @@ export function CapitalPropioComprometidoBlock({
           · {fmtNum(unidadesCPC)} VINs · {fmtCLPCompact(capitalCPC)}
         </span>
       </button>
-    </div>
+    </section>
   );
 }
 
@@ -279,7 +279,7 @@ function MetricCell({
   sub?: string;
 }) {
   return (
-    <div className="rounded-lg border border-[--color-border-soft] bg-white px-3 py-2.5">
+    <div className="rounded-lg border border-[--color-border] bg-[--color-bg-elev-2] px-3 py-2.5">
       <div className="text-[10px] uppercase tracking-[0.08em] text-[--color-fg-dim] font-semibold mb-1">
         {label}
       </div>

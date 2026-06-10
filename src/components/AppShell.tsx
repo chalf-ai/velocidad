@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Header } from "@/components/Header";
 import { Sidebar } from "@/components/Sidebar";
@@ -11,6 +11,13 @@ import { SnapshotHydrator } from "@/components/SnapshotHydrator";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAuthRoute = pathname.startsWith("/login");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Cerrar drawer al cambiar de ruta · cubre navegaciones que no pasan por el
+  // onClick del Link (deep-link, back/forward del browser, redirect server).
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
 
   return (
     <SessionProvider>
@@ -21,14 +28,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* Hidrata el store con el snapshot oficial activo desde la DB. Corre
               una sola vez por sesión; no pisa cargas hechas manualmente. */}
           <SnapshotHydrator />
-          <Header />
+          <Header onMenuClick={() => setMobileNavOpen(true)} />
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <Suspense
               fallback={
-                <div className="w-60 shrink-0 border-r border-[--color-border] bg-white" />
+                <div className="hidden w-60 shrink-0 border-r border-[--color-border] bg-white lg:block" />
               }
             >
-              <Sidebar />
+              <Sidebar
+                mobileOpen={mobileNavOpen}
+                onClose={() => setMobileNavOpen(false)}
+              />
             </Suspense>
             <main className="min-w-0 flex-1 overflow-auto">{children}</main>
           </div>

@@ -31,6 +31,7 @@ import {
   UserCircle2,
   Users,
   Warehouse,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -122,7 +123,15 @@ const NAV_TEC: NavItem[] = [
   { href: "/debug/resumen", label: "Debug · Resumen", icon: Bug },
 ];
 
-function NavSection({ title, items }: { title: string; items: NavItem[] }) {
+function NavSection({
+  title,
+  items,
+  onLinkClick,
+}: {
+  title: string;
+  items: NavItem[];
+  onLinkClick?: () => void;
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentQs = searchParams.toString();
@@ -169,6 +178,7 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onLinkClick}
               className={cn(
                 "group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] transition",
                 active
@@ -194,7 +204,13 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
   );
 }
 
-export function Sidebar() {
+export function Sidebar({
+  mobileOpen = false,
+  onClose,
+}: {
+  mobileOpen?: boolean;
+  onClose?: () => void;
+} = {}) {
   const { data: session } = useSession();
   const email = session?.user?.email ?? "usuario@pompeyo.cl";
   const name = session?.user?.name ?? null;
@@ -219,50 +235,102 @@ export function Sidebar() {
       : []),
   ];
 
-  return (
-    <aside className="sticky top-0 flex h-full w-60 shrink-0 flex-col border-r border-[--color-border] bg-white">
-      <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 pb-4 pt-4">
-        {showEjecutivo && <NavSection title="Ejecutivo" items={NAV_EXEC} />}
-        <NavSection title="Marcas" items={NAV_MARCAS} />
-        {showOperaciones && <NavSection title="Operaciones" items={NAV_OPERACIONES} />}
-        <NavSection title="Tesorería" items={NAV_TESORERIA} />
-        {navSistema.length > 0 && (
-          <NavSection
-            title={isAdmin || isGerenteGeneral ? "Técnico" : "Administración"}
-            items={navSistema}
-          />
-        )}
-      </nav>
+  // Cierra el drawer al navegar (solo aplica en mobile, en desktop es no-op).
+  const handleLinkClick = onClose;
 
-      <div className="border-t border-[--color-border] px-2.5 pt-3 pb-4">
-        <div className="rounded-md border border-[--color-border] bg-[--color-bg-elev-1] p-1.5">
+  return (
+    <>
+      {/* Backdrop · solo mobile y solo cuando abierto. lg:hidden para que en
+          desktop no exista nunca. */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        className={cn(
+          "z-50 flex h-full w-60 shrink-0 flex-col border-r border-[--color-border] bg-white",
+          // Mobile (default): drawer fijo deslizable
+          "fixed inset-y-0 left-0 transform transition-transform duration-200",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+          // Desktop (lg+): vuelve a flujo normal del flex padre, sin transform.
+          "lg:relative lg:translate-x-0 lg:transition-none",
+        )}
+        aria-label="Navegación principal"
+      >
+        {/* Header mobile del drawer · solo visible cuando es drawer (lg:hidden).
+            Da un punto de cierre obvio para usuarios que abrieron por error. */}
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-[--color-border] px-3 lg:hidden">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[--color-fg-dim]">
+            Menú
+          </span>
           <button
             type="button"
-            onClick={() => setLogoutModalOpen(true)}
-            className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-[--color-bg-elev-2]"
+            onClick={onClose}
+            className="grid size-8 place-items-center rounded-md text-[--color-fg-muted] hover:bg-[--color-bg-elev-2] hover:text-[--color-fg]"
+            aria-label="Cerrar menú"
           >
-            <UserCircle2 className="size-4 shrink-0 text-[--color-fg-dim]" strokeWidth={1.75} />
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-[12px] text-[--color-fg-muted]" title={email}>
-                {name ?? email}
-              </span>
-              {rol && (
-                <span
-                  className={cn(
-                    "mt-0.5 self-start rounded-full px-1.5 py-px text-[9px] font-semibold leading-tight",
-                    ROL_COLOR[rol] ?? "bg-gray-100 text-gray-600",
-                  )}
-                >
-                  {ROL_LABEL[rol] ?? rol}
-                </span>
-              )}
-            </div>
+            <X className="size-[18px]" strokeWidth={1.75} />
           </button>
         </div>
-      </div>
 
-      {logoutModalOpen && <LogoutModal email={email} onClose={() => setLogoutModalOpen(false)} />}
-    </aside>
+        <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 pb-4 pt-4">
+          {showEjecutivo && (
+            <NavSection title="Ejecutivo" items={NAV_EXEC} onLinkClick={handleLinkClick} />
+          )}
+          <NavSection title="Marcas" items={NAV_MARCAS} onLinkClick={handleLinkClick} />
+          {showOperaciones && (
+            <NavSection
+              title="Operaciones"
+              items={NAV_OPERACIONES}
+              onLinkClick={handleLinkClick}
+            />
+          )}
+          <NavSection title="Tesorería" items={NAV_TESORERIA} onLinkClick={handleLinkClick} />
+          {navSistema.length > 0 && (
+            <NavSection
+              title={isAdmin || isGerenteGeneral ? "Técnico" : "Administración"}
+              items={navSistema}
+              onLinkClick={handleLinkClick}
+            />
+          )}
+        </nav>
+
+        <div className="border-t border-[--color-border] px-2.5 pt-3 pb-4">
+          <div className="rounded-md border border-[--color-border] bg-[--color-bg-elev-1] p-1.5">
+            <button
+              type="button"
+              onClick={() => setLogoutModalOpen(true)}
+              className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition hover:bg-[--color-bg-elev-2]"
+            >
+              <UserCircle2 className="size-4 shrink-0 text-[--color-fg-dim]" strokeWidth={1.75} />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-[12px] text-[--color-fg-muted]" title={email}>
+                  {name ?? email}
+                </span>
+                {rol && (
+                  <span
+                    className={cn(
+                      "mt-0.5 self-start rounded-full px-1.5 py-px text-[9px] font-semibold leading-tight",
+                      ROL_COLOR[rol] ?? "bg-gray-100 text-gray-600",
+                    )}
+                  >
+                    {ROL_LABEL[rol] ?? rol}
+                  </span>
+                )}
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {logoutModalOpen && (
+          <LogoutModal email={email} onClose={() => setLogoutModalOpen(false)} />
+        )}
+      </aside>
+    </>
   );
 }
 
