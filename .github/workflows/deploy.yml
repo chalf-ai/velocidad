@@ -44,22 +44,30 @@ jobs:
             .
           docker push $ECR_REPO:$IMAGE_TAG
           docker push $ECR_REPO:latest
+          echo "image=$ECR_REPO:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # Las credenciales de este repo no tienen iam:PassRole, así que no se
-      # puede registrar task definition nueva (método del repo paartigas).
-      # La task def actual apunta a :latest: basta forzar redeploy para tomar
-      # la imagen recién pusheada. Rollback: re-tagear :latest a un SHA
-      # anterior y volver a forzar redeploy.
-      - name: Deploy en ECS (redeploy sobre :latest)
+      - name: Obtener task definition actual
         run: |
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
-            --force-new-deployment > /dev/null
-          echo "Esperando estabilidad del servicio..."
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE
+          aws ecs describe-task-definition \
+            --task-definition velocidad \
+            --query taskDefinition \
+            --output json > task-def.json
+
+      - name: Actualizar imagen en task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy en ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
 
       - name: ✅ Deploy completado
         run: echo "Deploy exitoso - imagen ${{ github.sha }} corriendo en ${{ env.ECS_CLUSTER }}"
