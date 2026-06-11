@@ -811,7 +811,10 @@ gaps = [
     {
         "p": "Alta",
         "titulo": "Validación visual del rediseño /velocidad-operacional",
-        "texto": "Después del fix de bg-[--color-X] → bg-[color:var(...)] y "
+        # Ojo: NO escribir acá clases Tailwind arbitrarias "completas" — el
+        # scanner v4 lee este .py y genera CSS inválido que rompe `next dev`
+        # (espacio dentro del bracket = no matchea como clase).
+        "texto": "Después del fix de bg-[--color-X] → bg-[color: var(--color-X)] y "
                   "regla usados, falta confirmar visualmente que el funnel "
                   "chevron y los 4 KPIs sólidos se ven bien en pantalla con "
                   "datos reales. Bloquea el commit del rediseño.",
