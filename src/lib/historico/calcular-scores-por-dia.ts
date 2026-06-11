@@ -25,6 +25,7 @@ import {
   rehidratarStock,
   type ResultadoScoreGerencialHistorico,
 } from "./calcular-score-gerencial-historico";
+import { capitalDesdePayloads, type CapitalCorte } from "./capital-por-corte";
 
 // ────────────────────────────────────────────────────────────────────
 // Tipos públicos
@@ -52,6 +53,10 @@ export interface PuntoDiario {
   sgLegacy: ResultadoScoreGerencialHistorico;
   /** Delta vs el punto anterior (si existe y ambos confiables). null si no se puede comparar. */
   deltaSG: number | null;
+  /** Componentes reales del capital de trabajo en este corte. A diferencia
+   *  del score (que exige las 4 fuentes), cada componente se calcula con
+   *  SU fuente — null solo si esa fuente falta. */
+  capital: CapitalCorte;
   /** Fecha de corte mínima detectada entre los archivos del día. */
   fechaCorteMin: Date | null;
   /** Fecha de corte máxima detectada entre los archivos del día. */
@@ -195,6 +200,16 @@ export async function calcularSGLegacyPorDia(args: {
       });
     }
 
+    // Capital de trabajo del corte — por componente, con lo que haya.
+    const capital = capitalDesdePayloads({
+      stock: ganadores.BASE_STOCK ? rehidratarStock(ganadores.BASE_STOCK.payload) : null,
+      saldos: ganadores.SALDOS ? rehidratarSaldos(ganadores.SALDOS.payload) : null,
+      provisiones: ganadores.PROVISIONES
+        ? rehidratarProvisiones(ganadores.PROVISIONES.payload)
+        : null,
+      marca,
+    });
+
     const [year, mes, diaNum] = dia.split("-");
     const mNum = parseInt(mes, 10);
     const diaLabel = `${parseInt(diaNum, 10).toString().padStart(2, "0")} ${MESES_CORTOS[mNum - 1] ?? "?"} ${year}`;
@@ -219,6 +234,7 @@ export async function calcularSGLegacyPorDia(args: {
       cargasDelDia,
       sgLegacy,
       deltaSG: null, // se completa abajo
+      capital,
       fechaCorteMin,
       fechaCorteMax,
     });
