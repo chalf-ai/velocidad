@@ -1,18 +1,21 @@
 /**
- * Reconstrucción server-side del Score Gerencial LEGACY por DÍA dentro
- * de un período (vista "evolución diaria" de /tendencias V5 · Etapa A).
+ * Reconstrucción server-side del Score Gerencial LEGACY por FECHA DE CORTE
+ * dentro de un período (vista "evolución por corte" de /tendencias).
  *
- * Política operacional aprobada por usuario:
- *   · Solo días con cargas reales. No inventar puntos.
- *   · Para cada día con cargas, usar la última versión disponible de cada
- *     fuente hasta el final de ese día (criterio "más reciente", NO
- *     "mayor prioridadCierre" — porque acá nos interesa el avance temporal).
- *   · Si en un día las 4 fuentes acumuladas no están presentes → datos
- *     insuficientes para ese día.
- *   · Otros 3 scores (Capital, Cumplimiento, Velocidad) → quedan para fase
- *     futura. NO se calculan acá.
+ * Política operacional aprobada por usuario (2026-06, revisión post-PR #29):
+ *   · Cada punto del gráfico es una FECHA DE CORTE REAL (la fecha que declara
+ *     o detecta el archivo), NO la fecha en que se subió. La fecha de carga
+ *     (createdAt) queda solo como metadato de auditoría.
+ *   · Un punto usa SOLO archivos cuyo corte es esa fecha. Nunca se mezclan
+ *     cortes distintos en un mismo punto (un corte sin saldos queda sin
+ *     saldos, aunque exista un archivo de saldos de otro corte).
+ *   · Si hay varios archivos de la misma fuente para el mismo corte, gana el
+ *     más reciente por createdAt (la re-subida pisa a la anterior).
+ *   · Si a un corte le falta alguna fuente, el punto se calcula con lo
+ *     disponible (capital por componente) y se marca cobertura incompleta.
+ *     El score exige las 4 fuentes — con menos, queda "datos insuficientes".
+ *   · Solo cortes con cargas reales. No inventar puntos.
  *   · Filtro por marca se propaga.
- *   · Sin schema nuevo, sin tocar Railway.
  */
 
 import { prisma } from "@/lib/prisma";
@@ -36,71 +39,88 @@ export interface ArchivoCarga {
   fuente: string;
   nombreOriginal: string;
   createdAt: Date;
-  /** Fecha de corte declarada o detectada por el parser. null si no hay. */
+  /** Fecha de corte detectada o declarada por el parser. null si no hay. */
   fechaCorte: Date | null;
   prioridadCierre: number;
   esCierreMensual: boolean;
 }
 
+/** Cobertura de una fuente dentro de un corte. */
+export interface CoberturaFuente {
+  fuente: Fuente;
+  /** Nombre humano de la fuente (Stock, Saldos, FNE, Provisiones). */
+  etiqueta: string;
+  presente: boolean;
+  /** Archivo ganador considerado para este corte. null si la fuente falta. */
+  nombreOriginal: string | null;
+  /** Día de carga (YYYY-MM-DD) del archivo ganador. null si la fuente falta. */
+  fechaCarga: string | null;
+}
+
 export interface PuntoDiario {
-  /** Formato YYYY-MM-DD (fecha de carga). */
+  /** Formato YYYY-MM-DD — fecha de CORTE real (no de carga). */
   dia: string;
-  /** Fecha humanizada de carga (ej. "07 jun 2026"). */
+  /** Fecha de corte humanizada (ej. "04 jun 2026"). */
   diaLabel: string;
-  /** Cargas hechas en ese día. */
+  /** Archivos del corte (todos, incluidas versiones pisadas por re-subida). */
   cargasDelDia: ArchivoCarga[];
-  /** Score Gerencial legacy reconstruido al final de ese día. */
+  /** Días (YYYY-MM-DD) en que se cargaron los archivos considerados. */
+  fechasCarga: string[];
+  /** Cobertura por fuente: qué archivo respalda cada componente del corte. */
+  cobertura: CoberturaFuente[];
+  /** true si alguna de las 4 fuentes no tiene archivo en este corte. */
+  coberturaIncompleta: boolean;
+  /** true si el archivo no traía fecha de corte y se agrupó por fecha de carga. */
+  corteDesdeCarga: boolean;
+  /** Score Gerencial legacy reconstruido con los archivos de este corte. */
   sgLegacy: ResultadoScoreGerencialHistorico;
-  /** Delta vs el punto anterior (si existe y ambos confiables). null si no se puede comparar. */
+  /** Delta vs el corte anterior (si existe y ambos confiables). null si no se puede comparar. */
   deltaSG: number | null;
   /** Componentes reales del capital de trabajo en este corte. A diferencia
    *  del score (que exige las 4 fuentes), cada componente se calcula con
-   *  SU fuente — null solo si esa fuente falta. */
+   *  SU fuente — null solo si esa fuente falta en el corte. */
   capital: CapitalCorte;
-  /** Fecha de corte mínima detectada entre los archivos del día. */
+  /** Fecha de corte mínima entre los archivos del punto (auditoría). */
   fechaCorteMin: Date | null;
-  /** Fecha de corte máxima detectada entre los archivos del día. */
+  /** Fecha de corte máxima entre los archivos del punto (auditoría). */
   fechaCorteMax: Date | null;
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Helper · archivo ganador hasta una fecha (criterio: más reciente)
+// Fuentes que alimentan el score
 // ────────────────────────────────────────────────────────────────────
 
 const FUENTES_SG: Fuente[] = ["BASE_STOCK", "SALDOS", "PROVISIONES", "FNE"];
 
-async function archivoMasRecienteHasta(
-  fuente: Fuente,
-  snapshotPeriod: string,
-  hastaFecha: Date,
-): Promise<{ payload: unknown; nombreOriginal: string } | null> {
-  const archivos = await prisma.snapshotHistoricoArchivo.findMany({
-    where: {
-      fuente,
-      snapshotPeriod,
-      createdAt: { lte: hastaFecha },
-    },
-    orderBy: { createdAt: "desc" },
-    select: { payload: true, nombreOriginal: true },
-  });
-  if (archivos.length === 0) return null;
-  const archivo = archivos.find((a) => a.payload != null) ?? archivos[0];
+export const ETIQUETA_FUENTE: Record<string, string> = {
+  BASE_STOCK: "Stock",
+  SALDOS: "Saldos",
+  PROVISIONES: "Provisiones",
+  FNE: "FNE",
+};
 
-  if (archivo.payload != null) {
-    return { payload: archivo.payload, nombreOriginal: archivo.nombreOriginal };
+/**
+ * Payload de un archivo histórico concreto. Si el registro histórico no
+ * guardó payload, fallback estricto al Snapshot vivo con el mismo nombre.
+ */
+async function payloadDeArchivo(
+  archivo: ArchivoCarga,
+): Promise<{ payload: unknown; nombreOriginal: string } | null> {
+  const historico = await prisma.snapshotHistoricoArchivo.findUnique({
+    where: { id: archivo.id },
+    select: { payload: true },
+  });
+  if (historico?.payload != null) {
+    return { payload: historico.payload, nombreOriginal: archivo.nombreOriginal };
   }
 
-  // Fallback estricto: Snapshot vivo por nombre exacto
   const vivoPorNombre = await prisma.snapshot.findFirst({
-    where: { fuente, nombre: archivo.nombreOriginal },
+    where: { fuente: archivo.fuente as Fuente, nombre: archivo.nombreOriginal },
     orderBy: { createdAt: "desc" },
     select: { payload: true },
   });
   if (vivoPorNombre?.payload != null) {
-    return {
-      payload: vivoPorNombre.payload,
-      nombreOriginal: archivo.nombreOriginal,
-    };
+    return { payload: vivoPorNombre.payload, nombreOriginal: archivo.nombreOriginal };
   }
   return null;
 }
@@ -137,7 +157,7 @@ export async function calcularSGLegacyPorDia(args: {
   });
 
   // Adaptar al shape ArchivoCarga consolidando fechaCorte
-  const todas: (ArchivoCarga & { snapshotPeriod?: never })[] = todasRaw.map((c) => ({
+  const todas: ArchivoCarga[] = todasRaw.map((c) => ({
     id: c.id,
     fuente: c.fuente,
     nombreOriginal: c.nombreOriginal,
@@ -149,25 +169,38 @@ export async function calcularSGLegacyPorDia(args: {
 
   if (todas.length === 0) return [];
 
-  // 2) Agrupar por día (UTC, basado en createdAt)
-  const porDia = new Map<string, ArchivoCarga[]>();
+  // 2) Agrupar por FECHA DE CORTE (UTC). Si el archivo no trae corte,
+  //    fallback al día de carga — el punto queda marcado corteDesdeCarga.
+  const porCorte = new Map<string, { archivos: ArchivoCarga[]; conFallback: boolean }>();
   for (const c of todas) {
-    const dia = c.createdAt.toISOString().slice(0, 10);
-    if (!porDia.has(dia)) porDia.set(dia, []);
-    porDia.get(dia)!.push(c);
+    const conCorte = c.fechaCorte !== null && Number.isFinite(c.fechaCorte.getTime());
+    const dia = (conCorte ? c.fechaCorte! : c.createdAt).toISOString().slice(0, 10);
+    if (!porCorte.has(dia)) porCorte.set(dia, { archivos: [], conFallback: false });
+    const grupo = porCorte.get(dia)!;
+    grupo.archivos.push(c);
+    if (!conCorte) grupo.conFallback = true;
   }
 
-  // 3) Para cada día con cargas, reconstruir SG legacy
-  const dias = Array.from(porDia.keys()).sort();
+  // 3) Para cada corte, reconstruir SG legacy con SOLO los archivos del corte
+  const dias = Array.from(porCorte.keys()).sort();
   const puntos: PuntoDiario[] = [];
 
   for (const dia of dias) {
-    const fechaFin = new Date(`${dia}T23:59:59.999Z`);
+    const { archivos: archivosDelCorte, conFallback } = porCorte.get(dia)!;
 
-    // Buscar archivo más reciente hasta esa fecha por cada fuente
+    // Ganador por fuente dentro del corte: el más reciente por createdAt.
+    const ganadorArchivo: Partial<Record<Fuente, ArchivoCarga>> = {};
+    for (const a of archivosDelCorte) {
+      const f = a.fuente as Fuente;
+      if (!FUENTES_SG.includes(f)) continue;
+      const actual = ganadorArchivo[f];
+      if (!actual || a.createdAt > actual.createdAt) ganadorArchivo[f] = a;
+    }
+
     const ganadores: Record<string, { payload: unknown; nombreOriginal: string } | null> = {};
     for (const f of FUENTES_SG) {
-      ganadores[f] = await archivoMasRecienteHasta(f, snapshotPeriod, fechaFin);
+      const archivo = ganadorArchivo[f];
+      ganadores[f] = archivo ? await payloadDeArchivo(archivo) : null;
     }
 
     const fuentesPresentes = FUENTES_SG.filter((f) => ganadores[f] !== null);
@@ -185,7 +218,9 @@ export async function calcularSGLegacyPorDia(args: {
         marca,
         nVUs: 0,
         warnings: [
-          `Score Gerencial legacy: datos insuficientes al ${dia}. Faltan: ${fuentesFaltantes.join(", ")}.`,
+          `Score Gerencial legacy: cobertura incompleta en el corte ${dia}. Faltan: ${fuentesFaltantes
+            .map((f) => ETIQUETA_FUENTE[f] ?? f)
+            .join(", ")}.`,
         ],
       };
     } else {
@@ -214,9 +249,26 @@ export async function calcularSGLegacyPorDia(args: {
     const mNum = parseInt(mes, 10);
     const diaLabel = `${parseInt(diaNum, 10).toString().padStart(2, "0")} ${MESES_CORTOS[mNum - 1] ?? "?"} ${year}`;
 
-    // Rango de fechas de corte entre los archivos del día
-    const cargasDelDia = porDia.get(dia)!;
-    const cortesValidos = cargasDelDia
+    // Cobertura y auditoría de cargas del punto
+    const cobertura: CoberturaFuente[] = FUENTES_SG.map((f) => {
+      const archivo = ganadores[f] !== null ? (ganadorArchivo[f] ?? null) : null;
+      return {
+        fuente: f,
+        etiqueta: ETIQUETA_FUENTE[f] ?? f,
+        presente: ganadores[f] !== null,
+        nombreOriginal: archivo?.nombreOriginal ?? null,
+        fechaCarga: archivo ? archivo.createdAt.toISOString().slice(0, 10) : null,
+      };
+    });
+    const fechasCarga = Array.from(
+      new Set(
+        cobertura
+          .map((c) => c.fechaCarga)
+          .filter((d): d is string => d !== null),
+      ),
+    ).sort();
+
+    const cortesValidos = archivosDelCorte
       .map((c) => c.fechaCorte)
       .filter((d): d is Date => d !== null && Number.isFinite(d.getTime()));
     const fechaCorteMin =
@@ -231,7 +283,11 @@ export async function calcularSGLegacyPorDia(args: {
     puntos.push({
       dia,
       diaLabel,
-      cargasDelDia,
+      cargasDelDia: archivosDelCorte,
+      fechasCarga,
+      cobertura,
+      coberturaIncompleta: fuentesFaltantes.length > 0,
+      corteDesdeCarga: conFallback,
       sgLegacy,
       deltaSG: null, // se completa abajo
       capital,
@@ -240,7 +296,7 @@ export async function calcularSGLegacyPorDia(args: {
     });
   }
 
-  // 4) Calcular delta vs día anterior (solo cuando ambos confiables)
+  // 4) Calcular delta vs corte anterior (solo cuando ambos confiables)
   for (let i = 1; i < puntos.length; i++) {
     const actual = puntos[i].sgLegacy;
     const previo = puntos[i - 1].sgLegacy;

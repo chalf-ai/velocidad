@@ -23,16 +23,28 @@ import {
 } from "recharts";
 import { fmtCLPCompact, fmtNum } from "@/lib/format";
 
+/** Metadatos de auditoría de un corte, mostrados en el tooltip. */
+export interface MetaCorte {
+  /** Fecha de corte humanizada, ej. "04 jun 2026". */
+  fechaCorte: string;
+  /** Días en que se cargaron los archivos del corte, ej. ["07-jun"]. */
+  fechasCarga: string[];
+  /** Cobertura por tipo: etiqueta + archivo considerado (null = falta). */
+  cobertura: { etiqueta: string; archivo: string | null }[];
+}
+
 export interface PuntoIndicador {
-  /** Label del corte, ej. "07-jun". */
+  /** Label del corte, ej. "04-jun" (fecha de CORTE, no de carga). */
   corte: string;
   unidades: number | null;
   monto: number | null;
+  meta?: MetaCorte;
 }
 
 export interface PuntoScore {
   corte: string;
   score: number | null;
+  meta?: MetaCorte;
 }
 
 const COLOR_UNIDADES = "#3358e8"; // accent
@@ -41,18 +53,55 @@ const COLOR_SCORE = "#059669"; // emerald
 
 const tickStyle = { fontSize: 11, fill: "#6b7280" };
 
+/** Bloque de auditoría compartido por los tooltips: corte, cargas, cobertura. */
+function MetaCorteDetalle({ meta }: { meta: MetaCorte }) {
+  return (
+    <div className="mt-1.5 pt-1.5 border-t border-[--color-border] text-[11px] text-[--color-fg-muted] space-y-0.5">
+      <div>
+        <span className="font-medium text-[--color-fg]">Corte:</span> {meta.fechaCorte}
+      </div>
+      {meta.fechasCarga.length > 0 && (
+        <div>
+          <span className="font-medium text-[--color-fg]">Cargado:</span>{" "}
+          {meta.fechasCarga.join(" · ")}
+        </div>
+      )}
+      <div className="pt-0.5">
+        {meta.cobertura.map((c) => (
+          <div key={c.etiqueta} className="flex items-baseline gap-1">
+            <span className={c.archivo ? "text-emerald-600" : "text-red-500"}>
+              {c.archivo ? "✓" : "✗"}
+            </span>
+            <span className="font-medium">{c.etiqueta}</span>
+            {c.archivo ? (
+              <span className="truncate max-w-[220px]">· {c.archivo}</span>
+            ) : (
+              <span className="italic">sin archivo en este corte</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TooltipIndicador({
   active,
   payload,
   label,
 }: {
   active?: boolean;
-  payload?: Array<{ dataKey?: string | number; value?: number | string | null }>;
+  payload?: Array<{
+    dataKey?: string | number;
+    value?: number | string | null;
+    payload?: PuntoIndicador;
+  }>;
   label?: string;
 }) {
   if (!active || !payload?.length) return null;
   const unidades = payload.find((p) => p.dataKey === "unidades")?.value;
   const monto = payload.find((p) => p.dataKey === "monto")?.value;
+  const meta = payload[0]?.payload?.meta;
   return (
     <div className="rounded-lg border border-[--color-border] bg-white px-3 py-2 shadow-md text-[12px]">
       <div className="font-semibold text-[--color-fg] mb-1">{label}</div>
@@ -62,6 +111,28 @@ function TooltipIndicador({
       {monto != null && (
         <div style={{ color: COLOR_MONTO }}>{fmtCLPCompact(Number(monto))}</div>
       )}
+      {meta && <MetaCorteDetalle meta={meta} />}
+    </div>
+  );
+}
+
+function TooltipScore({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ value?: number | string | null; payload?: PuntoScore }>;
+  label?: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const score = payload[0]?.value;
+  const meta = payload[0]?.payload?.meta;
+  return (
+    <div className="rounded-lg border border-[--color-border] bg-white px-3 py-2 shadow-md text-[12px]">
+      <div className="font-semibold text-[--color-fg] mb-1">{label}</div>
+      <div style={{ color: COLOR_SCORE }}>{score ?? "—"} / 100 · Score Gerencial</div>
+      {meta && <MetaCorteDetalle meta={meta} />}
     </div>
   );
 }
@@ -132,11 +203,7 @@ export function GraficoScore({ puntos }: { puntos: PuntoScore[] }) {
             axisLine={false}
             width={36}
           />
-          <Tooltip
-            formatter={(v) => [`${v ?? "—"} / 100`, "Score Gerencial"]}
-            labelStyle={{ fontSize: 12, fontWeight: 600 }}
-            contentStyle={{ fontSize: 12, borderRadius: 8 }}
-          />
+          <Tooltip content={<TooltipScore />} />
           <Line
             type="monotone"
             dataKey="score"
