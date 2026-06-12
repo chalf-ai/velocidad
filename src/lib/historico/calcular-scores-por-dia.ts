@@ -242,6 +242,7 @@ export async function calcularSGLegacyPorDia(args: {
       provisiones: ganadores.PROVISIONES
         ? rehidratarProvisiones(ganadores.PROVISIONES.payload)
         : null,
+      fne: ganadores.FNE ? rehidratarFNE(ganadores.FNE.payload) : null,
       marca,
     });
 

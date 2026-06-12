@@ -22,8 +22,14 @@ import {
   rehidratarSaldos,
   rehidratarStock,
 } from "@/lib/historico/calcular-score-gerencial-historico";
-import { capitalDesdePayloads } from "@/lib/historico/capital-por-corte";
+import {
+  capitalDesdePayloads,
+  construirMapasVinMarca,
+  marcaDeProvision,
+  marcaDeSaldo,
+} from "@/lib/historico/capital-por-corte";
 import { ETIQUETA_FUENTE } from "@/lib/historico/calcular-scores-por-dia";
+import { cruzarSaldosConStock } from "@/lib/selectors/saldos";
 import { normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
 import type {
   ParsedExcel,
@@ -119,12 +125,40 @@ async function cargarPayloadsVigentes(): Promise<PayloadsVigentes> {
   };
 }
 
-/** Marcas operacionales presentes en el stock vigente (canónicas, ordenadas). */
-function marcasDelStock(stock: ParsedExcel | null): string[] {
-  if (!stock) return [];
+/**
+ * Marcas con capital atribuido en CUALQUIER componente vigente (stock,
+ * saldos, bonos, provisiones — misma jerarquía P1→P4 del cálculo). Garantiza
+ * que la suma de los scopes MARCA cuadre con el TOTAL: todo peso atribuido
+ * tiene su fila, incluido el bucket "SIN MARCA ORIGEN" cuando exista.
+ */
+function marcasConCapital(args: {
+  stock: ParsedExcel | null;
+  saldos: ParsedSaldos | null;
+  provisiones: ParsedProvisiones | null;
+  fne: ParsedFNE | null;
+}): string[] {
   const set = new Set<string>();
-  for (const v of stock.vehiculos) {
+  for (const v of args.stock?.vehiculos ?? []) {
     set.add(normalizarMarcaOperacional(v.marcaPompeyo || v.marca || ""));
+  }
+  // Bridge cajón→VIN explícito (misma razón que en capitalDesdePayloads):
+  // la lista de marcas debe salir de la MISMA atribución que el cálculo.
+  if (args.saldos) {
+    cruzarSaldosConStock(
+      args.saldos.registros,
+      args.stock?.vehiculos ?? [],
+      args.stock?.vinsExtra ?? null,
+      args.fne,
+    );
+  }
+  const mapas = construirMapasVinMarca(args.stock, args.fne);
+  for (const s of args.saldos?.registros ?? []) {
+    if (s.categoria !== "vehiculo" && s.categoria !== "bono_comision") continue;
+    set.add(marcaDeSaldo(s, mapas));
+  }
+  for (const p of args.provisiones?.registros ?? []) {
+    if (p.area !== "ventas" || (p.saldo || 0) <= 0) continue;
+    set.add(marcaDeProvision(p));
   }
   return Array.from(set).sort();
 }
@@ -138,7 +172,7 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
   const { ymd, fecha } = fechaHoySantiago();
   const { stock, saldos, provisiones, fne, cobertura } = await cargarPayloadsVigentes();
 
-  const marcas = marcasDelStock(stock);
+  const marcas = marcasConCapital({ stock, saldos, provisiones, fne });
   const scopes: { scopeTipo: ScopeSnapshotDiario; marca: string }[] = [
     { scopeTipo: "TOTAL", marca: "" },
     ...marcas.map((m) => ({ scopeTipo: "MARCA" as ScopeSnapshotDiario, marca: m })),
@@ -155,6 +189,7 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
       stock,
       saldos,
       provisiones,
+      fne,
       marca: marcaFiltro,
     });
 
@@ -226,3 +261,4 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
 
   return { fecha: ymd, scopes: scopes.length, marcas, cobertura, eliminadosStale };
 }
+

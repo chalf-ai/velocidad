@@ -319,6 +319,7 @@ export default async function TendenciasPage({
   }));
 
   const liberando = variacionTotal !== null && variacionTotal < 0;
+  const sinCambio = variacionTotal !== null && Math.round(variacionTotal) === 0;
 
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-8 space-y-5 fade-in">
@@ -328,7 +329,11 @@ export default async function TendenciasPage({
       <section
         className={cn(
           "surface bg-white top-strip p-6",
-          variacionTotal === null ? "strip-info" : liberando ? "strip-success" : "strip-danger",
+          variacionTotal === null || sinCambio
+            ? "strip-info"
+            : liberando
+              ? "strip-success"
+              : "strip-danger",
         )}
       >
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -361,19 +366,24 @@ export default async function TendenciasPage({
               <div
                 className={cn(
                   "mt-1 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[16px] font-semibold",
-                  liberando ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-800",
+                  sinCambio
+                    ? "bg-[--color-bg-elev-2] text-[--color-fg-muted]"
+                    : liberando
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "bg-red-50 text-red-800",
                 )}
               >
                 <span
                   className={cn(
                     "inline-block size-2.5 rounded-full",
-                    liberando ? "bg-emerald-500" : "bg-red-500",
+                    sinCambio ? "bg-[color:var(--color-fg-dim)]" : liberando ? "bg-emerald-500" : "bg-red-500",
                   )}
                 />
-                {liberando ? "Liberando capital" : "Capturando más capital"}
+                {sinCambio ? "Sin variación" : liberando ? "Liberando capital" : "Capturando más capital"}
                 <span className="display text-[18px]">
-                  {variacionTotal < 0 ? "−" : "+"}
-                  {fmtCLPCompact(Math.abs(variacionTotal))}
+                  {sinCambio
+                    ? "$0"
+                    : `${variacionTotal < 0 ? "−" : "+"}${fmtCLPCompact(Math.abs(variacionTotal))}`}
                 </span>
               </div>
               <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-[--color-fg-muted] mono">
@@ -528,9 +538,7 @@ export default async function TendenciasPage({
                       <CeldaValor valor={c.actual.valor} dia={labelDia(c.actual.punto.dia)} />
                     ) : (
                       <span className="text-[--color-fg-dim] italic text-[12px]">
-                        {c.key === "bonos" && marcaCanonica
-                          ? "no atribuible por marca"
-                          : "fuente no vigente"}
+                        fuente no vigente
                       </span>
                     )}
                   </td>
@@ -672,11 +680,6 @@ export default async function TendenciasPage({
               serie={serieIndicador(ind.key)}
               actual={c?.actual?.valor ?? null}
               previo={c?.previo?.valor ?? null}
-              notaMarca={
-                ind.key === "bonos" && marcaCanonica
-                  ? "No atribuible por marca — quita el filtro para ver bonos."
-                  : null
-              }
             />
           );
         })}
@@ -751,14 +754,12 @@ function CardIndicador({
   serie,
   actual,
   previo,
-  notaMarca,
 }: {
   nombre: string;
   descripcion: string;
   serie: PuntoIndicador[];
   actual: ComponenteCapital | null;
   previo: ComponenteCapital | null;
-  notaMarca: string | null;
 }) {
   const sinDatos = serie.every((p) => p.unidades === null && p.monto === null);
   return (
@@ -786,11 +787,7 @@ function CardIndicador({
           </div>
         )}
       </div>
-      {notaMarca ? (
-        <div className="h-[230px] grid place-items-center text-[12.5px] text-[--color-fg-muted] italic px-6 text-center">
-          {notaMarca}
-        </div>
-      ) : sinDatos ? (
+      {sinDatos ? (
         <div className="h-[230px] grid place-items-center text-[12.5px] text-[--color-fg-muted] italic">
           Sin datos de esta fuente en las fotos diarias del período.
         </div>
