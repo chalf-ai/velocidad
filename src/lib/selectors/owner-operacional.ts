@@ -118,6 +118,9 @@ export function normalizarMarcaOperacional(valor: string | null | undefined): st
   const c = up(canon ?? String(valor));
   if (c === "USADOS" || c === "VU EN NUEVOS" || c === "VU EN USADOS") return MARCA_USADOS;
   if (c === "OTRAS MARCAS") return MARCA_OTRAS;
+  // Idempotencia: el bucket "SIN MARCA ORIGEN" es un valor de marca válido
+  // (filtro global, scopes de snapshot) — no debe colapsar en OTRAS MARCAS.
+  if (c === MARCA_SIN_ORIGEN) return MARCA_SIN_ORIGEN;
   if (MARCAS_GRUPO.has(c)) return c;
   return MARCA_OTRAS; // marca fuera del grupo Pompeyo
 }

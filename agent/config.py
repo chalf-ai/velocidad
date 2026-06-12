@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     tareas_poll_seconds: int = 60          # cadencia del poller
     tareas_desde: str = ""                 # ISO datetime · solo alertas creadas después; vacío = arranque del proceso
 
+    # Snapshot diario de capital (Tendencias persistentes)
+    # El job NO calcula nada ni lee Excel: llama al endpoint Next.js, que toma
+    # la foto del estado vigente con los selectores TS del sistema.
+    app_base_url: str = "http://localhost:3000"  # URL del servicio web Next.js
+    daily_snapshot_token: str = ""               # Bearer de /api/snapshots/daily; vacío = job deshabilitado
+    snapshot_hora: str = "20:00"                 # HH:MM, hora Chile — todos los días
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
