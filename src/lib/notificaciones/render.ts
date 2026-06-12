@@ -42,11 +42,18 @@ export function primerNombre(nombre: string | null | undefined): string {
 }
 
 /**
- * Link al caso. Absoluto si APP_URL está definida (necesario para que el
- * link funcione en WhatsApp), relativo como fallback local.
+ * Link al caso. Absoluto (necesario para que el link funcione en WhatsApp):
+ * APP_URL si está definida, si no la URL pública de NextAuth (NEXTAUTH_URL /
+ * AUTH_URL), que en prod ya apunta a https://velocidad.pompeyo.cl. Relativo
+ * solo como último fallback (dev sin ninguna configurada).
  */
 export function linkCaso(vin: string | null, claveCaso: string): string {
-  const base = process.env.APP_URL?.replace(/\/+$/, "") ?? "";
+  const base = (
+    process.env.APP_URL ??
+    process.env.NEXTAUTH_URL ??
+    process.env.AUTH_URL ??
+    ""
+  ).replace(/\/+$/, "");
   // VIN → ficha operacional vía Centro de Acción (deep-link existente).
   // Documental (SALDO-/BONO-/PROV-) → ruta del módulo correspondiente (futuro).
   const path = vin
