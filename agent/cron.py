@@ -94,6 +94,39 @@ async def enviar_seguimiento() -> None:
             logger.exception("Error en seguimiento → %s", telefono)
 
 
+# ── Snapshot diario de capital (Tendencias persistentes) ─────────────────────
+
+async def generar_snapshot_diario() -> None:
+    """
+    Dispara la foto diaria del estado vigente llamando al endpoint Next.js.
+    El cálculo vive en TypeScript (mismos selectores que la app) — este job
+    solo agenda y autentica. NO lee Excel, NO toca payloads.
+    """
+    import httpx
+
+    url = f"{settings.app_base_url.rstrip('/')}/api/snapshots/daily"
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {settings.daily_snapshot_token}"},
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            logger.info(
+                "Snapshot diario OK — fecha=%s scopes=%s marcas=%s",
+                data.get("fecha"),
+                data.get("scopes"),
+                len(data.get("marcas", [])),
+            )
+        else:
+            logger.error(
+                "Snapshot diario falló — HTTP %s: %s", resp.status_code, resp.text[:300]
+            )
+    except Exception:
+        logger.exception("Snapshot diario: error llamando a %s", url)
+
+
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 def build_scheduler() -> AsyncIOScheduler:
@@ -149,6 +182,26 @@ def build_scheduler() -> AsyncIOScheduler:
         )
     else:
         logger.info("Poller tareas F2 deshabilitado (TAREAS_WHATSAPP_ENABLED=0)")
+
+    # Job 4 — snapshot diario de capital (todos los días, hora Chile).
+    # Requiere DAILY_SNAPSHOT_TOKEN configurado (mismo valor que el servicio
+    # web). Sin token, el endpoint rechazaría la llamada — no se registra.
+    if settings.daily_snapshot_token:
+        hora_snap, min_snap = settings.snapshot_hora.split(":")
+        scheduler.add_job(
+            generar_snapshot_diario,
+            trigger=CronTrigger(
+                hour=int(hora_snap),
+                minute=int(min_snap),
+                timezone=TZ,
+            ),
+            id="snapshot_diario_capital",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+        logger.info("Snapshot diario ACTIVO — %s (todos los días, Santiago)", settings.snapshot_hora)
+    else:
+        logger.info("Snapshot diario deshabilitado (DAILY_SNAPSHOT_TOKEN vacío)")
 
     logger.info(
         "Scheduler listo — briefing %s · seguimiento %s (L-V, Santiago)",

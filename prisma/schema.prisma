@@ -448,3 +448,59 @@ model OperationalSnapshot {
   @@index([status])
 }
 
+
+// ─────────────────────────────────────────────────────────────────────
+// Tendencias persistentes · snapshot diario del ESTADO VIGENTE
+// ─────────────────────────────────────────────────────────────────────
+
+enum ScopeSnapshotDiario {
+  TOTAL
+  MARCA
+}
+
+/// Foto diaria de "cómo estaba el sistema ese día" — NO de qué archivo se
+/// cargó ese día. La genera un job diario (o la acción manual) leyendo los
+/// Snapshot vigentes (activo: true) ya ingestados y normalizados por la app.
+/// /tendencias lee esta tabla para la evolución diaria real hacia adelante.
+model DailyCapitalSnapshot {
+  id        String              @id @default(cuid())
+  /// Día del snapshot en hora Chile, normalizado a 00:00 UTC (DATE).
+  fecha     DateTime            @db.Date
+  scopeTipo ScopeSnapshotDiario
+  /// Marca canónica cuando scopeTipo = MARCA. "" para TOTAL — un string
+  /// no-null permite que el unique [fecha, scopeTipo, marca] funcione
+  /// para upsert (Postgres trata NULLs como distintos en uniques).
+  marca     String              @default("")
+
+  // ── Scores (0-100) ─────────────────────────────────────────────────
+  /// Score Gerencial legacy (exige las 4 fuentes vigentes; null si falta alguna).
+  scoreGerencial               Int?
+  /// Reservados: se llenan cuando exista su motor de cálculo server-side.
+  scoreCapital                 Int?
+  scoreCumplimientoOperacional Int?
+  scoreVelocidad               Int?
+
+  // ── Componentes del capital de trabajo ─────────────────────────────
+  // null = la fuente de ese componente no estaba vigente al generar.
+  stockPagadoUnidades Int?
+  stockPagadoMonto    Float?
+  saldosUnidades      Int?
+  saldosMonto         Float?
+  bonosUnidades       Int?
+  bonosMonto          Float?
+  provisionesUnidades Int?
+  provisionesMonto    Float?
+  /// Suma de los montos presentes. null si ningún componente disponible.
+  capitalTrabajoTotal Float?
+
+  /// Fuentes vigentes usadas al generar:
+  /// [{ fuente, etiqueta, presente, snapshotId, nombre, fechaCorte, cargadoEl }]
+  cobertura Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Si el job corre dos veces el mismo día, actualiza — nunca duplica.
+  @@unique([fecha, scopeTipo, marca])
+  @@index([scopeTipo, marca, fecha])
+}

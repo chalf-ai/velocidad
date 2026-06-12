@@ -15,6 +15,9 @@ const PUBLIC_PATHS = [
   "/api/auth",
   "/api/seed",
   "/api/health",
+  // Server-to-server (job diario del agent): el handler valida su propio
+  // Bearer DAILY_SNAPSHOT_TOKEN o sesión con rol — no redirigir a /login.
+  "/api/snapshots/daily",
 ];
 
 export default auth(function middleware(req) {
