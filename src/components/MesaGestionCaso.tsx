@@ -41,9 +41,10 @@ const GESTION_INPUT_CLS =
 
 /**
  * Mesa de gestión editable del caso. `score` alimenta la "acción sugerida" (botón
- * usar sugerencia). Pura sobre el store: toda escritura va a useGestionStore.
+ * usar sugerencia); opcional para casos documentales (PROV-…, SALDO-…) que no
+ * tienen score por VIN. Pura sobre el store: toda escritura va a useGestionStore.
  */
-export function MesaGestionCaso({ vin, score }: { vin: string; score: ScoreVIN }) {
+export function MesaGestionCaso({ vin, score }: { vin: string; score?: ScoreVIN | null }) {
   const gestion = useGestionStore((s) => s.byVin[vin]);
   const setG = useGestionStore((s) => s.setGestion);
   const clearG = useGestionStore((s) => s.clearGestion);
@@ -53,7 +54,7 @@ export function MesaGestionCaso({ vin, score }: { vin: string; score: ScoreVIN }
 
   // Próxima acción es controlada localmente para soportar el botón "usar sugerencia".
   const [proxText, setProxText] = useState(gestion?.proximaAccion ?? "");
-  const sugerencia = score.accionSugerida.trim();
+  const sugerencia = score?.accionSugerida.trim() ?? "";
   const yaUsaSugerencia = (gestion?.proximaAccion ?? "").trim() === sugerencia && sugerencia !== "";
   const usarSugerencia = () => {
     setProxText(sugerencia);

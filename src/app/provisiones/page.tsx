@@ -3,6 +3,8 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   FileSpreadsheet,
   Receipt,
@@ -14,7 +16,8 @@ import { Button } from "@/components/ui/Button";
 import { UploadProvisionesButton } from "@/components/UploadProvisionesButton";
 import { useDatosFiltrados } from "@/lib/marca-filtro";
 import { useGestionStore } from "@/lib/gestion/store";
-import { GestionInline } from "@/components/GestionInline";
+import { FichaGestionDocumental } from "@/components/FichaGestionDocumental";
+import { SeguimientoBadge } from "@/components/SeguimientoBadge";
 import { useVinContexto, VinContextoBanner } from "@/components/VinContexto";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
 import { getMarcaOperacional, normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
@@ -570,6 +573,9 @@ function ProvisionRow({
   idx: number;
   mostrarGestion: boolean;
 }) {
+  // Gestión grande estándar (decisión usuario 2026-06): "Gestionar" expande la
+  // ficha documental completa — la misma mesa de gestión del resto del sistema.
+  const [casoAbierto, setCasoAbierto] = useState(false);
   const negativo = r.saldo < 0;
   const cerrado = r.saldo === 0;
   const sev =
@@ -585,6 +591,7 @@ function ProvisionRow({
       : `Nació por ${fmtCLP(r.montoProvision)}, facturado ${fmtCLP(r.montoFactura)}, mantiene saldo pendiente ${fmtCLP(r.saldo)}.`;
 
   return (
+    <>
     <tr
       title={narrativa}
       className={cn(
@@ -647,14 +654,60 @@ function ProvisionRow({
       </td>
       {mostrarGestion && (
         <td className="px-4 py-3">
-          {/* Patrón documental unificado: mismo popover que saldos/bonos,
-              con prioridad + historial + Asignar / Notificar. */}
-          <GestionInline
-            vin={r.claveGestion}
-            descripcionCaso={[r.concepto, r.origen].filter(Boolean).join(" · ") || null}
-          />
+          {/* Gestión grande estándar: expande la ficha documental completa
+              (misma MesaGestionCaso + Asignar/Notificar del resto del sistema). */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCasoAbierto((v) => !v)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition",
+                casoAbierto
+                  ? "border-[--color-accent] bg-[--color-accent]/10 text-[--color-accent]"
+                  : "border-[--color-border-strong] bg-white text-[--color-fg] hover:bg-[--color-bg-elev-1]",
+              )}
+            >
+              {casoAbierto ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+              {casoAbierto ? "Cerrar caso" : "Gestionar"}
+            </button>
+            <SeguimientoBadge vin={r.claveGestion} />
+          </div>
         </td>
       )}
     </tr>
+    {mostrarGestion && casoAbierto && (
+      <tr className="border-b border-[--color-border-soft]">
+        <td colSpan={12} className="px-4 py-4 bg-[--color-bg-elev-1]/60">
+          <FichaGestionDocumental
+            clave={r.claveGestion}
+            titulo={r.concepto ?? `Provisión ${r.claveGestion}`}
+            subtitulo={[r.origen, r.periodo].filter(Boolean).join(" · ") || null}
+            descripcionCaso={[r.concepto, r.origen].filter(Boolean).join(" · ") || null}
+            datos={[
+              { label: "Provisión", valor: fmtCLP(r.montoProvision) },
+              { label: "Facturado", valor: fmtCLP(r.montoFactura) },
+              { label: "Saldo", valor: fmtCLP(r.saldo) },
+              {
+                label: "Aging",
+                valor:
+                  r.agingDias !== null
+                    ? `${r.agingDias}d · ${AGING_PROVISION_LABEL[r.agingBucket]}`
+                    : "—",
+              },
+              { label: "Solicitante", valor: r.solicitante ?? "—" },
+              { label: "Razón social", valor: r.razonSocial ?? "—" },
+              {
+                label: "Última factura",
+                valor: r.ultimaFechaFactura
+                  ? r.ultimaFechaFactura.toLocaleDateString("es-CL")
+                  : "—",
+              },
+              { label: "Estado archivo", valor: r.estadoArchivo ?? "—" },
+            ]}
+          />
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
