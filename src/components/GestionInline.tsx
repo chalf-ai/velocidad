@@ -7,6 +7,17 @@
  * sin importar desde qué pantalla se edite (Dashboard, Centro de Acción,
  * FNE, Judicial, TESCAR, Stock Explorer, …).
  *
+ * ── ALCANCE (regla de producto, actualizada 2026-06 · PR #31) ──────────
+ * · Casos con VIN: NO usar este popover como gestión principal — el botón
+ *   "Gestionar"/"Abrir caso" abre la FichaOperacionalVIN completa.
+ * · PROVISIONES (PROV-…): ya NO usan este popover. Usan la gestión grande
+ *   estándar documental → FichaGestionDocumental (MesaGestionCaso +
+ *   Asignar/Notificar, con responsable, estado, prioridad, compromiso,
+ *   comentario e historial).
+ * · Excepción documental restante (explícita): SOLO saldos y bonos
+ *   (SALDO-…, BONO-…) siguen usando este popover chico. Si migran a la
+ *   ficha grande documental, actualizar esta nota y la regla global.
+ *
  * Persiste en localStorage vía el store. Si se recarga un Excel nuevo con el
  * mismo VIN, la gestión se recupera automáticamente.
  *
