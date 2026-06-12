@@ -7,8 +7,12 @@
  * Detección en Base_Stock (Excel mayo 2026):
  *   Estado AutoPro = "Vendido" Y Status Stock ∈ {"Vigente", "Aprobada"}
  *
- * Aging — el Excel actual tiene "Fecha Facturación" 100% vacía, usamos
- * "Fecha Venta" como proxy y lo marcamos en agingFuente="venta".
+ * Aging — regla de negocio 2026-06: SIEMPRE desde fecha de FACTURA.
+ *   P1 · "Fecha Facturación" de Base_Stock (hoy viene 100% vacía).
+ *   P2 · fecha de factura real vía VIN → archivo FNE oficial (parámetro
+ *        `fechaFacturaPorVin`, construido desde ParsedFNE cuando está cargado).
+ *   P3 · fallback EXPLÍCITO a "Fecha Venta", marcado agingFuente="venta" —
+ *        nunca silencioso.
  */
 
 import type {
@@ -34,6 +38,21 @@ function diasEntre(desde: Date | null, hasta: Date): number | null {
   return Math.floor((hasta.getTime() - desde.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+/**
+ * VIN limpio → fecha de factura real, desde el archivo FNE oficial
+ * ("Autos no entregados.xlsx"). Insumo de la vía P2 de detectarFNE.
+ */
+export function mapaFechaFacturaPorVin(
+  fne: { registros: { vin: string; fechaFactura: Date | null }[] } | null,
+): Map<string, Date> {
+  const m = new Map<string, Date>();
+  for (const r of fne?.registros ?? []) {
+    const vin = (r.vin ?? "").replace(/\s+/g, "").toUpperCase();
+    if (vin && r.fechaFactura && !m.has(vin)) m.set(vin, r.fechaFactura);
+  }
+  return m;
+}
+
 export function esFNE(v: Vehiculo): boolean {
   // Heurística: Estado AutoPro = Vendido + Status Stock activo (Vigente o Aprobada)
   // En el Excel actual: 478 (Vigente) + 29 (Aprobada) + 12 (En Stock) = 519 candidatos
@@ -42,10 +61,18 @@ export function esFNE(v: Vehiculo): boolean {
   return v.statusStock === "Vigente" || v.statusStock === "Aprobada";
 }
 
-export function detectarFNE(vehiculos: Vehiculo[], hoy: Date = new Date()): FacturadoNoEntregado[] {
+export function detectarFNE(
+  vehiculos: Vehiculo[],
+  hoy: Date = new Date(),
+  /** VIN limpio → fecha de factura real (del archivo FNE oficial). */
+  fechaFacturaPorVin?: Map<string, Date>,
+): FacturadoNoEntregado[] {
   return vehiculos.filter(esFNE).map<FacturadoNoEntregado>((v) => {
     const diasVenta = diasEntre(v.fechaVenta, hoy);
-    const diasFact = diasEntre(null, hoy); // sin Fecha Facturación en este Excel
+    // P1 Base_Stock (columna hoy vacía) · P2 factura real vía VIN → FNE oficial
+    const vinLimpio = (v.vin ?? "").replace(/\s+/g, "").toUpperCase();
+    const fechaFact = fechaFacturaPorVin?.get(vinLimpio) ?? null;
+    const diasFact = diasEntre(fechaFact, hoy);
 
     const agingFuente: FacturadoNoEntregado["agingFuente"] = diasFact !== null
       ? "facturacion"
@@ -76,7 +103,7 @@ export function detectarFNE(vehiculos: Vehiculo[], hoy: Date = new Date()): Fact
       vendedor: v.vendedor,
       cliente: null, // no existe columna en Base_Stock; Fase 2 desde "Venta APC Fact VN"
       fechaVenta: v.fechaVenta,
-      fechaFacturacion: null, // columna vacía en este Excel
+      fechaFacturacion: fechaFact, // P2: factura real del FNE oficial (columna Base_Stock vacía)
 
       diasDesdeVenta: diasVenta,
       diasDesdeFacturacion: diasFact,

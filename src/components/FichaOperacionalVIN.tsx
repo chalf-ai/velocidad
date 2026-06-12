@@ -45,7 +45,7 @@ import {
 import { calcularScore } from "@/lib/selectors/score";
 import {
   construirCaso,
-  diasDesdeFacturaDe,
+  diasDesdeFacturaDeConFuente,
   esMaximaAlertaDe,
   factoresCriticosDe,
 } from "@/lib/gestion/caso";
@@ -222,13 +222,20 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
         <PresionOperacional score={scoreVivo} />
         <div className="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-2">
           <ResumenKpi label="Capital retenido" valor={fin.capitalRetenido > 0 ? fmtCLPCompact(fin.capitalRetenido) : "—"} tono={fin.capitalRetenido > 0 ? "danger" : "muted"} />
-          {/* Días retenido desde fFactura (FNE oficial o saldos vehiculo como proxy). */}
+          {/* Días retenido desde FECHA FACTURA (FNE oficial). El fallback a
+              fechaVenta queda MARCADO en el label — nunca silencioso. */}
           {(() => {
-            const dr = diasDesdeFacturaDe(vu);
-            const txt = dr == null ? "Sin fecha factura" : `${dr}d`;
+            const dr = diasDesdeFacturaDeConFuente(vu);
+            const txt = dr.dias == null ? "Sin fecha factura" : `${dr.dias}d`;
             const tono: "danger" | "muted" | undefined =
-              dr != null && dr > 60 ? "danger" : dr == null ? "muted" : undefined;
-            return <ResumenKpi label="Días retenido" valor={txt} tono={tono} />;
+              dr.dias != null && dr.dias > 60 ? "danger" : dr.dias == null ? "muted" : undefined;
+            return (
+              <ResumenKpi
+                label={dr.fuente === "venta" ? "Días retenido (desde venta · sin factura)" : "Días retenido"}
+                valor={txt}
+                tono={tono}
+              />
+            );
           })()}
           <ResumenKpi label="Días detenido" valor={casoVivo.aging > 0 ? `${casoVivo.aging}d` : "—"} tono={casoVivo.aging > 180 ? "danger" : undefined} />
           <ResumenKpi label="Owner" valor={ownerDom ?? "—"} />

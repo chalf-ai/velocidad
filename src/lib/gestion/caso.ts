@@ -178,44 +178,80 @@ export function factoresCriticosDe(vu: VehiculoUnificado): FactorCritico[] {
 }
 
 /**
- * Días desde la fecha de factura del crédito Pompeyo más antiguo del VIN.
+ * Resultado de un aging con su fecha base declarada.
  *
- * Busca el saldo con `subTipo === "credito_pompeyo"` y `cPompeyoCLP > 0`
- * más viejo (mayor cantidad de días). Si no existe ningún saldo CP con
- * fecha registrada, devuelve null.
- *
- * El propósito es responder "¿este VIN tiene un CP con factura > 7d?" sin
- * depender del aging del VIN en general (que es el estado del flujo
- * operacional, no la edad del crédito).
+ * Regla de negocio (decisión usuario 2026-06): todo aging de capital
+ * retenido se mide desde FECHA DE FACTURA. La fecha de venta puede existir
+ * como dato informativo, pero NUNCA es base silenciosa: cuando se usa como
+ * fallback queda marcado (`fuente: "venta"`) para auditoría/tooltip.
  */
-export function diasMaxCreditoPompeyo(
+export interface DiasConFuente {
+  dias: number | null;
+  /** "factura" = fecha de factura real (FNE) · "venta" = fallback explícito. */
+  fuente: "factura" | "venta" | null;
+}
+
+/**
+ * Días de mora del crédito Pompeyo del VIN, DESDE FECHA DE FACTURA.
+ *
+ * El CP nace en la facturación de la venta: si el VIN tiene fecha de
+ * factura real (archivo FNE → `fneDiasFactura`), esa es la base. Solo si
+ * no hay factura registrada se usa la `fechaVenta` del saldo CP más viejo
+ * como fallback EXPLÍCITO (fuente="venta"). Devuelve {null, null} si el
+ * VIN no tiene saldos CP con monto o no hay ninguna fecha.
+ */
+export function diasMaxCreditoPompeyoConFuente(
   vu: VehiculoUnificado,
   hoy: Date = new Date(),
-): number | null {
+): DiasConFuente {
+  const conCP = (vu.saldosDetalle ?? []).filter(
+    (s) => s.subTipo === "credito_pompeyo" && s.cPompeyoCLP > 0,
+  );
+  if (conCP.length === 0) return { dias: null, fuente: null };
+
+  // P1 · fecha de factura real del VIN (FNE operativo o archivo completo,
+  // que incluye autos ya entregados con saldo residual)
+  if (vu.fneDiasFactura != null) return { dias: vu.fneDiasFactura, fuente: "factura" };
+  if (vu.fneFechaFactura) {
+    const dias = Math.floor((hoy.getTime() - vu.fneFechaFactura.getTime()) / 86_400_000);
+    return { dias, fuente: "factura" };
+  }
+
+  // Fallback explícito · fechaVenta del saldo CP más viejo
   const baseMs = hoy.getTime();
   let max: number | null = null;
-  for (const s of vu.saldosDetalle ?? []) {
-    if (s.subTipo !== "credito_pompeyo") continue;
-    if (s.cPompeyoCLP <= 0) continue;
+  for (const s of conCP) {
     if (!s.fechaVenta) continue;
     const dias = Math.floor((baseMs - s.fechaVenta.getTime()) / 86_400_000);
     if (max === null || dias > max) max = dias;
   }
-  return max;
+  return { dias: max, fuente: max !== null ? "venta" : null };
 }
 
-/**
- * Días desde la factura del VIN (mejor referencia disponible).
- *
- * Prioriza `fneDiasFactura` (oficial de FNE), si no usa la `fechaVenta`
- * más antigua entre los saldos vehículo del VIN como proxy. Devuelve null
- * si no hay ninguna referencia.
- */
-export function diasDesdeFacturaDe(
+/** Versión compacta (solo días) — misma lógica factura-first. */
+export function diasMaxCreditoPompeyo(
   vu: VehiculoUnificado,
   hoy: Date = new Date(),
 ): number | null {
-  if (vu.fneDiasFactura != null) return vu.fneDiasFactura;
+  return diasMaxCreditoPompeyoConFuente(vu, hoy).dias;
+}
+
+/**
+ * Días desde la factura del VIN (mejor referencia disponible), con fuente.
+ *
+ * P1 `fneDiasFactura` (factura oficial de FNE). Fallback EXPLÍCITO: la
+ * `fechaVenta` más antigua entre los saldos vehículo del VIN, marcado
+ * fuente="venta". Devuelve {null, null} si no hay ninguna referencia.
+ */
+export function diasDesdeFacturaDeConFuente(
+  vu: VehiculoUnificado,
+  hoy: Date = new Date(),
+): DiasConFuente {
+  if (vu.fneDiasFactura != null) return { dias: vu.fneDiasFactura, fuente: "factura" };
+  if (vu.fneFechaFactura) {
+    const dias = Math.floor((hoy.getTime() - vu.fneFechaFactura.getTime()) / 86_400_000);
+    return { dias, fuente: "factura" };
+  }
   const baseMs = hoy.getTime();
   let max: number | null = null;
   for (const s of vu.saldosDetalle ?? []) {
@@ -224,7 +260,15 @@ export function diasDesdeFacturaDe(
     const dias = Math.floor((baseMs - s.fechaVenta.getTime()) / 86_400_000);
     if (max === null || dias > max) max = dias;
   }
-  return max;
+  return { dias: max, fuente: max !== null ? "venta" : null };
+}
+
+/** Versión compacta (solo días) — misma lógica factura-first. */
+export function diasDesdeFacturaDe(
+  vu: VehiculoUnificado,
+  hoy: Date = new Date(),
+): number | null {
+  return diasDesdeFacturaDeConFuente(vu, hoy).dias;
 }
 
 /**

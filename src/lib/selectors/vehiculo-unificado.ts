@@ -78,6 +78,10 @@ export interface VehiculoUnificado {
   // FNE
   fneEstado: EstadoEntrega | null;
   fneDiasFactura: number | null;
+  /** Fecha de factura del ARCHIVO FNE completo (incluye entregados). Base
+   *  para aging financiero de saldos/CP cuando el VIN ya no está en el
+   *  universo FNE operativo. No participa del score operacional. */
+  fneFechaFactura: Date | null;
   fneDiasEnEstado: number | null;
   fneValorFactura: number;
   fneAutoEnSucursal: "si" | "no" | "por_validar" | null;
@@ -208,6 +212,7 @@ export function buildVehiculosUnificados(
         lineaSobregirada: false,
         fneEstado: null,
         fneDiasFactura: null,
+        fneFechaFactura: null,
         fneDiasEnEstado: null,
         fneValorFactura: 0,
         fneAutoEnSucursal: null,
@@ -341,6 +346,20 @@ export function buildVehiculosUnificados(
     vu.marca = vu.marca ?? c.saldo.marca;
     vu.modelo = vu.modelo ?? c.saldo.modelo;
     vu.cliente = vu.cliente ?? c.saldo.cliente;
+  }
+
+  // Fecha de factura desde el ARCHIVO FNE COMPLETO (incluye entregados).
+  // El cruce operativo excluye entregados, pero la mora financiera de un
+  // saldo/CP de un auto ya entregado se sigue midiendo desde su factura
+  // (regla 2026-06: aging de capital SIEMPRE desde fecha de factura).
+  // Solo enriquece VUs existentes — no crea casos para autos entregados.
+  if (fne) {
+    for (const r of fne.registros) {
+      const vinL = limpiarVIN(r.vin);
+      if (!vinL || !r.fechaFactura) continue;
+      const vu = universo.get(vinL);
+      if (vu && !vu.fneFechaFactura) vu.fneFechaFactura = r.fechaFactura;
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────

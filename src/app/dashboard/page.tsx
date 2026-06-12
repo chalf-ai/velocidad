@@ -77,7 +77,7 @@ import {
   type DashboardKPIs,
   type LineaFinanciera,
 } from "@/lib/selectors/kpis";
-import { detectarFNE, statsFNE } from "@/lib/selectors/fne";
+import { detectarFNE, mapaFechaFacturaPorVin, statsFNE } from "@/lib/selectors/fne";
 import { cruzarFNEConStock, statsFNEReal } from "@/lib/selectors/fne-real";
 import {
   statsValidacionFinanciera,
@@ -238,7 +238,12 @@ function DashboardInner() {
     () => capitalPorMarcaOriginadora(parsed.vehiculos),
     [parsed.vehiculos],
   );
-  const fnes = useMemo(() => detectarFNE(parsed.vehiculos), [parsed.vehiculos]);
+  // Aging FNE desde FECHA FACTURA: P2 vía VIN → archivo FNE oficial cuando
+  // Base_Stock no trae Fecha Facturación; fallback a venta queda marcado.
+  const fnes = useMemo(
+    () => detectarFNE(parsed.vehiculos, new Date(), mapaFechaFacturaPorVin(fne)),
+    [parsed.vehiculos, fne],
+  );
   const fneStats = useMemo(() => statsFNE(fnes), [fnes]);
   // FNE real desde archivo "Autos no entregados.xlsx" — solo si está cargado.
   const fneRealCruzado = useMemo(

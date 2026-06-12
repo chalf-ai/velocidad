@@ -35,7 +35,7 @@ import { fmtCLPCompact, fmtNum } from "@/lib/format";
 import { AbrirCasoButton } from "@/components/AbrirCasoButton";
 import { GestionInline } from "@/components/GestionInline";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
-import { diasMaxCreditoPompeyo } from "@/lib/gestion/caso";
+import { diasMaxCreditoPompeyoConFuente } from "@/lib/gestion/caso";
 import { useGestionStore } from "@/lib/gestion/store";
 import {
   ESTADO_GESTION_LABEL,
@@ -343,7 +343,9 @@ function ColaVins({
           </thead>
           <tbody>
             {vus.slice(0, MAX_FILAS).map((vu, idx) => {
-              const diasCP = modo === "cp" ? diasMaxCreditoPompeyo(vu) : null;
+              // Aging CP desde FECHA FACTURA; fallback a venta queda marcado.
+              const cpInfo = modo === "cp" ? diasMaxCreditoPompeyoConFuente(vu) : null;
+              const diasCP = cpInfo?.dias ?? null;
               const diasStock = vu.diasStock;
               const monto =
                 modo === "cp" ? vu.creditoPompeyo : vu.capitalComprometido;
@@ -384,7 +386,19 @@ function ColaVins({
                   </td>
                   <td className="px-3 py-2">
                     {modo === "cp" ? (
-                      <AgingBadge dias={diasCP} umbralWarn={15} umbralDanger={30} />
+                      <span
+                        className="inline-flex items-center gap-1"
+                        title={
+                          cpInfo?.fuente === "venta"
+                            ? "Sin fecha factura registrada — aging medido desde fecha de venta (fallback)"
+                            : "Aging medido desde fecha de factura"
+                        }
+                      >
+                        <AgingBadge dias={diasCP} umbralWarn={15} umbralDanger={30} />
+                        {cpInfo?.fuente === "venta" && (
+                          <span className="text-[9.5px] text-amber-600 font-medium">venta*</span>
+                        )}
+                      </span>
                     ) : (
                       <AgingBadge dias={diasStock} umbralWarn={90} umbralDanger={180} />
                     )}
