@@ -22,7 +22,7 @@ import {
   computeDashboardKPIs,
   computeResumenAppEstimado,
 } from "@/lib/selectors/kpis";
-import { detectarFNE, statsFNE } from "@/lib/selectors/fne";
+import { detectarFNE, mapaFechaFacturaPorVin, statsFNE } from "@/lib/selectors/fne";
 import {
   ESTADO_DESC,
   ESTADO_LABEL,
@@ -652,7 +652,12 @@ function MarcaOriginadoraSection() {
 
 function FNESection() {
   const { data } = useExcelStore();
-  const fnes = useMemo(() => (data ? detectarFNE(data.vehiculos) : []), [data]);
+  const fne = useExcelStore((s) => s.fne);
+  // Aging FNE desde FECHA FACTURA (P2 vía VIN → archivo FNE oficial).
+  const fnes = useMemo(
+    () => (data ? detectarFNE(data.vehiculos, new Date(), mapaFechaFacturaPorVin(fne)) : []),
+    [data, fne],
+  );
   const stats = useMemo(() => statsFNE(fnes), [fnes]);
 
   return (
