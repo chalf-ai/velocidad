@@ -29,7 +29,7 @@ import {
   marcaDeSaldo,
 } from "@/lib/historico/capital-por-corte";
 import { ETIQUETA_FUENTE } from "@/lib/historico/calcular-scores-por-dia";
-import { cruzarSaldosConStock } from "@/lib/selectors/saldos";
+import { resolverVinsSaldos } from "@/lib/selectors/saldos";
 import { normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
 import type {
   ParsedExcel,
@@ -141,10 +141,10 @@ function marcasConCapital(args: {
   for (const v of args.stock?.vehiculos ?? []) {
     set.add(normalizarMarcaOperacional(v.marcaPompeyo || v.marca || ""));
   }
-  // Bridge cajón→VIN explícito (misma razón que en capitalDesdePayloads):
-  // la lista de marcas debe salir de la MISMA atribución que el cálculo.
+  // Enriquecimiento oficial de vinResuelto (misma razón que en
+  // capitalDesdePayloads): la lista de marcas sale de la MISMA atribución.
   if (args.saldos) {
-    cruzarSaldosConStock(
+    resolverVinsSaldos(
       args.saldos.registros,
       args.stock?.vehiculos ?? [],
       args.stock?.vinsExtra ?? null,

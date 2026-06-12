@@ -76,8 +76,48 @@ function buildBridgeCajonToVIN(
 }
 
 /**
+ * ENRIQUECIMIENTO OFICIAL · resuelve y escribe `s.vinResuelto` en cada saldo
+ * de categoría "vehiculo" vía bridge Cajón/Patente → VIN (stock + ventas
+ * históricas + FNE).
+ *
+ * Es el ÚNICO punto del sistema que muta `vinResuelto` (deuda saldada
+ * 2026-06: antes la mutación vivía escondida dentro del cruce que ejecutaba
+ * el Score Gerencial, y el resultado de la atribución dependía del ORDEN de
+ * ejecución). Reglas:
+ *   · Determinista: SIEMPRE escribe (incluido null si el bridge no resuelve)
+ *     — el estado final depende solo de los inputs del último llamado, no de
+ *     qué corrió antes.
+ *   · Idempotente con los mismos inputs.
+ *   · Todo flujo que LEA `vinResuelto` debe llamar a esta función (o a
+ *     `cruzarSaldosConStock`, que la invoca declaradamente) con el stock/FNE
+ *     vigentes de su contexto.
+ */
+export function resolverVinsSaldos(
+  saldos: SaldoRegistro[],
+  vehiculos: Vehiculo[],
+  vinsExtra: Map<string, VINSupplementary> | null,
+  fne: ParsedFNE | null,
+): { cajonToVIN: Map<string, string>; patenteToVIN: Map<string, string> } {
+  const { cajonToVIN, patenteToVIN } = buildBridgeCajonToVIN(vehiculos, vinsExtra, fne);
+  for (const s of saldos) {
+    if (s.categoria !== "vehiculo") continue;
+    const cajon = s.cajonLimpio ?? "";
+    let vin: string | null = null;
+    if (cajon) {
+      if (pareceePatente(cajon) && patenteToVIN.has(cajon)) vin = patenteToVIN.get(cajon)!;
+      else if (cajonToVIN.has(cajon)) vin = cajonToVIN.get(cajon)!;
+    }
+    s.vinResuelto = vin;
+  }
+  return { cajonToVIN, patenteToVIN };
+}
+
+/**
  * Cruza cada saldo con stock/FNE. Solo los de categoría "vehiculo" se
  * intentan cruzar; los demás quedan con tipoMatch="no_aplica".
+ *
+ * NOTA: invoca `resolverVinsSaldos` (enriquecimiento declarado de
+ * `vinResuelto`) antes de construir los cruzados.
  */
 export function cruzarSaldosConStock(
   saldos: SaldoRegistro[],
@@ -85,7 +125,7 @@ export function cruzarSaldosConStock(
   vinsExtra: Map<string, VINSupplementary> | null,
   fne: ParsedFNE | null,
 ): SaldoCruzado[] {
-  const { cajonToVIN, patenteToVIN } = buildBridgeCajonToVIN(vehiculos, vinsExtra, fne);
+  const { patenteToVIN } = resolverVinsSaldos(saldos, vehiculos, vinsExtra, fne);
 
   // Index VIN → Vehiculo y VIN → AutoNoEntregado
   const vehByVin = new Map<string, Vehiculo>();
@@ -105,23 +145,14 @@ export function cruzarSaldosConStock(
     if (s.categoria !== "vehiculo") {
       return { saldo: s, vehiculo: null, vehiculoExtra: null, fne: null, tipoMatch: "no_aplica" };
     }
+    // vinResuelto ya viene del enriquecimiento oficial (resolverVinsSaldos).
+    const vin = s.vinResuelto;
     const cajon = s.cajonLimpio ?? "";
-    let vin: string | null = null;
-    let tipoMatch: SaldoCruzado["tipoMatch"] = "no_match";
-
-    if (cajon) {
-      // Si el "Cajon" en realidad es una patente
-      if (pareceePatente(cajon) && patenteToVIN.has(cajon)) {
-        vin = patenteToVIN.get(cajon)!;
-        tipoMatch = "patente";
-      } else if (cajonToVIN.has(cajon)) {
-        vin = cajonToVIN.get(cajon)!;
-        tipoMatch = "exacto";
-      }
-    }
-
-    // Stash el VIN resuelto en el saldo para acceso rápido
-    if (vin) s.vinResuelto = vin;
+    const tipoMatch: SaldoCruzado["tipoMatch"] = !vin
+      ? "no_match"
+      : pareceePatente(cajon) && patenteToVIN.get(cajon) === vin
+        ? "patente"
+        : "exacto";
 
     const veh = vin ? vehByVin.get(vin) ?? null : null;
     const extra = vin && !veh ? vinsExtra?.get(vin) ?? null : null;

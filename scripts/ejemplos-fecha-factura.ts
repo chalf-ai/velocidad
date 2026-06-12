@@ -15,7 +15,7 @@ import {
   rehidratarStock,
 } from "../src/lib/historico/calcular-score-gerencial-historico";
 import { esFNE, mapaFechaFacturaPorVin } from "../src/lib/selectors/fne";
-import { cruzarSaldosConStock } from "../src/lib/selectors/saldos";
+import { resolverVinsSaldos } from "../src/lib/selectors/saldos";
 import { limpiarVIN } from "../src/lib/parser/venta-apc";
 import type { Fuente } from "@prisma/client";
 
@@ -41,7 +41,7 @@ async function main() {
     throw new Error("Faltan payloads vigentes (BASE_STOCK / SALDOS / FNE)");
   }
   const facturas = mapaFechaFacturaPorVin(fne);
-  cruzarSaldosConStock(saldos.registros, stock.vehiculos, stock.vinsExtra ?? null, fne);
+  resolverVinsSaldos(saldos.registros, stock.vehiculos, stock.vinsExtra ?? null, fne);
 
   const fnePorVin = new Map(fne.registros.map((r) => [limpiarVIN(r.vin), r]));
 
