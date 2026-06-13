@@ -21,6 +21,7 @@ import type {
   ParsedFNE,
   ParsedSaldos,
   SaldoRegistro,
+  StockAB,
   TipoStock,
   Vehiculo,
   VINSupplementary,
@@ -66,6 +67,16 @@ export interface VehiculoUnificado {
 
   // Stock
   tipoStock: TipoStock | null;
+  /** "Condicion de Stock" (Base_Stock col 81) — categoría oficial del activo:
+   *  "Existencia Nuevos" | "VN CON PATENTE" | "TEST CARS" | "Existencia Usados"
+   *  | "VU por Recibir" | "RENTING" | "COMPANY CAR" | "Activo Fijo" | "Sin Match".
+   *  Necesaria para distinguir el Stock Propio oficial (3 categorías de nuevos)
+   *  de las demás — el tipoStock financiero (Propio/Financiado) no basta. */
+  condicionDeStock: string | null;
+  /** "Stock A/B" (Base_Stock col 65) — clasificación OFICIAL del Excel:
+   *  "A" | "B" | "Judicial". Fuente oficial para el detalle de auditoría de
+   *  Stock B / Judicial (NO el heurístico `esStockB`, que sobre-clasifica). */
+  stockAB: StockAB | null;
   costoNeto: number;
   diasStock: number | null;
 
@@ -204,6 +215,8 @@ export function buildVehiculosUnificados(
         enSaldos: false,
         esOperacionalActivo: false,
         tipoStock: null,
+        condicionDeStock: null,
+        stockAB: null,
         costoNeto: 0,
         diasStock: null,
         marcaLineaVinculada: null,
@@ -252,6 +265,8 @@ export function buildVehiculosUnificados(
       vu.bodega = vu.bodega ?? v.bodega ?? null;
       vu.vendedor = vu.vendedor ?? v.vendedor ?? null;
       vu.tipoStock = vu.tipoStock ?? v.tipoStock;
+      vu.condicionDeStock = vu.condicionDeStock ?? v.condicionDeStock;
+      vu.stockAB = vu.stockAB ?? v.stockAB;
       vu.costoNeto = vu.costoNeto || v.costoNeto;
       vu.diasStock = vu.diasStock ?? v.diasStock;
       vu.esJudicial = vu.esJudicial || v.esJudicial;
