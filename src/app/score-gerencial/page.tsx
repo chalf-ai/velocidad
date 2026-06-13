@@ -36,7 +36,7 @@ import { IndicadorResumido } from "@/components/score-gerencial/IndicadorResumid
 import { PlanLlegarA100Banner } from "@/components/score-gerencial/PlanLlegarA100Banner";
 import { IndicadorCard } from "@/components/score-gerencial/IndicadorCard";
 import { ColaIndicador } from "@/components/score-gerencial/ColaIndicador";
-import { AuditoriaStockBJudicial } from "@/components/score-gerencial/AuditoriaStockBJudicial";
+import { StockNoDisponible } from "@/components/score-gerencial/StockNoDisponible";
 import { VentaPonderadaBlock } from "@/components/VentaPonderadaBlock";
 
 import {
@@ -71,6 +71,19 @@ export default function ScoreGerencialPage() {
       provisiones: datos.provisiones?.registros ?? [],
     });
   }, [datos.data, datos.saldos, datos.provisiones, vus, marcaGlobal]);
+
+  // Stock No Disponible · universo COMPLETO `stockAB="B"` (todas las marcas),
+  // desde el Vehiculo CRUDO del store SIN filtrar — trae Estado Dealer y Status
+  // Stock que el VU no expone, y cuadra exacto con la columna oficial Stock A/B
+  // (351 B + 34 Judicial). Independiente del filtro de marca (es auditoría).
+  const dataCruda = useExcelStore((s) => s.data);
+  const stockND = useMemo(() => {
+    const vs = dataCruda?.vehiculos ?? [];
+    return {
+      unidadesB: vs.filter((v) => v.stockAB === "B"),
+      judiciales: vs.filter((v) => v.stockAB === "Judicial"),
+    };
+  }, [dataCruda]);
 
   useEffect(() => {
     if (foco && colaRef.current) {
@@ -176,11 +189,8 @@ export default function ScoreGerencialPage() {
         </div>
       </div>
 
-      {/* 7 · Auditoría · Stock B y Judicial — fuera del score, fuente oficial */}
-      <AuditoriaStockBJudicial
-        stockB={resultado.drill.stockB}
-        judicial={resultado.drill.judicial}
-      />
+      {/* 7 · Stock No Disponible — universo stockAB="B" desglosado por causa */}
+      <StockNoDisponible unidadesB={stockND.unidadesB} judiciales={stockND.judiciales} />
 
       {/* Nota al pie */}
       <div className="text-[10.5px] text-[--color-fg-dim] italic leading-snug px-1">

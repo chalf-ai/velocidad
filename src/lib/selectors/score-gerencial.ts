@@ -103,10 +103,6 @@ export interface ScoreGerencialResultado {
     provisiones90d: ProvisionRegistro[];
     cp15d: VehiculoUnificado[];
     saldosT3: SaldoRegistro[];
-    /** Stock B y Judicial de la marca — EXCLUIDOS del numerador del score,
-     *  expuestos para el detalle de auditoría (no se ocultan). */
-    stockB: VehiculoUnificado[];
-    judicial: VehiculoUnificado[];
   };
 }
 
@@ -158,8 +154,14 @@ export interface ScoreGerencialInput {
  *  · Unidad USADOS: Existencia Usados (su análogo de stock propio).
  *
  * En AMBOS casos se mantiene el filtro financiero (Tipo Stock = Propio/
- * FinPropio) y se EXCLUYEN Stock B y Judicial (no son meta gerencial — quedan
- * visibles en el detalle de auditoría, no en el numerador del score).
+ * FinPropio).
+ *
+ * Stock B / Judicial (decisión de negocio 2026-06, validada con evidencia):
+ *  · STOCK B → SÍ cuenta en el score: es stock PAGADO inmovilizado, capital
+ *    de trabajo real (sigue afectando caja). Se ve además en auditoría.
+ *  · JUDICIAL → NO cuenta en el score (no es stock propio gestionable). Se
+ *    excluye del universo vía la columna OFICIAL Stock A/B (no heurístico) y
+ *    queda segregado en el bloque de auditoría.
  */
 const COND_STOCK_PROPIO_NUEVOS = new Set([
   "EXISTENCIA NUEVOS",
@@ -173,18 +175,15 @@ const normCondicion = (c: string | null | undefined): string =>
 export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerencialResultado {
   const { marca, vus, saldos, provisiones } = input;
 
-  // ─── Regla excluyente · USADOS ─────────────────────────────────────────
-  // Decisión usuario 2026-06: para la unidad operacional USADOS, el
-  // indicador Stock propio debe excluir Stock B y Judicial — esos autos
-  // no son meta gerencial normal (Stock B es reacondicionamiento, judicial
-  // tiene su propio canal). La exclusión aplica ÚNICAMENTE al indicador
-  // stock_propio y SÓLO cuando la marca operacional activa es USADOS.
-  // Cualquier otra marca (KIA, Geely, Citroën, etc.) conserva el cálculo
-  // original sin cambios.
+  // ─── Universo del indicador Stock Propio ───────────────────────────────
+  // Decisión de negocio 2026-06: JUDICIAL queda fuera del score (numerador y
+  // denominador) en TODAS las marcas, vía la columna OFICIAL Stock A/B
+  // (`stockAB === "Judicial"`), NO el heurístico esJudicial/esStockB. Stock B
+  // permanece (es stock pagado · capital de trabajo real).
   const esUsados = marca === MARCA_USADOS;
   const aplicaEnStockPropio = (vu: VehiculoUnificado): boolean => {
     if (!vu.enStockActivo) return false;
-    if (esUsados && (vu.esStockB || vu.esJudicial)) return false;
+    if (vu.stockAB === "Judicial") return false;
     return true;
   };
 
@@ -235,12 +234,10 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     (vu) => aplicaEnStockPropio(vu) && esPropioOficial(vu),
   );
 
-  // Auditoría · Stock B y Judicial — fuera del numerador del score (criterio
-  // Control de Gestión), pero NO ocultos: se exponen para detalle/auditoría.
-  // FUENTE OFICIAL = columna Stock A/B de Base_Stock (stockAB), NO el heurístico
-  // `esStockB` (sobre-clasifica). Universo = stock activo de la marca.
-  const stockB = vus.filter((vu) => vu.enStockActivo && vu.stockAB === "B");
-  const judicial = vus.filter((vu) => vu.enStockActivo && vu.stockAB === "Judicial");
+  // Conteo de Judicial de la marca · solo para la nota del indicador (Judicial
+  // queda fuera del score vía aplicaEnStockPropio). El detalle Stock No
+  // Disponible (universo stockAB="B") se arma aparte, desde el store crudo.
+  const judicialMarca = vus.filter((vu) => vu.enStockActivo && vu.stockAB === "Judicial").length;
 
   // ─── 2. Provisiones envejecidas >90d ──────────────────────────────────
   // Criterio alineado con módulo /provisiones (decisión usuario 2026-06):
@@ -293,11 +290,10 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
           ? ((unidadesPropio / unidadesStock) * 100).toFixed(0)
           : 0
       }% por unidades`,
-      // Nota chica · Stock B y Judicial (columna oficial Stock A/B) quedan fuera
-      // del numerador; visibles en el detalle de auditoría.
+      // Nota chica · Judicial (columna oficial Stock A/B) queda fuera del score.
       nota:
-        stockB.length + judicial.length > 0
-          ? `Stock B (${stockB.length}) y Judicial (${judicial.length}) · fuera del score, ver auditoría`
+        judicialMarca > 0
+          ? `Judicial (${judicialMarca}) fuera del score · ver Stock No Disponible`
           : undefined,
       monto: capitalPropio,
       casos: unidadesPropio,
@@ -399,8 +395,6 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
       provisiones90d: prov90,
       cp15d: cp15,
       saldosT3: saldosT3,
-      stockB,
-      judicial,
     },
   };
 }
