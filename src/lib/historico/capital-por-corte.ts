@@ -28,7 +28,7 @@
  */
 
 import { calcularCapitalPagado } from "@/lib/selectors/capital-pagado";
-import { cruzarSaldosConStock } from "@/lib/selectors/saldos";
+import { resolverVinsSaldos } from "@/lib/selectors/saldos";
 import {
   getMarcaOperacional,
   MARCA_SIN_ORIGEN,
@@ -137,12 +137,10 @@ export function capitalDesdePayloads(args: {
   let saldosVehiculo: ComponenteCapital | null = null;
   let bonos: ComponenteCapital | null = null;
   if (args.saldos) {
-    // Bridge cajón→VIN EXPLÍCITO antes de atribuir (cruzarSaldosConStock
-    // resuelve y stashea s.vinResuelto vía stock + vinsExtra + FNE — el
-    // mismo cruce oficial del sistema). Sin esta llamada, P1/P2 dependían
-    // de que OTRO cálculo (el SG legacy) hubiera corrido antes y mutado
-    // los registros: la atribución cambiaba según el orden de ejecución.
-    cruzarSaldosConStock(
+    // Enriquecimiento oficial de vinResuelto (resolverVinsSaldos) antes de
+    // atribuir. Determinista: depende solo de estos inputs, no del orden de
+    // ejecución de otros cálculos.
+    resolverVinsSaldos(
       args.saldos.registros,
       args.stock?.vehiculos ?? [],
       args.stock?.vinsExtra ?? null,

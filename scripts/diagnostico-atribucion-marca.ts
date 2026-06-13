@@ -23,7 +23,7 @@ import {
   normalizarMarcaOperacional,
 } from "../src/lib/selectors/owner-operacional";
 import { limpiarVIN } from "../src/lib/parser/venta-apc";
-import { cruzarSaldosConStock } from "../src/lib/selectors/saldos";
+import { resolverVinsSaldos } from "../src/lib/selectors/saldos";
 import type { Fuente } from "@prisma/client";
 
 async function payloadVigente(fuente: Fuente): Promise<unknown | null> {
@@ -85,7 +85,7 @@ async function main() {
   // Bridge cajón→VIN oficial del sistema (resuelve s.vinResuelto) — el mismo
   // que ejecuta el cálculo de capital. Sin esto, el payload crudo trae 0 VINs.
   if (saldos) {
-    cruzarSaldosConStock(saldos.registros, stock?.vehiculos ?? [], stock?.vinsExtra ?? null, fne);
+    resolverVinsSaldos(saldos.registros, stock?.vehiculos ?? [], stock?.vinsExtra ?? null, fne);
   }
 
   // VIN → marca operacional (Stock y FNE vigentes)

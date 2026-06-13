@@ -19,7 +19,7 @@ import {
   marcaDeProvision,
   marcaDeSaldo,
 } from "../src/lib/historico/capital-por-corte";
-import { cruzarSaldosConStock } from "../src/lib/selectors/saldos";
+import { resolverVinsSaldos } from "../src/lib/selectors/saldos";
 import { fechaHoySantiago } from "../src/lib/snapshots/daily-capital";
 import type { Fuente } from "@prisma/client";
 
@@ -47,7 +47,7 @@ async function main() {
   const fne = fneP ? rehidratarFNE(fneP) : null;
   // Mismo bridge cajón→VIN que usa el cálculo (resuelve s.vinResuelto).
   if (saldos) {
-    cruzarSaldosConStock(saldos.registros, stock?.vehiculos ?? [], stock?.vinsExtra ?? null, fne);
+    resolverVinsSaldos(saldos.registros, stock?.vehiculos ?? [], stock?.vinsExtra ?? null, fne);
   }
   const mapas = construirMapasVinMarca(stock, fne);
 
