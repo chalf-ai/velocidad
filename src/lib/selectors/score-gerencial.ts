@@ -144,6 +144,20 @@ export interface ScoreGerencialInput {
   provisiones: ProvisionRegistro[];
 }
 
+/**
+ * Condición de Stock oficial para "Stock Propio" — definición de Control de
+ * Gestión (correo validado 2026-06): Existencia Nuevos + VN con Patente +
+ * Test Cars, ya sean de SPA o TM. El resto (Renting, Company Car, Sin Match,
+ * Activo Fijo, Existencia Usados, VU por Recibir) NO es Stock Propio.
+ */
+const COND_STOCK_PROPIO_OFICIAL = new Set([
+  "EXISTENCIA NUEVOS",
+  "VN CON PATENTE",
+  "TEST CARS",
+]);
+const normCondicion = (c: string | null | undefined): string =>
+  (c ?? "").trim().toUpperCase();
+
 export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerencialResultado {
   const { marca, vus, saldos, provisiones } = input;
 
@@ -162,6 +176,21 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     return true;
   };
 
+  // ─── Numerador Stock Propio · regla oficial (correo Control de Gestión) ──
+  // Cuenta como Stock Propio sólo lo que es propio EN CAPITAL (Tipo Stock =
+  // Propio/FinPropio) Y de condición oficial (Existencia Nuevos, VN con
+  // Patente, Test Cars). Antes el numerador miraba sólo lo financiero y sumaba
+  // Renting, Company Car, Sin Match, Activo Fijo y Existencia Usados.
+  //
+  // PENDIENTE DE NEGOCIO (no se resuelve en este cambio acotado):
+  //  · Unidad USADOS: las 3 condiciones son de NUEVOS → su Stock Propio queda
+  //    en 0 hasta que Control de Gestión defina el análogo (Existencia Usados).
+  //  · Denominador (stockValorizado): se mantiene = todo el stock activo; el
+  //    correo sólo cuestiona el numerador.
+  const esPropioOficial = (vu: VehiculoUnificado): boolean =>
+    (vu.tipoStock === "Propio" || vu.tipoStock === "FinPropio") &&
+    COND_STOCK_PROPIO_OFICIAL.has(normCondicion(vu.condicionDeStock));
+
   // ─── 1. Stock propio · capitalPropio / stockValorizado ──────────────────
   // Universo: VUs con enStockActivo (stock vigente, no FNE ni saldos).
   // Para USADOS, además se excluyen Stock B y Judicial — ver bloque arriba.
@@ -174,7 +203,7 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     const costo = vu.costoNeto ?? 0;
     stockValorizado += costo;
     unidadesStock++;
-    if (vu.tipoStock === "Propio" || vu.tipoStock === "FinPropio") {
+    if (esPropioOficial(vu)) {
       capitalPropio += costo;
       unidadesPropio++;
     }
@@ -186,9 +215,7 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
 
   // Drill consistente con el numerador: NO listar autos excluidos del cálculo.
   const drillStockPropio = vus.filter(
-    (vu) =>
-      aplicaEnStockPropio(vu) &&
-      (vu.tipoStock === "Propio" || vu.tipoStock === "FinPropio"),
+    (vu) => aplicaEnStockPropio(vu) && esPropioOficial(vu),
   );
 
   // ─── 2. Provisiones envejecidas >90d ──────────────────────────────────
