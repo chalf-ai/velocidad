@@ -103,6 +103,10 @@ export interface ScoreGerencialResultado {
     provisiones90d: ProvisionRegistro[];
     cp15d: VehiculoUnificado[];
     saldosT3: SaldoRegistro[];
+    /** Stock B y Judicial de la marca — EXCLUIDOS del numerador del score,
+     *  expuestos para el detalle de auditoría (no se ocultan). */
+    stockB: VehiculoUnificado[];
+    judicial: VehiculoUnificado[];
   };
 }
 
@@ -146,15 +150,23 @@ export interface ScoreGerencialInput {
 
 /**
  * Condición de Stock oficial para "Stock Propio" — definición de Control de
- * Gestión (correo validado 2026-06): Existencia Nuevos + VN con Patente +
- * Test Cars, ya sean de SPA o TM. El resto (Renting, Company Car, Sin Match,
- * Activo Fijo, Existencia Usados, VU por Recibir) NO es Stock Propio.
+ * Gestión (correo validado 2026-06), con criterio SEPARADO por unidad:
+ *
+ *  · Marcas de NUEVOS: Existencia Nuevos + VN con Patente + Test Cars
+ *    (ya sean de SPA o TM). Excluye Renting, Company Car, Sin Match, Activo
+ *    Fijo, Existencia Usados, VU por Recibir.
+ *  · Unidad USADOS: Existencia Usados (su análogo de stock propio).
+ *
+ * En AMBOS casos se mantiene el filtro financiero (Tipo Stock = Propio/
+ * FinPropio) y se EXCLUYEN Stock B y Judicial (no son meta gerencial — quedan
+ * visibles en el detalle de auditoría, no en el numerador del score).
  */
-const COND_STOCK_PROPIO_OFICIAL = new Set([
+const COND_STOCK_PROPIO_NUEVOS = new Set([
   "EXISTENCIA NUEVOS",
   "VN CON PATENTE",
   "TEST CARS",
 ]);
+const COND_STOCK_PROPIO_USADOS = new Set(["EXISTENCIA USADOS"]);
 const normCondicion = (c: string | null | undefined): string =>
   (c ?? "").trim().toUpperCase();
 
@@ -178,18 +190,23 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
 
   // ─── Numerador Stock Propio · regla oficial (correo Control de Gestión) ──
   // Cuenta como Stock Propio sólo lo que es propio EN CAPITAL (Tipo Stock =
-  // Propio/FinPropio) Y de condición oficial (Existencia Nuevos, VN con
-  // Patente, Test Cars). Antes el numerador miraba sólo lo financiero y sumaba
-  // Renting, Company Car, Sin Match, Activo Fijo y Existencia Usados.
+  // Propio/FinPropio) Y de condición oficial — separada por unidad:
+  //  · NUEVOS  → Existencia Nuevos · VN con Patente · Test Cars
+  //  · USADOS  → Existencia Usados
+  // Antes el numerador miraba sólo lo financiero y sumaba Renting, Company Car,
+  // Sin Match, Activo Fijo y Existencia Usados de otras marcas.
   //
-  // PENDIENTE DE NEGOCIO (no se resuelve en este cambio acotado):
-  //  · Unidad USADOS: las 3 condiciones son de NUEVOS → su Stock Propio queda
-  //    en 0 hasta que Control de Gestión defina el análogo (Existencia Usados).
-  //  · Denominador (stockValorizado): se mantiene = todo el stock activo; el
-  //    correo sólo cuestiona el numerador.
+  // Stock B / Judicial: NO se descuentan acá con el flag heurístico `esStockB`
+  // (sobre-clasifica · genera falsos positivos). El numerador se basa SÓLO en
+  // la condición oficial; el detalle Stock B/Judicial se arma aparte desde la
+  // columna oficial Stock A/B de Base_Stock (ver drill.stockB/judicial).
+  //
+  // PENDIENTE DE NEGOCIO (no se resuelve acá): el DENOMINADOR (stockValorizado)
+  // se mantiene = todo el stock activo; el correo sólo cuestiona el numerador.
+  const condicionesPropio = esUsados ? COND_STOCK_PROPIO_USADOS : COND_STOCK_PROPIO_NUEVOS;
   const esPropioOficial = (vu: VehiculoUnificado): boolean =>
     (vu.tipoStock === "Propio" || vu.tipoStock === "FinPropio") &&
-    COND_STOCK_PROPIO_OFICIAL.has(normCondicion(vu.condicionDeStock));
+    condicionesPropio.has(normCondicion(vu.condicionDeStock));
 
   // ─── 1. Stock propio · capitalPropio / stockValorizado ──────────────────
   // Universo: VUs con enStockActivo (stock vigente, no FNE ni saldos).
@@ -217,6 +234,13 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
   const drillStockPropio = vus.filter(
     (vu) => aplicaEnStockPropio(vu) && esPropioOficial(vu),
   );
+
+  // Auditoría · Stock B y Judicial — fuera del numerador del score (criterio
+  // Control de Gestión), pero NO ocultos: se exponen para detalle/auditoría.
+  // FUENTE OFICIAL = columna Stock A/B de Base_Stock (stockAB), NO el heurístico
+  // `esStockB` (sobre-clasifica). Universo = stock activo de la marca.
+  const stockB = vus.filter((vu) => vu.enStockActivo && vu.stockAB === "B");
+  const judicial = vus.filter((vu) => vu.enStockActivo && vu.stockAB === "Judicial");
 
   // ─── 2. Provisiones envejecidas >90d ──────────────────────────────────
   // Criterio alineado con módulo /provisiones (decisión usuario 2026-06):
@@ -269,9 +293,12 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
           ? ((unidadesPropio / unidadesStock) * 100).toFixed(0)
           : 0
       }% por unidades`,
-      // Nota chica · sólo en USADOS la meta de Stock propio excluye Stock B
-      // y Judicial. Para marcas nuevas la nota queda undefined (no se muestra).
-      nota: esUsados ? "Stock B y Judicial excluidos de esta meta" : undefined,
+      // Nota chica · Stock B y Judicial (columna oficial Stock A/B) quedan fuera
+      // del numerador; visibles en el detalle de auditoría.
+      nota:
+        stockB.length + judicial.length > 0
+          ? `Stock B (${stockB.length}) y Judicial (${judicial.length}) · fuera del score, ver auditoría`
+          : undefined,
       monto: capitalPropio,
       casos: unidadesPropio,
       puntos: p1,
@@ -372,6 +399,8 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
       provisiones90d: prov90,
       cp15d: cp15,
       saldosT3: saldosT3,
+      stockB,
+      judicial,
     },
   };
 }

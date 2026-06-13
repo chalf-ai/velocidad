@@ -36,6 +36,7 @@ import { IndicadorResumido } from "@/components/score-gerencial/IndicadorResumid
 import { PlanLlegarA100Banner } from "@/components/score-gerencial/PlanLlegarA100Banner";
 import { IndicadorCard } from "@/components/score-gerencial/IndicadorCard";
 import { ColaIndicador } from "@/components/score-gerencial/ColaIndicador";
+import { AuditoriaStockBJudicial } from "@/components/score-gerencial/AuditoriaStockBJudicial";
 import { VentaPonderadaBlock } from "@/components/VentaPonderadaBlock";
 
 import {
@@ -174,6 +175,12 @@ export default function ScoreGerencialPage() {
           <CapitalMini label="Provisiones" value={fmtCLPCompact(capitalGestionado.provisiones)} />
         </div>
       </div>
+
+      {/* 7 · Auditoría · Stock B y Judicial — fuera del score, fuente oficial */}
+      <AuditoriaStockBJudicial
+        stockB={resultado.drill.stockB}
+        judicial={resultado.drill.judicial}
+      />
 
       {/* Nota al pie */}
       <div className="text-[10.5px] text-[--color-fg-dim] italic leading-snug px-1">
