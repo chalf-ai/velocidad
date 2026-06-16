@@ -713,11 +713,14 @@ async def get_tareas_pendientes_whatsapp(
     pool = await get_pool()
     rows = await pool.fetch(
         """
-        SELECT a.id, a.mensaje, a."createdAt", u.email, u.name, u.telefono
+        SELECT a.id, a.mensaje, a."createdAt", u.email, u.name, u.telefono,
+               t."tipoCaso", t.vin, t.marca, t.modelo, t."claveCaso", t.motivo
         FROM "AlertaLog" a
         JOIN "User" u ON u.id = a."userId"
+        LEFT JOIN "TareaOperacional" t ON t.id = a."tareaId"
         WHERE a.tipo = 'TAREA_ASIGNADA'
           AND a.enviado = false
+          AND a."waStatus" IS NULL
           AND a."errorMsg" IS NULL
           AND a."tareaId" IS NOT NULL
           AND a.canal IN ('WHATSAPP', 'WHATSAPP_SIMULADO')
@@ -1129,3 +1132,135 @@ async def mark_alerta_sent(
         wa_msg_id,
         error_msg,
     )
+
+
+# ── F2 · Envío por plantilla + estados de entrega Meta ────────────────────────
+
+# Orden de avance de estados (para idempotencia de los webhooks de status).
+_WA_STATUS_RANK = {"sending": 0, "accepted": 1, "sent": 2, "delivered": 3, "read": 4, "failed": 5}
+
+
+async def claim_alerta(alerta_id: str) -> bool:
+    """
+    Reclamo atómico anti-duplicado: marca waStatus='sending' SOLO si todavía
+    está NULL. Si otro worker (o un ciclo solapado) ya la tomó, devuelve False
+    y el caller la salta. Garantiza un único envío por alerta incluso con varias
+    réplicas del poller corriendo a la vez.
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE "AlertaLog"
+        SET "waStatus" = 'sending', "waStatusAt" = NOW()
+        WHERE id = $1 AND "waStatus" IS NULL
+        RETURNING id
+        """,
+        alerta_id,
+    )
+    return row is not None
+
+
+async def mark_alerta_accepted(
+    alerta_id: str,
+    wa_msg_id: Optional[str],
+    request_payload: dict,
+    response: dict,
+) -> None:
+    """
+    Meta ACEPTÓ el envío (HTTP 200 + waMsgId). `enviado=true` para trazabilidad,
+    pero `waStatus='accepted'` deja claro que es aceptado, NO confirmado entregado
+    — el webhook de status lo moverá a sent/delivered/read o failed.
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE "AlertaLog"
+        SET enviado = true, "waMsgId" = $2, "waStatus" = 'accepted', "waStatusAt" = NOW(),
+            "waRaw" = $3::jsonb
+        WHERE id = $1
+        """,
+        alerta_id,
+        wa_msg_id,
+        json.dumps({"request": request_payload, "response": response}),
+    )
+
+
+async def mark_alerta_send_failed(
+    alerta_id: str,
+    status_code: Optional[int],
+    error_code: Optional[int],
+    error_title: Optional[str],
+    error_message: Optional[str],
+    raw: Any = None,
+) -> None:
+    """Meta RECHAZÓ el envío (4xx/5xx) o hubo excepción. NO es entregado."""
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE "AlertaLog"
+        SET enviado = false, "waStatus" = 'failed', "waStatusAt" = NOW(),
+            "errorMsg" = $2, "waErrorCode" = $3, "waErrorTitle" = $4, "waRaw" = $5::jsonb
+        WHERE id = $1
+        """,
+        alerta_id,
+        ((error_message or "") or f"HTTP {status_code}")[:500],
+        error_code,
+        error_title,
+        json.dumps(raw) if raw is not None else None,
+    )
+
+
+async def update_alerta_status(
+    wa_msg_id: str,
+    status: str,
+    timestamp: Optional[str],
+    error_code: Optional[int] = None,
+    error_title: Optional[str] = None,
+    error_message: Optional[str] = None,
+    raw: Any = None,
+) -> bool:
+    """
+    Aplica un webhook de status de Meta (por waMsgId). Idempotente: solo avanza
+    el estado (sent<delivered<read; failed gana). Devuelve True si actualizó.
+    """
+    if not wa_msg_id or not status:
+        return False
+    pool = await get_pool()
+    cur = await pool.fetchval('SELECT "waStatus" FROM "AlertaLog" WHERE "waMsgId" = $1', wa_msg_id)
+    if cur is None:
+        return False  # no es una alerta nuestra (o aún sin waMsgId persistido)
+    new_rank = _WA_STATUS_RANK.get(status, -1)
+    cur_rank = _WA_STATUS_RANK.get(cur, -1)
+    if status != "failed" and new_rank <= cur_rank:
+        return False  # status viejo/desordenado → ignorar
+
+    ts = None
+    try:
+        if timestamp:
+            ts = datetime.fromtimestamp(int(timestamp), tz=timezone.utc).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        ts = None
+
+    es_fallo = status == "failed"
+    await pool.execute(
+        """
+        UPDATE "AlertaLog"
+        SET "waStatus" = $2,
+            "waStatusAt" = COALESCE($3, NOW()),
+            enviado = CASE WHEN $4 THEN false ELSE enviado END,
+            "errorMsg" = CASE WHEN $4 THEN $5 ELSE "errorMsg" END,
+            "waErrorCode" = CASE WHEN $4 THEN $6 ELSE "waErrorCode" END,
+            "waErrorTitle" = CASE WHEN $4 THEN $7 ELSE "waErrorTitle" END,
+            "waRaw" = jsonb_set(COALESCE("waRaw", '{}'::jsonb), '{lastStatus}', $8::jsonb, true)
+        WHERE "waMsgId" = $1
+        """,
+        wa_msg_id,
+        status,
+        ts,
+        es_fallo,
+        (error_message or "")[:500] if es_fallo else None,
+        error_code if es_fallo else None,
+        error_title if es_fallo else None,
+        json.dumps(raw) if raw is not None else "null",
+    )
+    return True

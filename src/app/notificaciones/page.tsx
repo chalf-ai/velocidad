@@ -37,6 +37,12 @@ interface AlertaRow {
   waMsgId: string | null;
   /** "WHATSAPP" | "EMAIL" · null = pendiente de canal (registros previos). */
   canal: string | null;
+  /** Estado real de entrega Meta: sending|accepted|sent|delivered|read|failed.
+   *  null = registros previos a la integración real. `enviado=true` solo = aceptado. */
+  waStatus: string | null;
+  waStatusAt: string | null;
+  waErrorCode: number | null;
+  waErrorTitle: string | null;
   createdAt: string;
   user: { name: string | null; email: string; telefono: string | null };
   tarea: {
@@ -50,6 +56,41 @@ interface AlertaRow {
     fechaCompromiso: string | null;
     creador: { name: string | null };
   } | null;
+}
+
+/**
+ * Estado de entrega real para el badge. Prioriza waStatus (Meta Cloud API);
+ * cae al comportamiento legacy (enviado/errorMsg) para registros previos a la
+ * integración real. Clave: NUNCA mostrar "Enviada/Entregada" por solo `enviado=true`
+ * cuando waStatus dice otra cosa — un mensaje "aceptado" no es "entregado".
+ */
+function estadoEntrega(a: AlertaRow): {
+  label: string;
+  cls: string;
+  icono: "ok" | "fail" | null;
+} {
+  switch (a.waStatus) {
+    case "read":
+      return { label: "Leído", cls: "bg-emerald-100 text-emerald-800", icono: "ok" };
+    case "delivered":
+      return { label: "Entregado", cls: "bg-emerald-100 text-emerald-800", icono: "ok" };
+    case "sent":
+      return { label: "Enviado", cls: "bg-sky-100 text-sky-800", icono: null };
+    case "accepted":
+      return { label: "Aceptado por Meta", cls: "bg-slate-100 text-slate-600", icono: null };
+    case "sending":
+      return { label: "Enviando…", cls: "bg-amber-100 text-amber-800", icono: null };
+    case "failed":
+      return {
+        label: a.waErrorTitle ? `Fallido · ${a.waErrorTitle}` : "Fallido",
+        cls: "bg-red-100 text-red-800",
+        icono: "fail",
+      };
+  }
+  // Legacy (sin waStatus): comportamiento anterior.
+  if (a.errorMsg) return { label: "Error", cls: "bg-red-100 text-red-800", icono: "fail" };
+  if (a.enviado) return { label: "Enviada", cls: "bg-emerald-100 text-emerald-800", icono: "ok" };
+  return { label: "Pendiente", cls: "bg-amber-100 text-amber-800", icono: null };
 }
 
 const TIPO_LABEL: Record<string, string> = {
@@ -215,28 +256,24 @@ export default function NotificacionesPage() {
               <div key={a.id} className="surface bg-white p-4">
                 {/* Header fila */}
                 <div className="flex items-center gap-2 flex-wrap text-[11.5px]">
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide text-[10px]",
-                      a.enviado
-                        ? "bg-emerald-100 text-emerald-800"
-                        : a.errorMsg
-                          ? "bg-red-100 text-red-800"
-                          : "bg-amber-100 text-amber-800",
-                    )}
-                  >
-                    {a.enviado ? (
-                      <>
-                        <CheckCheck className="size-3" /> Enviada
-                      </>
-                    ) : a.errorMsg ? (
-                      <>
-                        <TriangleAlert className="size-3" /> Error
-                      </>
-                    ) : (
-                      "Pendiente"
-                    )}
-                  </span>
+                  {(() => {
+                    const est = estadoEntrega(a);
+                    return (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide text-[10px]",
+                          est.cls,
+                        )}
+                      >
+                        {est.icono === "ok" ? (
+                          <CheckCheck className="size-3" />
+                        ) : est.icono === "fail" ? (
+                          <TriangleAlert className="size-3" />
+                        ) : null}
+                        {est.label}
+                      </span>
+                    );
+                  })()}
                   <span className="text-[--color-fg-muted] font-medium">
                     {TIPO_LABEL[a.tipo] ?? a.tipo}
                   </span>

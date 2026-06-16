@@ -22,11 +22,22 @@ class Settings(BaseSettings):
     # F2 · Poller de tareas asignadas → WhatsApp (agent/tareas.py)
     # Primer deploy SIEMPRE con enabled=0 + dry_run=1. Activación real solo
     # con OK explícito y allowlist del piloto.
-    tareas_whatsapp_enabled: bool = False  # master switch del poller
-    tareas_dry_run: bool = True            # True = loguea qué enviaría; NO llama Meta, NO marca enviada
+    tareas_whatsapp_enabled: bool = False  # master switch del poller (= WHATSAPP_ENABLED)
+    tareas_dry_run: bool = True            # True = loguea qué enviaría; NO llama Meta, NO marca enviada (= WHATSAPP_DRY_RUN)
     tareas_whatsapp_piloto: str = ""       # allowlist CSV de emails del ASIGNADO (vacía = no procesa nada)
     tareas_poll_seconds: int = 60          # cadencia del poller
     tareas_desde: str = ""                 # ISO datetime · solo alertas creadas después; vacío = arranque del proceso
+
+    # F2 · Envío real vía Meta WhatsApp Cloud API (plantilla + estados de entrega).
+    # El envío proactivo FUERA de la ventana de 24h exige una plantilla aprobada.
+    # El comportamiento ENABLED/DRY_RUN lo dan los dos flags de arriba (reusados,
+    # no se crea un set nuevo): enabled=0 → no envía; enabled=1+dry_run=1 → simula;
+    # enabled=1+dry_run=0 → envía real con la plantilla.
+    graph_api_version: str = "v23.0"                                 # versión de la Graph API
+    whatsapp_business_account_id: str = ""                           # WABA ID (gestión/auditoría; el envío usa phone_number_id)
+    whatsapp_template_name: str = "tarea_asignada"                   # nombre EXACTO de la plantilla aprobada en Meta
+    whatsapp_template_lang: str = "es_CL"                            # idioma aprobado (fallback "es")
+    app_public_url: str = "https://velocidadoperacional.pompeyo.cl"  # base para reconstruir el link ABSOLUTO del caso
 
     # Snapshot diario de capital (Tendencias persistentes)
     # El job NO calcula nada ni lee Excel: llama al endpoint Next.js, que toma

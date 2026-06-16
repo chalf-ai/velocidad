@@ -167,14 +167,25 @@ model AlertaLog {
   /// la asignación interna es la obligatoria.
   canal     String?
   /// Tarea operacional que originó esta alerta (solo tipo TAREA_ASIGNADA).
-  /// César (agent/) NO lee esta columna todavía — F2 le agregará el poller.
   tareaId   String?
   tarea     TareaOperacional? @relation(fields: [tareaId], references: [id], onDelete: SetNull)
   createdAt DateTime   @default(now())
 
+  // ── F2 · Estado real de entrega en Meta WhatsApp Cloud API ──
+  /// Ciclo de vida del envío: sending → accepted → sent → delivered → read,
+  /// o failed. Null = aún no se intentó por WhatsApp. OJO: `enviado=true` solo
+  /// significa "aceptado por Meta"; la verdad de entrega vive en waStatus.
+  waStatus     String?
+  waStatusAt   DateTime? // timestamp del último cambio de estado
+  waErrorCode  Int?      // código de error de Meta (ej. 131047 = fuera de ventana 24h)
+  waErrorTitle String?   // título/tipo del error de Meta
+  /// Auditoría cruda: { request, response, lastStatus } del envío y los webhooks.
+  waRaw        Json?
+
   @@index([userId])
   @@index([createdAt])
   @@index([tipo, enviado])
+  @@index([waMsgId]) // el webhook de status actualiza por waMsgId
 }
 
 enum AlertaTipo {

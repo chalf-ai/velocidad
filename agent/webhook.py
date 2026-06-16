@@ -12,7 +12,7 @@ from .cron import build_scheduler
 from . import database as db
 from .agent import chat, get_agent
 from .tareas import estado_tareas, procesar_tareas_asignadas
-from .whatsapp import extract_messages, send_text
+from .whatsapp import extract_messages, extract_statuses, send_text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 logger = logging.getLogger(__name__)
@@ -66,6 +66,23 @@ async def receive_webhook(request: Request, background: BackgroundTasks):
                 _processed.clear()
 
         background.add_task(handle_message, msg["from"], msg["text"])
+
+    # Status de mensajes SALIENTES (sent/delivered/read/failed). En la Cloud
+    # API llegan en el MISMO webhook (value.statuses[]) — no requieren otra
+    # suscripción. Persistimos el estado real de entrega por waMsgId.
+    for st in extract_statuses(payload):
+        if not st.get("wa_msg_id"):
+            continue
+        background.add_task(
+            db.update_alerta_status,
+            st["wa_msg_id"],
+            st["status"],
+            st.get("timestamp"),
+            st.get("error_code"),
+            st.get("error_title"),
+            st.get("error_message"),
+            st.get("raw"),
+        )
 
     return {"status": "ok"}
 
