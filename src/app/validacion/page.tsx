@@ -136,7 +136,7 @@ function ValidationReport() {
     parsed.report.vinsDuplicados.length === 0;
 
   return (
-    <div className="p-8 space-y-6 max-w-[1500px] mx-auto fade-in">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1500px] mx-auto fade-in overflow-x-hidden lg:overflow-x-visible">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-[--color-accent] font-semibold">
@@ -251,7 +251,7 @@ function SheetsSection() {
           sea rápida.
         </CardDescription>
       </CardHeader>
-      <CardBody className="p-0">
+      <CardBody className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-xs text-[--color-fg-muted] uppercase tracking-wider">
             <tr className="border-b border-[--color-border]">
@@ -331,7 +331,7 @@ function ComparisonSection({
           al 5 % indican que la heurística debe ajustarse.
         </CardDescription>
       </CardHeader>
-      <CardBody className="p-0">
+      <CardBody className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-xs text-[--color-fg-muted] uppercase tracking-wider">
             <tr className="border-b border-[--color-border]">
@@ -451,7 +451,7 @@ function TaxonomiaCapitalSection() {
           primitivas para construirlo.
         </CardDescription>
       </CardHeader>
-      <CardBody className="p-0">
+      <CardBody className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-xs text-[--color-fg-muted] uppercase tracking-wider">
             <tr className="border-b border-[--color-border]">
@@ -537,7 +537,7 @@ function MarcaOriginadoraSection() {
             de Mazda. Aquí trazamos cómo se infiere cada caso.
           </CardDescription>
         </CardHeader>
-        <CardBody className="p-0">
+        <CardBody className="p-0 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs text-[--color-fg-muted] uppercase tracking-wider">
               <tr className="border-b border-[--color-border]">
@@ -959,7 +959,7 @@ function LineasCard() {
           Verde {"<80%"} · Amarillo 80-90% · Rojo {">90%"} · Sobregirada (línea libre {"<0"}).
         </CardDescription>
       </CardHeader>
-      <CardBody className="p-0">
+      <CardBody className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-xs text-[--color-fg-muted] uppercase tracking-wider">
             <tr className="border-b border-[--color-border]">
@@ -1032,7 +1032,7 @@ function IssuesCard() {
           celda exacta del Excel.
         </CardDescription>
       </CardHeader>
-      <CardBody className="p-0">
+      <CardBody className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-xs text-[--color-fg-muted] uppercase tracking-wider">
             <tr className="border-b border-[--color-border]">
