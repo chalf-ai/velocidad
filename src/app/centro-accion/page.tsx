@@ -600,35 +600,28 @@ function CentroAccionInner() {
     irALista();
   };
 
-  // Navegación contextual: "Volver al caso" (?vin=) abre el VIN expandido en el
-  // tab que lo contiene. Se aplica una vez por VIN para no pelear con el usuario.
+  // Deep-link del caso (?vin=) — la notificación abre el Centro de Acción con un
+  // VIN; lo mostramos en un panel enfocado arriba de todo (ver render + efecto).
   const searchParams = useSearchParams();
   const vinParam = useMemo(() => {
     const v = searchParams.get("vin");
     return v ? limpiarVIN(v) : null;
   }, [searchParams]);
   const vinAplicadoRef = useRef<string | null>(null);
+  // El caso llega por notificación (WhatsApp de César) y se muestra en el panel
+  // ENFOCADO arriba de todo (ver render). Llevamos la vista al inicio para que el
+  // caso aparezca inmediatamente, sin que el usuario tenga que bajar a la cola.
   useEffect(() => {
-    if (!vinParam || conScore.length === 0) return;
+    if (!vinParam) return;
     if (vinAplicadoRef.current === vinParam) return;
-    const item = conScore.find((x) => x.vu.vinLimpio === vinParam);
-    if (!item) return;
-    const cmd = COMMANDS.find(
-      (c) => c.id !== "por_marca" && c.id !== "logistica" && c.filter(item.vu, item.score),
-    );
-    if (cmd) setTab(cmd.id);
-    setVinExpanded(vinParam);
     vinAplicadoRef.current = vinParam;
-    // Doble rAF + timeout: el scroll recién cuando la cola del tab ya montó la
-    // fila expandida (fix race de hidratación — el efecto re-corre vía deps
-    // [vinParam, conScore] cuando el snapshot hidrata después del mount).
     const t = setTimeout(() => {
       requestAnimationFrame(() =>
-        listaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        pageTopRef.current?.scrollIntoView({ behavior: "auto", block: "start" }),
       );
-    }, 150);
+    }, 60);
     return () => clearTimeout(t);
-  }, [vinParam, conScore]);
+  }, [vinParam]);
 
   // Deep-link documental: ?clave=SALDO-… / BONO-… / PROV-… abre la sección
   // correspondiente con la fila destacada y su gestión expandida. Re-corre
@@ -659,17 +652,30 @@ function CentroAccionInner() {
     return () => clearTimeout(t);
   }, [claveParam, saldosAutos30d, bonos30d, provNoFact30d]);
 
-  // ¿El VIN del contexto cae en algún comando (cola activa)? Si NO, mostramos el
-  // fallback "Caso" para que todo VIN con contexto tenga su casa.
-  const vinEnCola = useMemo(
-    () => !!vinParam && conScore.some((x) => x.vu.vinLimpio === vinParam),
-    [vinParam, conScore],
-  );
-
   const insights = useMemo(() => computeInsights(atrapados, gestionMap), [atrapados, gestionMap]);
 
   return (
     <div ref={pageTopRef} className="max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-6 fade-in scroll-mt-2">
+      {/* Caso enfocado · deep-link de notificación (?vin=) → el caso sale ARRIBA
+          de todo, sin que el usuario tenga que bajar. "Ver todo el centro" limpia
+          el deep-link y vuelve a la mesa completa. */}
+      {vinParam && (
+        <div className="surface bg-white p-4 sm:p-5 space-y-4 top-strip strip-operativo scroll-mt-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-[13px] font-semibold text-[--color-fg]">
+              Caso asignado · VIN <span className="mono">{vinParam}</span>
+            </div>
+            <Link
+              href="/centro-accion"
+              className="text-[12px] text-[--color-accent] hover:underline whitespace-nowrap"
+            >
+              Ver todo el centro →
+            </Link>
+          </div>
+          <FichaOperacionalVIN vin={vinParam} />
+        </div>
+      )}
+
       {/* Hero */}
       <div className="relative overflow-hidden rounded-3xl border border-[--color-border] bg-gradient-to-br from-[#fef2f2] via-[#fff7ed] to-white px-5 sm:px-8 lg:px-10 py-6 lg:py-8">
         <div className="absolute -top-12 -right-12 size-56 rounded-full bg-[--color-danger] opacity-[0.10] blur-3xl pointer-events-none" />
@@ -688,23 +694,6 @@ function CentroAccionInner() {
         </div>
       </div>
 
-      {/* Fallback "Caso": el VIN del contexto no cae en ningún comando → su casa. */}
-      {vinParam && !vinEnCola && (
-        <div className="surface bg-white p-5 space-y-4 top-strip strip-operativo">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="text-[13px] font-semibold text-[--color-fg]">
-              Caso · VIN <span className="mono">{vinParam}</span>{" "}
-              <span className="text-[11px] text-[--color-fg-muted] font-normal">
-                (fuera de los comandos actuales — ficha completa)
-              </span>
-            </div>
-            <Link href="/centro-accion" className="text-[12px] text-[--color-accent] hover:underline">
-              Ver todo
-            </Link>
-          </div>
-          <FichaOperacionalVIN vin={vinParam} />
-        </div>
-      )}
 
       {/* Grilla ejecutiva — 8 cards (2 filas de 4), todas clickables al detalle */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
