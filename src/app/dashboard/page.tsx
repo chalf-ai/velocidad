@@ -425,10 +425,10 @@ function DashboardInner() {
   })();
 
   return (
-    <div className="max-w-[1400px] mx-auto px-10 py-10 space-y-12 fade-in">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-8 lg:space-y-12 fade-in">
       {/* Hero — RADAR OPERACIONAL: lectura ejecutiva viva (color por severidad) */}
       <div
-        className="relative overflow-hidden rounded-3xl border px-10 py-6 transition-colors"
+        className="relative overflow-hidden rounded-3xl border px-5 sm:px-8 lg:px-10 py-5 lg:py-6 transition-colors"
         style={{ background: hero.tone.bg, borderColor: hero.tone.border }}
       >
         <div
@@ -489,7 +489,7 @@ function DashboardInner() {
       {/* ════════════════════════════════════════════════════════════ */}
       {/* BLOQUE B · Estado operacional del capital · NO disjunto       */}
       {/* ════════════════════════════════════════════════════════════ */}
-      <div className="surface top-strip strip-warning bg-white px-8 pt-8 pb-7 space-y-5">
+      <div className="surface top-strip strip-warning bg-white px-4 sm:px-6 lg:px-8 pt-6 lg:pt-8 pb-6 lg:pb-7 space-y-5">
         <div>
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-warning] font-semibold">
             B · Estado operacional del capital
@@ -1309,7 +1309,7 @@ function CapitalTrabajoCard({
     : [];
   return (
     <div className="relative shrink-0 w-full lg:w-[540px] rounded-xl border border-[--color-danger]/35 bg-white/75 backdrop-blur px-5 py-3.5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-3">
         {/* Título ejecutivo */}
         <div className="flex items-center gap-2 min-w-0">
           <span className="grid place-items-center size-7 rounded-lg bg-gradient-to-br from-[--color-danger] to-[#fb7185] text-white shadow-sm shrink-0">
@@ -1326,7 +1326,7 @@ function CapitalTrabajoCard({
           </div>
         </div>
         {/* Esquina: stock + venta mensual promedio (plata + unidades) */}
-        <div className="text-right shrink-0 leading-tight">
+        <div className="text-left sm:text-right shrink-0 leading-tight">
           <div className="whitespace-nowrap">
             <span className="text-[8px] uppercase tracking-wide text-[--color-fg-muted]">Stock </span>
             <span className="text-[10.5px] text-[--color-fg] font-semibold">
@@ -1350,7 +1350,7 @@ function CapitalTrabajoCard({
       </div>
 
       {/* 4 métricas ejecutivas grandes */}
-      <div className="mt-2 grid grid-cols-4 gap-2">
+      <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
         {metricas.map((m) => (
           <div key={m.label} className="min-w-0 cursor-help" title={m.tip}>
             <div className="display text-[22px] leading-none" style={{ color: m.color }}>
@@ -1422,7 +1422,7 @@ function CapitalTrabajoCard({
       )}
 
       {/* Breakdown del capital utilizado */}
-      <div className="mt-2.5 pt-2.5 border-t border-[--color-border-soft] flex gap-3">
+      <div className="mt-2.5 pt-2.5 border-t border-[--color-border-soft] grid grid-cols-3 gap-x-2 gap-y-2 sm:flex sm:gap-3">
         {lineas.map((l) => (
           <div key={l.label} className="flex-1 min-w-0">
             <div className="text-[9px] uppercase tracking-wide text-[--color-fg-muted] leading-[1.1]">
@@ -1682,7 +1682,7 @@ function BloqueOrigenCapital({
   ];
 
   return (
-    <div className="surface top-strip strip-operativo bg-white px-8 pt-7 pb-7 space-y-5">
+    <div className="surface top-strip strip-operativo bg-white px-4 sm:px-6 lg:px-8 pt-6 lg:pt-7 pb-6 lg:pb-7 space-y-5">
       <div>
         <div className="text-[10.5px] uppercase tracking-[0.14em] text-[--color-accent] font-semibold">
           A · Origen del capital gestionado

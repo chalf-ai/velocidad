@@ -814,9 +814,9 @@ function SaldosInner() {
               comparte con Dashboard, Centro de Acción y FNE.
             </CardDescription>
           </CardHeader>
-          <CardBody className="p-0 overflow-x-auto">
-            <table className="w-full text-sm min-w-[1500px]">
-              <thead className="text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
+          <CardBody className="p-2 lg:p-0 lg:overflow-x-auto">
+            <table className="w-full text-sm block lg:table lg:min-w-[1500px]">
+              <thead className="hidden lg:table-header-group text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
                 <tr>
                   <th className="text-left font-semibold px-4 py-3">Cliente · N° Nota</th>
                   <th className="text-left font-semibold px-4 py-3">Cajón / VIN</th>
@@ -831,7 +831,7 @@ function SaldosInner() {
                   <th className="text-left font-semibold px-4 py-3">Acciones</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="block lg:table-row-group">
                 {filtrado.slice(0, 200).map((c, idx) => (
                   <SaldoRow key={`${c.saldo.rowIndex}`} c={c} idx={idx} />
                 ))}
@@ -981,25 +981,30 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
   const esDoc = !s.vinResuelto && !!gestionKey;
   const [casoAbierto, setCasoAbierto] = useState(false);
 
+  // Móvil: cada td se apila como fila etiquetada (card); desktop: celda de tabla.
+  const tdM =
+    "block lg:table-cell before:content-[attr(data-label)] before:block before:text-[9px] before:uppercase before:tracking-[0.08em] before:text-[--color-fg-muted] before:font-semibold before:mb-0.5 lg:before:hidden";
+
   return (
     <>
     <tr
       className={cn(
-        "border-b border-[--color-border-soft] last:border-0 align-top transition",
+        "align-top transition block lg:table-row",
+        "border border-[--color-border] rounded-xl mb-3 p-1.5 lg:p-0 lg:mb-0 lg:rounded-none lg:border-0 lg:border-b lg:border-[--color-border-soft] lg:last:border-0",
         idx % 2 === 0 ? "bg-white hover:bg-[--color-bg-elev-1]" : "bg-[--color-bg-elev-1]/40 hover:bg-[--color-bg-elev-1]",
         sev === "danger" && "shadow-[inset_3px_0_0_var(--color-danger)]",
         sev === "warning" && "shadow-[inset_3px_0_0_var(--color-warning)]",
       )}
     >
-      <td className="px-4 py-3">
-        <div className="font-medium text-[13px] text-[--color-fg] truncate max-w-[220px]">
+      <td className="px-4 py-2 lg:py-3 block lg:table-cell">
+        <div className="font-semibold text-[13px] text-[--color-fg] truncate max-w-[220px]">
           {s.cliente ?? "—"}
         </div>
         <div className="text-[11.5px] text-[--color-fg-muted] truncate max-w-[220px] mt-0.5">
           {s.numNota ? `Nota ${s.numNota}` : "—"} · {s.vendedor ?? ""}
         </div>
       </td>
-      <td className="px-4 py-3 text-[11.5px]">
+      <td data-label="Cajón / VIN" className={cn(tdM, "px-4 py-1.5 lg:py-3 text-[11.5px]")}>
         <div className="mono text-[--color-fg]">{s.cajon ?? "—"}</div>
         {s.vinResuelto ? (
           <div className="mono text-[10.5px] text-[--color-fg-muted] mt-0.5 truncate max-w-[180px]">
@@ -1009,32 +1014,32 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
           <div className="text-[10.5px] text-[--color-fg-dim] italic mt-0.5">Sin cruce VIN</div>
         ) : null}
       </td>
-      <td className="px-4 py-3">
+      <td data-label="Marca · Modelo" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
         <div className="text-[13px] text-[--color-fg]">{s.marca ?? v?.marca ?? ext?.marca ?? "—"}</div>
         <div className="text-[11.5px] text-[--color-fg-muted] truncate max-w-[200px] mt-0.5">
           {s.modelo ?? v?.modelo ?? ext?.modelo ?? "—"}
         </div>
       </td>
-      <td className="px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
+      <td className="hidden lg:table-cell px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
         {s.categoria === "vehiculo"
           ? SUBTIPO_VEHICULO_LABEL[s.subTipo as SubTipoSaldoVehiculo] ?? s.subTipo
           : s.subTipo}
       </td>
-      <td className="px-4 py-3">
+      <td data-label="Status" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
         <Badge tone={STATUS_DPS_TONE[s.statusDPS]} size="xs">
           {STATUS_DPS_LABEL[s.statusDPS]}
         </Badge>
       </td>
-      <td className="px-4 py-3 text-right mono text-[12.5px] text-[--color-fg]">
+      <td data-label="Días" className={cn(tdM, "px-4 py-1.5 lg:py-3 text-left lg:text-right mono text-[12.5px] text-[--color-fg]")}>
         {s.diasArchivo ?? <span className="text-[--color-fg-dim]">—</span>}
       </td>
-      <td className="px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
+      <td className="hidden lg:table-cell px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
         {fmtDate(s.fechaVencimiento) || "—"}
       </td>
-      <td className="px-4 py-3 text-right mono text-[12.5px] font-medium text-[--color-fg]">
+      <td data-label="Saldo" className={cn(tdM, "px-4 py-1.5 lg:py-3 text-left lg:text-right mono text-[12.5px] font-medium text-[--color-fg]")}>
         {fmtCLP(s.saldoXDocumentar)}
       </td>
-      <td className="px-4 py-3 text-[11.5px]">
+      <td className="hidden lg:table-cell px-4 py-3 text-[11.5px]">
         {s.estadoPago ? (
           <Badge tone={/vigente/i.test(s.estadoPago) ? "warning" : "muted"} size="xs">
             {s.estadoPago}
@@ -1043,7 +1048,7 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
           <span className="text-[--color-fg-dim]">—</span>
         )}
       </td>
-      <td className="px-4 py-3">
+      <td data-label="Gestión" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
         {s.vinResuelto ? (
           <AbrirCasoButton vin={limpiarVIN(s.vinResuelto)} origen="Saldos" />
         ) : esDoc ? (
@@ -1064,7 +1069,7 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
           <span className="text-[--color-fg-dim] text-[11px] italic">N/A</span>
         )}
       </td>
-      <td className="px-4 py-3">
+      <td className="hidden lg:table-cell px-4 py-3">
         {s.vinResuelto ? (
           <Link
             href={`/stock?q=${encodeURIComponent(s.vinResuelto)}&dup=1`}
@@ -1079,8 +1084,8 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
       </td>
     </tr>
     {esDoc && casoAbierto && gestionKey && (
-      <tr className="border-b border-[--color-border-soft]">
-        <td colSpan={11} className="px-4 py-4 bg-[--color-bg-elev-1]/60">
+      <tr className="block lg:table-row border-b border-[--color-border-soft]">
+        <td colSpan={11} className="block lg:table-cell px-2 lg:px-4 py-3 lg:py-4 bg-[--color-bg-elev-1]/60">
           <FichaGestionDocumental
             clave={gestionKey}
             titulo={`Saldo · ${s.cliente ?? (s.numNota ? `Nota ${s.numNota}` : s.cajon ?? "vehículo")}`}

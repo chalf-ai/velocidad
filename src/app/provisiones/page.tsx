@@ -131,7 +131,7 @@ function ProvisionesInner() {
     stats.agingAbiertas["91-180"].saldo + stats.agingAbiertas["180+"].saldo;
 
   return (
-    <div className="max-w-[1400px] mx-auto px-10 py-10 space-y-8 fade-in">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-8 fade-in overflow-x-hidden lg:overflow-x-visible">
       {vinCtx && (
         <VinContextoBanner
           vin={vinCtx}
@@ -525,9 +525,9 @@ function DetalleTable({
 }) {
   return (
     <Card>
-      <CardBody className="p-0 overflow-x-auto">
-        <table className="w-full text-sm min-w-[1500px]">
-          <thead className="text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
+      <CardBody className="p-2 lg:p-0 lg:overflow-x-auto">
+        <table className="w-full text-sm block lg:table lg:min-w-[1500px]">
+          <thead className="hidden lg:table-header-group text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
             <tr>
               <th className="text-left font-semibold px-4 py-3">ID · Periodo</th>
               <th className="text-left font-semibold px-4 py-3">Marca</th>
@@ -543,7 +543,7 @@ function DetalleTable({
               {mostrarGestion && <th className="text-left font-semibold px-4 py-3">Gestión</th>}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="block lg:table-row-group">
             {registros.slice(0, 200).map((r, idx) => (
               <ProvisionRow
                 key={`${r.id}-${r.rowIndex}`}
@@ -590,12 +590,17 @@ function ProvisionRow({
       ? `Provisión cerrada: provisión $${fmtNum(r.montoProvision)} = facturado $${fmtNum(r.montoFactura)}.`
       : `Nació por ${fmtCLP(r.montoProvision)}, facturado ${fmtCLP(r.montoFactura)}, mantiene saldo pendiente ${fmtCLP(r.saldo)}.`;
 
+  // Móvil: cada td se apila como fila etiquetada (card); desktop: celda de tabla.
+  const tdM =
+    "block lg:table-cell before:content-[attr(data-label)] before:block before:text-[9px] before:uppercase before:tracking-[0.08em] before:text-[--color-fg-muted] before:font-semibold before:mb-0.5 lg:before:hidden";
+
   return (
     <>
     <tr
       title={narrativa}
       className={cn(
-        "align-top border-b border-[--color-border-soft] last:border-0 transition",
+        "align-top transition block lg:table-row",
+        "border border-[--color-border] rounded-xl mb-3 p-1.5 lg:p-0 lg:mb-0 lg:rounded-none lg:border-0 lg:border-b lg:border-[--color-border-soft] lg:last:border-0",
         idx % 2 === 0
           ? "bg-white hover:bg-[--color-bg-elev-1]"
           : "bg-[--color-bg-elev-1]/40 hover:bg-[--color-bg-elev-1]",
@@ -604,47 +609,48 @@ function ProvisionRow({
         negativo && "shadow-[inset_3px_0_0_#ea580c]",
       )}
     >
-      <td className="px-4 py-3">
+      <td className="px-4 py-2 lg:py-3 block lg:table-cell">
         <div className="mono text-[11.5px] text-[--color-fg]">PROV-{r.id}</div>
         <div className="text-[11px] text-[--color-fg-muted] mt-0.5">{r.periodo ?? "—"}</div>
       </td>
-      <td className="px-4 py-3 text-[12.5px] font-medium text-[--color-fg]">
+      <td data-label="Marca" className={cn(tdM, "px-4 py-1.5 lg:py-3 text-[12.5px] font-medium text-[--color-fg]")}>
         {r.origen ?? <span className="text-[--color-fg-dim]">—</span>}
       </td>
-      <td className="px-4 py-3">
+      <td data-label="Concepto · Motivo" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
         <div className="text-[12.5px] text-[--color-fg]">{r.concepto ?? "—"}</div>
         <div className="text-[11px] text-[--color-fg-muted] truncate max-w-[220px] mt-0.5">
           {r.motivo ?? "—"}
         </div>
       </td>
-      <td className="px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
+      <td className="hidden lg:table-cell px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
         <div className="truncate max-w-[200px]">{r.solicitante ?? "—"}</div>
         <div className="text-[10.5px] text-[--color-fg-dim] truncate max-w-[200px]">{r.razonSocial ?? ""}</div>
       </td>
-      <td className="px-4 py-3 text-right mono text-[12.5px] text-[--color-fg-muted]">
+      <td className="hidden lg:table-cell px-4 py-3 text-right mono text-[12.5px] text-[--color-fg-muted]">
         {fmtCLP(r.montoProvision)}
       </td>
-      <td className="px-4 py-3 text-right mono text-[12.5px] text-[--color-fg-muted]">
+      <td className="hidden lg:table-cell px-4 py-3 text-right mono text-[12.5px] text-[--color-fg-muted]">
         {fmtCLP(r.montoFactura)}
       </td>
       <td
-        className="px-4 py-3 text-right mono text-[13px] font-semibold"
+        data-label="Saldo"
+        className={cn(tdM, "px-4 py-1.5 lg:py-3 text-left lg:text-right mono text-[13px] font-semibold")}
         style={{ color: negativo ? "#ea580c" : cerrado ? "var(--color-fg-dim)" : "var(--color-fg)" }}
       >
         {fmtCLP(r.saldo)}
       </td>
-      <td className="px-4 py-3">
+      <td data-label="Aging" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
         <Badge tone={AGING_PROVISION_TONE[r.agingBucket]} size="xs">
           {AGING_PROVISION_LABEL[r.agingBucket]}
         </Badge>
       </td>
-      <td className="px-4 py-3 text-right mono text-[12px] text-[--color-fg-muted]">
+      <td className="hidden lg:table-cell px-4 py-3 text-right mono text-[12px] text-[--color-fg-muted]">
         {r.agingDias ?? "—"}
       </td>
-      <td className="px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
+      <td className="hidden lg:table-cell px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
         {r.ultimaFechaFactura ? r.ultimaFechaFactura.toLocaleDateString("es-CL") : "—"}
       </td>
-      <td className="px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
+      <td data-label="Estado" className={cn(tdM, "px-4 py-1.5 lg:py-3 text-[11.5px] text-[--color-fg-muted]")}>
         {r.estadoArchivo ?? "—"}
         {r.estadoAjuste && /pendiente/i.test(r.estadoAjuste) && (
           <div className="text-[10.5px] text-[--color-danger] mt-0.5 flex items-center gap-1">
@@ -653,7 +659,7 @@ function ProvisionRow({
         )}
       </td>
       {mostrarGestion && (
-        <td className="px-4 py-3">
+        <td data-label="Gestión" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
           {/* Gestión grande estándar: expande la ficha documental completa
               (misma MesaGestionCaso + Asignar/Notificar del resto del sistema). */}
           <div className="flex items-center gap-2">
@@ -676,8 +682,8 @@ function ProvisionRow({
       )}
     </tr>
     {mostrarGestion && casoAbierto && (
-      <tr className="border-b border-[--color-border-soft]">
-        <td colSpan={12} className="px-4 py-4 bg-[--color-bg-elev-1]/60">
+      <tr className="block lg:table-row border-b border-[--color-border-soft]">
+        <td colSpan={12} className="block lg:table-cell px-2 lg:px-4 py-3 lg:py-4 bg-[--color-bg-elev-1]/60">
           <FichaGestionDocumental
             clave={r.claveGestion}
             titulo={r.concepto ?? `Provisión ${r.claveGestion}`}
