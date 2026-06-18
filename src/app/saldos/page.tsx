@@ -6,6 +6,8 @@ import {
   ArrowRight,
   Building2,
   Car,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   FileSpreadsheet,
   Gavel,
@@ -18,7 +20,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { UploadSaldosButton } from "@/components/UploadSaldosButton";
-import { GestionInline } from "@/components/GestionInline";
+import { FichaGestionDocumental } from "@/components/FichaGestionDocumental";
 import { AbrirCasoButton } from "@/components/AbrirCasoButton";
 import { useVinContexto, VinContextoBanner } from "@/components/VinContexto";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
@@ -973,8 +975,14 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
       : s.numNota != null
         ? `NOTA-${s.numNota}`
         : null;
+  // Caso documental (sin VIN): gestión grande estándar inline (reemplaza el
+  // popover chico). La clave (CAJON-/NOTA-) se conserva tal cual para no perder
+  // la gestión ya guardada.
+  const esDoc = !s.vinResuelto && !!gestionKey;
+  const [casoAbierto, setCasoAbierto] = useState(false);
 
   return (
+    <>
     <tr
       className={cn(
         "border-b border-[--color-border-soft] last:border-0 align-top transition",
@@ -1038,8 +1046,20 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
       <td className="px-4 py-3">
         {s.vinResuelto ? (
           <AbrirCasoButton vin={limpiarVIN(s.vinResuelto)} origen="Saldos" />
-        ) : gestionKey ? (
-          <GestionInline vin={gestionKey} />
+        ) : esDoc ? (
+          <button
+            type="button"
+            onClick={() => setCasoAbierto((vv) => !vv)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition",
+              casoAbierto
+                ? "border-[--color-accent] bg-[--color-accent]/10 text-[--color-accent]"
+                : "border-[--color-border-strong] bg-white text-[--color-fg] hover:bg-[--color-bg-elev-1]",
+            )}
+          >
+            {casoAbierto ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+            {casoAbierto ? "Cerrar caso" : "Gestionar"}
+          </button>
         ) : (
           <span className="text-[--color-fg-dim] text-[11px] italic">N/A</span>
         )}
@@ -1058,5 +1078,28 @@ function SaldoRow({ c, idx }: { c: SaldoCruzado; idx: number }) {
         )}
       </td>
     </tr>
+    {esDoc && casoAbierto && gestionKey && (
+      <tr className="border-b border-[--color-border-soft]">
+        <td colSpan={11} className="px-4 py-4 bg-[--color-bg-elev-1]/60">
+          <FichaGestionDocumental
+            clave={gestionKey}
+            titulo={`Saldo · ${s.cliente ?? (s.numNota ? `Nota ${s.numNota}` : s.cajon ?? "vehículo")}`}
+            subtitulo={[s.subTipo, s.statusDPS].filter(Boolean).join(" · ") || null}
+            descripcionCaso={[s.marca, s.modelo].filter(Boolean).join(" ") || s.subTipo || null}
+            datos={[
+              { label: "Monto", valor: fmtCLP(s.saldoXDocumentar) },
+              { label: "Status DPS", valor: s.statusDPS ?? "—" },
+              { label: "Sub-tipo", valor: s.subTipo ?? "—" },
+              { label: "Días", valor: s.diasArchivo != null ? `${s.diasArchivo}d` : "—" },
+              { label: "Vencimiento", valor: fmtDate(s.fechaVencimiento) || "—" },
+              { label: "Cliente", valor: s.cliente ?? "—" },
+              { label: "Cajón", valor: s.cajon ?? "—" },
+              { label: "E° Pago", valor: s.estadoPago ?? "—" },
+            ]}
+          />
+        </td>
+      </tr>
+    )}
+    </>
   );
 }

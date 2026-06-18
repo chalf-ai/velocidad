@@ -5,9 +5,10 @@
  *
  * Cuatro modos según el tipo de fila:
  *   · stock_propio + cp_15d → VINs con AbrirCasoButton (regla R1).
- *   · provisiones_90d → provisiones con clave PROV-{id} + GestionInline.
+ *   · provisiones_90d → provisiones con clave PROV-{id} + ficha grande (FilaProvision).
  *   · saldos_t3 → saldos vehículo · si tiene VIN → AbrirCasoButton,
- *                 si no → GestionInline con clave SALDO-{numFactura}-{cajón}.
+ *                 si no → ficha grande FichaGestionDocumental con clave
+ *                 SALDO-{numFactura}-{cajón} (FilaSaldoT3).
  *
  * Cero invenciones de datos. Reutiliza el sistema de gestión existente.
  *
@@ -35,7 +36,6 @@ import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
 import { fmtCLPCompact, fmtNum } from "@/lib/format";
 import { AbrirCasoButton } from "@/components/AbrirCasoButton";
-import { GestionInline } from "@/components/GestionInline";
 import { FichaGestionDocumental } from "@/components/FichaGestionDocumental";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
 import { diasMaxCreditoPompeyoConFuente } from "@/lib/gestion/caso";
@@ -611,6 +611,89 @@ function ColaProvisiones({
 // Cola de Saldos vehículo T3+
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Fila de saldo T3+: con VIN → ficha VIN (AbrirCasoButton); sin VIN → GESTIÓN
+ * GRANDE estándar (FichaGestionDocumental) con la MISMA clave SALDO-… que ya
+ * persiste la gestión (no se cambia la clave). Reemplaza el popover GestionInline.
+ */
+function FilaSaldoT3({ s, idx }: { s: SaldoRegistro; idx: number }) {
+  const [casoAbierto, setCasoAbierto] = useState(false);
+  const vin = s.vinResuelto;
+  const tieneVin = !!(vin && vin.length > 4);
+  const claveSinVin = `SALDO-${s.numeroFactura ?? "X"}-${s.cajonLimpio ?? s.rowIndex}`;
+  return (
+    <>
+      <tr
+        className={cn(
+          "border-b border-[--color-border-soft] transition",
+          idx % 2 === 0
+            ? "bg-white hover:bg-[--color-bg-elev-1]/60"
+            : "bg-[--color-bg-elev-1]/30 hover:bg-[--color-bg-elev-1]/70",
+        )}
+      >
+        <td className="px-3 py-2">
+          {tieneVin ? (
+            <div className="mono text-[11px] text-[--color-fg]">{vin}</div>
+          ) : (
+            <div className="text-[11.5px] text-[--color-fg-muted]">
+              <span className="mono">Fac {s.numeroFactura ?? "—"}</span>
+              <span className="text-[--color-fg-dim]"> · </span>
+              <span className="mono">Caj {s.cajonLimpio ?? "—"}</span>
+            </div>
+          )}
+        </td>
+        <td className="px-3 py-2 text-[11.5px] text-[--color-fg-muted] truncate max-w-[160px]">
+          {s.subTipo ?? "—"}
+        </td>
+        <td className="px-3 py-2">
+          <TramoBadge tramo={s.statusDPS} />
+        </td>
+        <td className="px-3 py-2 text-right mono text-[--color-fg] font-semibold">
+          {fmtCLPCompact(s.saldoXDocumentar)}
+        </td>
+        <td className="px-3 py-2">
+          {tieneVin ? (
+            <AbrirCasoButton vin={limpiarVIN(vin!)} origen="/score-gerencial · Saldos T3+" />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setCasoAbierto((v) => !v)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition",
+                casoAbierto
+                  ? "border-[--color-accent] bg-[--color-accent]/10 text-[--color-accent]"
+                  : "border-[--color-border-strong] bg-white text-[--color-fg] hover:bg-[--color-bg-elev-1]",
+              )}
+            >
+              {casoAbierto ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+              {casoAbierto ? "Cerrar caso" : "Gestionar"}
+            </button>
+          )}
+        </td>
+      </tr>
+      {!tieneVin && casoAbierto && (
+        <tr className="border-b border-[--color-border-soft]">
+          <td colSpan={5} className="px-3 py-3 bg-[--color-bg-elev-1]/60">
+            <FichaGestionDocumental
+              clave={claveSinVin}
+              titulo={`Saldo · ${s.numeroFactura ? `Fac ${s.numeroFactura}` : s.cajonLimpio ? `Caj ${s.cajonLimpio}` : "vehículo"}`}
+              subtitulo={[s.subTipo, s.statusDPS].filter(Boolean).join(" · ") || null}
+              descripcionCaso={s.subTipo ?? "Saldo vehículo"}
+              datos={[
+                { label: "Monto", valor: fmtCLPCompact(s.saldoXDocumentar) },
+                { label: "Tramo DPS", valor: s.statusDPS ?? "—" },
+                { label: "Sub-tipo", valor: s.subTipo ?? "—" },
+                { label: "Factura", valor: s.numeroFactura != null ? String(s.numeroFactura) : "—" },
+                { label: "Cajón", valor: s.cajonLimpio ?? "—" },
+              ]}
+            />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 function ColaSaldosT3({
   indicador,
   saldos,
@@ -656,55 +739,9 @@ function ColaSaldosT3({
             </tr>
           </thead>
           <tbody>
-            {saldos.slice(0, MAX_FILAS).map((s, idx) => {
-              const vin = s.vinResuelto;
-              const tieneVin = !!(vin && vin.length > 4);
-              const claveSinVin = `SALDO-${s.numeroFactura ?? "X"}-${s.cajonLimpio ?? s.rowIndex}`;
-              return (
-                <tr
-                  key={s.rowIndex}
-                  className={cn(
-                    "border-b border-[--color-border-soft] transition",
-                    idx % 2 === 0
-                      ? "bg-white hover:bg-[--color-bg-elev-1]/60"
-                      : "bg-[--color-bg-elev-1]/30 hover:bg-[--color-bg-elev-1]/70",
-                  )}
-                >
-                  <td className="px-3 py-2">
-                    {tieneVin ? (
-                      <div className="mono text-[11px] text-[--color-fg]">
-                        {vin}
-                      </div>
-                    ) : (
-                      <div className="text-[11.5px] text-[--color-fg-muted]">
-                        <span className="mono">Fac {s.numeroFactura ?? "—"}</span>
-                        <span className="text-[--color-fg-dim]"> · </span>
-                        <span className="mono">Caj {s.cajonLimpio ?? "—"}</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-[11.5px] text-[--color-fg-muted] truncate max-w-[160px]">
-                    {s.subTipo ?? "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <TramoBadge tramo={s.statusDPS} />
-                  </td>
-                  <td className="px-3 py-2 text-right mono text-[--color-fg] font-semibold">
-                    {fmtCLPCompact(s.saldoXDocumentar)}
-                  </td>
-                  <td className="px-3 py-2">
-                    {tieneVin ? (
-                      <AbrirCasoButton
-                        vin={limpiarVIN(vin!)}
-                        origen="/score-gerencial · Saldos T3+"
-                      />
-                    ) : (
-                      <GestionInline vin={claveSinVin} />
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {saldos.slice(0, MAX_FILAS).map((s, idx) => (
+              <FilaSaldoT3 key={s.rowIndex} s={s} idx={idx} />
+            ))}
           </tbody>
         </table>
       </div>
