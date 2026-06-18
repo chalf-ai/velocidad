@@ -274,7 +274,7 @@ function CapitalTrabajoInner() {
   const cpVinsCount = creditoMap.size;
 
   return (
-    <div className="max-w-[1500px] mx-auto px-10 py-10 space-y-6 fade-in">
+    <div className="max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-6 fade-in overflow-x-hidden lg:overflow-x-visible">
       {vinCtx && (
         <VinContextoBanner
           vin={vinCtx}
