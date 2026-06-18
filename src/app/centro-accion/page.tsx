@@ -45,7 +45,7 @@ import {
   type LogisticaCasoResumen,
 } from "@/lib/gestion/caso";
 import { useExcelStore } from "@/lib/store";
-import { GestionInline } from "@/components/GestionInline";
+import { FichaGestionDocumental } from "@/components/FichaGestionDocumental";
 import { UploadLogisticaButton } from "@/components/UploadLogisticaButton";
 import { FichaOperacionalVIN } from "@/components/FichaOperacionalVIN";
 import {
@@ -2188,6 +2188,8 @@ function ColaGestionableInline({
 }) {
   const [tramo, setTramo] = useState<TramoDias>("all");
   const [vinExpandido, setVinExpandido] = useState<string | null>(null);
+  // Caso documental abierto (sin VIN: SALDO-/BONO-/PROV-) — uno a la vez, como vinExpandido.
+  const [claveDocExpandida, setClaveDocExpandida] = useState<string | null>(null);
 
   const stripClass =
     tono === "danger" ? "strip-danger" : tono === "warning" ? "strip-warning" : "strip-operativo";
@@ -2342,6 +2344,9 @@ function ColaGestionableInline({
                 const expandido = !!f.vin && vinExpandido === f.vin;
                 const puedeExpandir = !!f.vin;
                 const destacada = claveDestacada === f.clave;
+                // Caso documental (sin VIN): SALDO-/BONO-/PROV- → ficha grande inline.
+                const esDoc = !f.vin && /^(SALDO|BONO|PROV)-/.test(f.clave);
+                const docExpandido = claveDocExpandida === f.clave;
                 return (
                   <Fragment key={f.clave}>
                     <tr
@@ -2471,15 +2476,29 @@ function ColaGestionableInline({
                               <ChevronRight className="size-3" />
                             )}
                           </button>
+                        ) : esDoc ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setClaveDocExpandida(docExpandido ? null : f.clave);
+                            }}
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11.5px] font-semibold ring-1 ring-inset transition",
+                              docExpandido
+                                ? "bg-[--color-accent-dim] text-[--color-accent] ring-[--color-accent]"
+                                : "bg-white text-[--color-accent] ring-[--color-accent]/30 hover:bg-[--color-accent-dim]",
+                            )}
+                          >
+                            {docExpandido ? "Cerrar caso" : "Gestionar"}
+                            {docExpandido ? (
+                              <ChevronDown className="size-3" />
+                            ) : (
+                              <ChevronRight className="size-3" />
+                            )}
+                          </button>
                         ) : (
-                          <div onClick={(e) => e.stopPropagation()}>
-                            <GestionInline
-                              vin={f.clave}
-                              variant="trigger"
-                              descripcionCaso={f.primario ?? null}
-                              defaultExpanded={destacada}
-                            />
-                          </div>
+                          <span className="text-[--color-fg-dim] text-[11px]">—</span>
                         )}
                       </td>
                     </tr>
@@ -2487,6 +2506,26 @@ function ColaGestionableInline({
                       <tr>
                         <td colSpan={8} className="bg-[--color-bg-elev-1] px-3 py-3">
                           <FichaOperacionalVIN vin={f.vin} />
+                        </td>
+                      </tr>
+                    )}
+                    {docExpandido && esDoc && (
+                      <tr>
+                        <td colSpan={8} className="bg-[--color-bg-elev-1] px-3 py-3">
+                          <FichaGestionDocumental
+                            clave={f.clave}
+                            titulo={`${f.clave.startsWith("BONO") ? "Bono" : f.clave.startsWith("SALDO") ? "Saldo" : "Caso"} · ${f.cliente ?? f.primario ?? "—"}`}
+                            subtitulo={f.diasSublabel ?? null}
+                            descripcionCaso={f.primario ?? ([f.marca, f.modelo].filter(Boolean).join(" ") || null)}
+                            datos={[
+                              { label: "Monto", valor: fmtCLP(f.monto) },
+                              { label: "Días retenido", valor: f.diasRetenido != null ? `${f.diasRetenido}d` : "—" },
+                              { label: "Cliente", valor: f.cliente ?? "—" },
+                              { label: "Sucursal", valor: f.sucursal ?? "—" },
+                              { label: "Marca", valor: f.marca ?? "—" },
+                              { label: "Referencia", valor: f.primario ?? "—" },
+                            ]}
+                          />
                         </td>
                       </tr>
                     )}
