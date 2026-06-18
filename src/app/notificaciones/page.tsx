@@ -195,7 +195,7 @@ export default function NotificacionesPage() {
         </div>
 
         {/* Filtros */}
-        <div className="flex items-center gap-2 mt-4">
+        <div className="flex flex-wrap items-center gap-2 mt-4">
           {(
             [
               ["pendientes", "Pendientes"],
