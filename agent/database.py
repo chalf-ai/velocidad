@@ -690,7 +690,7 @@ async def create_alerta_log(
 
 
 async def get_tareas_pendientes_whatsapp(
-    emails: list[str],
+    emails: Optional[list[str]],
     desde: datetime,
     limit: int = 10,
 ) -> list[dict]:
@@ -704,7 +704,9 @@ async def get_tareas_pendientes_whatsapp(
 
     Las alertas canal EMAIL o sin canal NUNCA entran acá (quedan manuales).
     """
-    if not emails:
+    # emails=None → MODO TODOS (sin filtro de allowlist; notifica a todo
+    # responsable activo con teléfono). emails=[] → no procesa nada.
+    if emails is not None and len(emails) == 0:
         return []
     # Prisma guarda createdAt como TIMESTAMP sin zona (UTC implícito);
     # asyncpg exige naive para ese tipo → convertir aware → naive UTC.
@@ -727,7 +729,7 @@ async def get_tareas_pendientes_whatsapp(
           AND a."createdAt" >= $1
           AND u.activo = true
           AND u.telefono IS NOT NULL
-          AND LOWER(u.email) = ANY($2::text[])
+          AND ($2::text[] IS NULL OR LOWER(u.email) = ANY($2::text[]))
         ORDER BY a."createdAt" ASC
         LIMIT $3
         """,

@@ -125,12 +125,16 @@ async def procesar_tareas_asignadas() -> dict:
         logger.warning("Tareas F2: flag activo pero allowlist vacía — no se procesa nada")
         return {"estado": "allowlist_vacia"}
 
+    # Sentinela "*" en la allowlist = MODO TODOS: notifica al responsable (el
+    # "para") de cada tarea, sin filtrar por email. Producción real.
+    todos = "*" in emails
     pendientes = await db.get_tareas_pendientes_whatsapp(
-        emails, fecha_desde(), limit=MAX_POR_CICLO
+        None if todos else emails, fecha_desde(), limit=MAX_POR_CICLO
     )
     resumen: dict = {
         "estado": "ok",
         "dry_run": settings.tareas_dry_run,
+        "todos": todos,
         "template": settings.whatsapp_template_name,
         "pendientes": len(pendientes),
         "enviadas": 0,
