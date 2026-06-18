@@ -3,14 +3,15 @@
 /**
  * /notificaciones — cola de notificaciones operativas (AlertaLog).
  *
- * F1: panel de gestión MANUAL. Las notificaciones de tareas
- * (TAREA_ASIGNADA) quedan pendientes acá; el operador copia el mensaje
- * (→ WhatsApp Web a mano) y la marca como enviada. De regalo, el panel
- * da visibilidad web sobre TODO lo que César ya envía (briefings,
- * compromisos vencidos, etc.) que antes solo vivía en WhatsApp.
+ * César (agente WhatsApp) está EN PRODUCCIÓN (2026-06-18): procesa las tareas
+ * asignadas automáticamente y envía el WhatsApp real a cada responsable
+ * (TAREAS_DRY_RUN=false, allowlist modo todos / PILOTO=*). Este panel es el
+ * MONITOR de la cola: muestra el estado real de entrega
+ * (enviado/entregado/leído/fallido) de todo lo que César manda — tareas,
+ * briefings, compromisos vencidos, etc.
  *
- * F2: César procesará las pendientes automáticamente — este panel pasa
- * a ser monitor de la cola, sin cambios de UI.
+ * El "copiar" / "marcar enviada" queda como respaldo manual para casos borde
+ * (registros sin canal, reenvíos), pero el flujo normal ya es automático.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -177,11 +178,11 @@ export default function NotificacionesPage() {
               Notificaciones operativas
             </h1>
             <p className="text-[13px] text-[--color-fg-muted] mt-1.5 max-w-2xl leading-snug">
-              Cola de notificaciones (WhatsApp / email simulados). Las
-              pendientes se copian manualmente y se marcan como enviadas — el
-              envío automático por César llega en la fase siguiente. La
-              notificación solo lleva al caso: el seguimiento se deja en la
-              ficha del auto.
+              Cola de notificaciones operativas. El envío de WhatsApp por César es
+              automático: cada tarea asignada le llega a su responsable y acá ves
+              el estado real de entrega (enviado, entregado, leído). La
+              notificación solo lleva al caso: el seguimiento se deja en la ficha
+              del auto.
             </p>
           </div>
           <button
