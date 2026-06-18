@@ -669,9 +669,9 @@ function CentroAccionInner() {
   const insights = useMemo(() => computeInsights(atrapados, gestionMap), [atrapados, gestionMap]);
 
   return (
-    <div ref={pageTopRef} className="max-w-[1500px] mx-auto px-10 py-10 space-y-6 fade-in scroll-mt-2">
+    <div ref={pageTopRef} className="max-w-[1500px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-6 fade-in scroll-mt-2">
       {/* Hero */}
-      <div className="relative overflow-hidden rounded-3xl border border-[--color-border] bg-gradient-to-br from-[#fef2f2] via-[#fff7ed] to-white px-10 py-8">
+      <div className="relative overflow-hidden rounded-3xl border border-[--color-border] bg-gradient-to-br from-[#fef2f2] via-[#fff7ed] to-white px-5 sm:px-8 lg:px-10 py-6 lg:py-8">
         <div className="absolute -top-12 -right-12 size-56 rounded-full bg-[--color-danger] opacity-[0.10] blur-3xl pointer-events-none" />
         <div className="relative">
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[--color-danger] font-semibold">
@@ -1889,10 +1889,10 @@ function VINCard({
     >
       <button
         onClick={onExpand}
-        className="w-full text-left px-5 py-4 flex items-stretch gap-5 hover:bg-[--color-bg-elev-1]/40 transition"
+        className="w-full text-left px-4 py-3.5 sm:px-5 sm:py-4 flex flex-col sm:flex-row sm:items-stretch gap-3 sm:gap-5 hover:bg-[--color-bg-elev-1]/40 transition"
       >
-        {/* Capital atrapado — protagonista a la izquierda */}
-        <div className="shrink-0 w-[150px] border-r border-[--color-border-soft] pr-5">
+        {/* Capital atrapado — protagonista a la izquierda (arriba en móvil) */}
+        <div className="shrink-0 w-full sm:w-[150px] border-b sm:border-b-0 sm:border-r border-[--color-border-soft] pb-2.5 sm:pb-0 pr-0 sm:pr-5">
           <div className="text-[10px] uppercase tracking-[0.1em] text-[--color-fg-muted] font-medium">
             Capital atrapado
           </div>
@@ -1931,8 +1931,10 @@ function VINCard({
             )}
             <ChipAging vu={vu} />
             {vu.fneBloqueos.length > 0 && (
-              <Badge tone="warning" size="xs">
-                {vu.fneBloqueos[0].responsable}: {vu.fneBloqueos[0].descripcion}
+              <Badge tone="warning" size="xs" className="min-w-0 max-w-full sm:max-w-none">
+                <span className="truncate">
+                  {vu.fneBloqueos[0].responsable}: {vu.fneBloqueos[0].descripcion}
+                </span>
               </Badge>
             )}
             {vu.creditoPompeyo > 0 && (
@@ -1955,8 +1957,8 @@ function VINCard({
           {logResumen && <LogisticaRowCard r={logResumen} vu={vu} />}
         </div>
 
-        {/* Urgencia + score secundario a la derecha */}
-        <div className="shrink-0 self-center flex items-center gap-3">
+        {/* Urgencia + score secundario a la derecha (fila propia en móvil) */}
+        <div className="shrink-0 self-stretch sm:self-center flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 border-[--color-border-soft] pt-2.5 sm:pt-0">
           <div className="text-right">
             <UrgenciaBadge severidad={score.severidad} />
             <div className="mt-1">

@@ -321,10 +321,10 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
             return (
               <li key={h.label} className="flex items-center gap-2.5 text-[12px]">
                 <span className="size-2 rounded-full shrink-0" style={{ background: esDespachoSinSalida ? "var(--color-warning)" : color }} />
-                <span className="w-52 shrink-0 text-[--color-fg]">{h.label}</span>
-                <span className="w-24 shrink-0 mono text-[--color-fg-muted]">{fechaTxt(h.fecha)}</span>
+                <span className="min-w-0 flex-1 truncate sm:flex-none sm:w-52 text-[--color-fg]">{h.label}</span>
+                <span className="w-20 sm:w-24 shrink-0 mono text-[--color-fg-muted]">{fechaTxt(h.fecha)}</span>
                 <span
-                  className="w-16 shrink-0 text-[10px] uppercase tracking-wide text-[--color-fg-dim]"
+                  className="hidden sm:inline-block w-16 shrink-0 text-[10px] uppercase tracking-wide text-[--color-fg-dim]"
                   title={h.confianza === "ninguna" ? "Sin dato" : `Confianza ${h.confianza}`}
                 >
                   {h.fuente}
@@ -337,7 +337,7 @@ export function FichaOperacionalVIN({ vin }: { vin: string }) {
                 )}
                 {e === "vencido" && <Badge tone="danger" size="xs">vencido</Badge>}
                 {esDespachoSinSalida && <Badge tone="warning" size="xs">SIN SALIDA</Badge>}
-                {e === "sin" && !esDespachoSinSalida && <span className="text-[10.5px] text-[--color-fg-dim]">pendiente / sin dato</span>}
+                {e === "sin" && !esDespachoSinSalida && <span className="hidden sm:inline text-[10.5px] text-[--color-fg-dim]">pendiente / sin dato</span>}
               </li>
             );
           })}
