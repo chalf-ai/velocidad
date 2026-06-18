@@ -18,6 +18,7 @@ import {
   Truck,
   Wallet,
   Banknote,
+  ChevronRight,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type {
@@ -41,8 +42,11 @@ const COLOR_POR_INDICADOR: Record<IndicadorId, string> = {
 
 export function PlanLlegarA100Banner({
   resultado,
+  onAccion,
 }: {
   resultado: ScoreGerencialResultado;
+  /** Click en una acción → enfoca el indicador (abre/baja a su cola de casos). */
+  onAccion?: (id: IndicadorId) => void;
 }) {
   const { score, plan } = resultado;
   const proyeccion = Math.min(
@@ -93,22 +97,26 @@ export function PlanLlegarA100Banner({
             const Icon = ICON_POR_INDICADOR[p.indicador];
             const color = COLOR_POR_INDICADOR[p.indicador];
             return (
-              <li
-                key={p.indicador}
-                className="flex items-center justify-between gap-3 bg-white/95 rounded-md px-3 py-2 shadow-sm"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <Icon className="size-3.5 shrink-0" style={{ color }} />
-                  <span className="text-[12px] text-[--color-fg] font-medium truncate">
-                    {p.accion}
-                  </span>
-                </div>
-                <span
-                  className="shrink-0 text-[13px] font-bold mono"
-                  style={{ color }}
+              <li key={p.indicador}>
+                <button
+                  type="button"
+                  onClick={() => onAccion?.(p.indicador)}
+                  className="w-full flex items-center justify-between gap-3 bg-white/95 rounded-md px-3 py-2 shadow-sm text-left transition hover:bg-white hover:shadow-md cursor-pointer"
+                  title="Ver casos de este indicador"
                 >
-                  +{p.puntosGanables} pts
-                </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Icon className="size-3.5 shrink-0" style={{ color }} />
+                    <span className="text-[12px] text-[--color-fg] font-medium truncate">
+                      {p.accion}
+                    </span>
+                  </div>
+                  <span className="shrink-0 flex items-center gap-1">
+                    <span className="text-[13px] font-bold mono" style={{ color }}>
+                      +{p.puntosGanables} pts
+                    </span>
+                    <ChevronRight className="size-3.5 shrink-0 opacity-40" />
+                  </span>
+                </button>
               </li>
             );
           })}

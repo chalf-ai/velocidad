@@ -154,8 +154,8 @@ export default function ScoreGerencialPage() {
         ))}
       </div>
 
-      {/* 3 · Cómo llegar a 100 (banner siempre visible) */}
-      <PlanLlegarA100Banner resultado={resultado} />
+      {/* 3 · Cómo llegar a 100 (banner · acciones clicables → cola del indicador) */}
+      <PlanLlegarA100Banner resultado={resultado} onAccion={(id) => setFoco(id)} />
 
       {/* 4 · Indicadores detallados · 4 cards con drill clickeable */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
