@@ -20,13 +20,15 @@
  *     (`VinDrillTable`, /saldos, /provisiones).
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Wallet,
   Receipt,
   Banknote,
   Truck,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -34,6 +36,7 @@ import { cn } from "@/lib/cn";
 import { fmtCLPCompact, fmtNum } from "@/lib/format";
 import { AbrirCasoButton } from "@/components/AbrirCasoButton";
 import { GestionInline } from "@/components/GestionInline";
+import { FichaGestionDocumental } from "@/components/FichaGestionDocumental";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
 import { diasMaxCreditoPompeyoConFuente } from "@/lib/gestion/caso";
 import { useGestionStore } from "@/lib/gestion/store";
@@ -468,6 +471,81 @@ function chipFisicoSimple(
 // Cola de Provisiones >90d
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Fila de provisión con GESTIÓN GRANDE estándar (regla gestión unificada
+ * 2026-06): "Gestionar" expande la FichaGestionDocumental completa — misma
+ * MesaGestionCaso + Asignar/Notificar del resto del sistema. Reemplaza al
+ * popover chico GestionInline (que solo se mantiene para saldos/bonos).
+ */
+function FilaProvision({ p, idx }: { p: ProvisionRegistro; idx: number }) {
+  const [casoAbierto, setCasoAbierto] = useState(false);
+  return (
+    <>
+      <tr
+        className={cn(
+          "border-b border-[--color-border-soft] transition",
+          idx % 2 === 0
+            ? "bg-white hover:bg-[--color-bg-elev-1]/60"
+            : "bg-[--color-bg-elev-1]/30 hover:bg-[--color-bg-elev-1]/70",
+        )}
+      >
+        <td className="px-3 py-2">
+          <div
+            className="font-medium text-[--color-fg] truncate max-w-[300px]"
+            title={p.concepto ?? undefined}
+          >
+            {p.concepto ?? "—"}
+          </div>
+        </td>
+        <td className="px-3 py-2 text-[--color-fg-muted] truncate max-w-[160px]">
+          {p.origen ?? "—"}
+        </td>
+        <td className="px-3 py-2">
+          <AgingBadge dias={p.agingDias ?? null} umbralWarn={60} umbralDanger={90} />
+        </td>
+        <td className="px-3 py-2 text-right mono text-[--color-fg] font-semibold">
+          {fmtCLPCompact(p.montoProvision)}
+        </td>
+        <td className="px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setCasoAbierto((v) => !v)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11.5px] font-semibold transition",
+              casoAbierto
+                ? "border-[--color-accent] bg-[--color-accent]/10 text-[--color-accent]"
+                : "border-[--color-border-strong] bg-white text-[--color-fg] hover:bg-[--color-bg-elev-1]",
+            )}
+          >
+            {casoAbierto ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+            {casoAbierto ? "Cerrar caso" : "Gestionar"}
+          </button>
+        </td>
+      </tr>
+      {casoAbierto && (
+        <tr className="border-b border-[--color-border-soft]">
+          <td colSpan={5} className="px-3 py-3 bg-[--color-bg-elev-1]/60">
+            <FichaGestionDocumental
+              clave={p.claveGestion}
+              titulo={p.concepto ?? `Provisión ${p.claveGestion}`}
+              subtitulo={[p.origen, p.periodo].filter(Boolean).join(" · ") || null}
+              descripcionCaso={[p.concepto, p.origen].filter(Boolean).join(" · ") || null}
+              datos={[
+                { label: "Monto provisión", valor: fmtCLPCompact(p.montoProvision) },
+                { label: "Aging", valor: p.agingDias != null ? `${p.agingDias}d` : "—" },
+                { label: "Origen", valor: p.origen ?? "—" },
+                { label: "Período", valor: p.periodo ?? "—" },
+                { label: "Solicitante", valor: p.solicitante ?? "—" },
+                { label: "Saldo", valor: fmtCLPCompact(p.saldo) },
+              ]}
+            />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 function ColaProvisiones({
   indicador,
   provisiones,
@@ -514,40 +592,7 @@ function ColaProvisiones({
           </thead>
           <tbody>
             {provisiones.slice(0, MAX_FILAS).map((p, idx) => (
-              <tr
-                key={p.claveGestion}
-                className={cn(
-                  "border-b border-[--color-border-soft] transition",
-                  idx % 2 === 0
-                    ? "bg-white hover:bg-[--color-bg-elev-1]/60"
-                    : "bg-[--color-bg-elev-1]/30 hover:bg-[--color-bg-elev-1]/70",
-                )}
-              >
-                <td className="px-3 py-2">
-                  <div
-                    className="font-medium text-[--color-fg] truncate max-w-[300px]"
-                    title={p.concepto ?? undefined}
-                  >
-                    {p.concepto ?? "—"}
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-[--color-fg-muted] truncate max-w-[160px]">
-                  {p.origen ?? "—"}
-                </td>
-                <td className="px-3 py-2">
-                  <AgingBadge
-                    dias={p.agingDias ?? null}
-                    umbralWarn={60}
-                    umbralDanger={90}
-                  />
-                </td>
-                <td className="px-3 py-2 text-right mono text-[--color-fg] font-semibold">
-                  {fmtCLPCompact(p.montoProvision)}
-                </td>
-                <td className="px-3 py-2">
-                  <GestionInline vin={p.claveGestion} />
-                </td>
-              </tr>
+              <FilaProvision key={p.claveGestion} p={p} idx={idx} />
             ))}
           </tbody>
         </table>
