@@ -77,7 +77,7 @@ type IndicadorKey = "stockPagado" | "provisiones90" | "creditoPompeyo15" | "sald
 
 const INDICADORES: { key: IndicadorKey; nombre: string; descripcion: string }[] = [
   { key: "stockPagado", nombre: "Stock Pagado", descripcion: "autos pagados con caja propia, en stock activo (sin Judicial)" },
-  { key: "provisiones90", nombre: "Provisiones >90 días", descripcion: "provisiones con saldo abierto y aging > 90 días" },
+  { key: "provisiones90", nombre: "Provisiones >90d Venta", descripcion: "provisiones Área Venta con saldo abierto y aging > 90 días" },
   { key: "creditoPompeyo15", nombre: "Crédito Pompeyo >15 días", descripcion: "diferencia por cobrar al cliente > 15 días desde factura" },
   { key: "saldosT3", nombre: "Saldos Vehículo T3+", descripcion: "saldos de vehículo por documentar en tramos T3+" },
 ];

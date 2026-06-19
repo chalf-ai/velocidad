@@ -5,7 +5,7 @@
  * indicadores aprobados y pesos fijos:
  *
  *   1. Stock pagado (40)        · stockPagado / stockActivoValorizado ≤ 5%
- *   2. Provisiones >90d (40)    · count(saldo≠0 · aging>90) = 0
+ *   2. Provisiones >90d Venta (40) · count(area=ventas · saldo≠0 · aging>90) = 0
  *   3. Crédito Pompeyo >15d (10) · count(VIN con CP · dias>15) = 0
  *   4. Saldos vehículo T3+ (10) · sum(saldoT3+) / sum(saldosVehículo) ≤ 15%
  *
@@ -241,8 +241,8 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     },
     {
       id: "provisiones_90d",
-      nombre: "Provisiones >90 días",
-      metaTexto: `${META_PROV_90D} casos no facturados >90d`,
+      nombre: "Provisiones >90d Venta",
+      metaTexto: `${META_PROV_90D} casos no facturados >90d (Área Venta)`,
       valorTexto: `${prov90.length} casos`,
       valor: prov90.length,
       detalle: prov90.length > 0
