@@ -577,7 +577,7 @@ function ColaProvisiones({
       totalMontoLabel="total"
     >
       <div className="px-4 py-1.5 text-[11px] text-[--color-fg-muted] border-b border-[--color-border-soft] bg-[--color-bg-elev-1]/40">
-        Provisiones no facturadas con aging mayor a 90 días
+        Provisiones de Venta no facturadas con aging mayor a 90 días
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12.5px] min-w-[680px]">

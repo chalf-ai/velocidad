@@ -7,7 +7,7 @@
  *
  * Definiciones (validadas con auditoría · scripts/audit-captrabajo-unificacion.ts):
  *   1. Stock Pagado        · `Pagado?`=pagado  ∧  en stock activo  ∧  NO Judicial
- *   2. Provisiones >90d     · saldo ≠ 0  ∧  aging > 90 días
+ *   2. Provisiones >90d Venta · area="ventas" ∧ saldo ≠ 0 ∧ aging > 90 días
  *   3. Crédito Pompeyo >15d · creditoPompeyo > 0  ∧  máx. días desde factura > 15
  *   4. Saldos Vehículo T3+  · categoría "vehiculo"  ∧  statusDPS ∈ {T3..T7}
  *
@@ -45,15 +45,22 @@ export function stockPagado(vus: VehiculoUnificado[]): MetricaCapital<VehiculoUn
 }
 
 /**
- * 2 · PROVISIONES >90d — provisiones con saldo abierto envejecidas.
- * saldo ≠ 0 ∧ aging > 90. Universo completo (todas las áreas), igual que el
- * indicador del Score.
+ * 2 · PROVISIONES >90d (VENTA) — provisiones de Área Negocio = Venta con saldo
+ * abierto envejecidas. area="ventas" ∧ saldo ≠ 0 ∧ aging > 90.
+ *
+ * Decisión de negocio 2026-06: el indicador oficial de Capital de Trabajo de
+ * Venta excluye Post Venta (concepto "Incentivo Post Ventas"). Validado contra
+ * ROMA (Provisiones de Ingreso → Área=Venta): la clasificación de área de
+ * Velocidad (classifyArea, /post vent/i) coincide 1:1 con ROMA
+ * (VT_ProvisionesConcepto.AreaNegocioID). Antes era all-areas (113 casos);
+ * ahora Venta = 104 casos · $370,5M (9 Post Venta · $6,7M fuera).
  */
 export function provisiones90(
   provisiones: ProvisionRegistro[],
 ): MetricaCapital<ProvisionRegistro> {
   const items = provisiones.filter(
-    (p) => (p.saldo ?? 0) !== 0 && (p.agingDias ?? 0) > 90,
+    (p) =>
+      p.area === "ventas" && (p.saldo ?? 0) !== 0 && (p.agingDias ?? 0) > 90,
   );
   return {
     unidades: items.length,
