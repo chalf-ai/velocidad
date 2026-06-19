@@ -53,6 +53,36 @@ Diferencias clave a explicar:
 mientras la consulta directa a `VT_Provisiones` no lo reproduce? ¿Qué filtra el
 reporte que nosotros no estamos viendo?
 
+## Reverse-engineering (2026-06-19, ROMA vivo + los 104 IDs oficiales)
+Tomamos los **104 IDs exactos** de Velocidad (corte 16-jun, $370.474.338, aging
+97–553) y los cruzamos contra ROMA. Resultado — **la mayor parte de la definición
+quedó confirmada VIN/ID a ID**:
+
+| Ítem | Definición confirmada |
+|---|---|
+| Tabla base | `VT_Provisiones` (Velocidad `id` = `VT_Provisiones.ID`) |
+| Join | `VT_ProvisionesConcepto ON p.provision = c.ID` (para el área) |
+| Concepto Venta | `c.AreaNegocioID = 1` |
+| **Estados** | **`p.estado IN (2,3)`** — NO incluye `1` (los 104 = 76 en estado 2 + 28 en estado 3). La auditoría previa usaba `IN(1,2,3)` → sobre-contaba. |
+| Campo aging | **`p.fecha`** (= `fechaCreacion` de Velocidad, confirmado por fila) |
+| Regla >90 | `DATEDIFF(corte, p.fecha) > 90`; corte ≈ fecha del snapshot (da 554 vs 553 oficial, off-by-1 por timestamp) |
+| Saldo vigente | `≠ 0` (incluye negativos — 13 de los 104 son negativos; NO es `>0`) |
+| Período | `FechaPeriodo` dentro de ventana (~`>= 2024-06-01`; los 104 caen en FechaPeriodo 2024-11 → 2026-02) |
+
+**Lo único que NO cierra: la fórmula EXACTA de saldo (y por ende el count).**
+- `monto − monto_factura` (sobre los 104) = **$534,2M**.
+- `monto − monto_factura − monto_rebaja` = **$303,7M**.
+- Oficial Velocidad = **$370,5M** — queda EN MEDIO.
+- `monto_nota_credito` = 0, `monto_diferencia` = 0, `MontoAjuste` = −$26,8M (no cuadran el gap).
+- El gap a explicar (534,2 − 370,5 = **$163,7M**) es **~71% del `monto_rebaja`** (230,5M), y el split por estado muestra que el rebaja vive casi todo en estado 2 pero se aplica **parcial por fila** → el reporte aplica el rebaja de forma **CONDICIONAL a nivel de fila** (no por estado, no como columna limpia).
+- Una query directa con la ventana de período da SUM(monto−monto_factura)=**$371,2M** (¡dentro de ±$500k del monto!) pero **count 1075** (el resto neto ~0) → sin la fórmula de saldo correcta no se aísla el universo de 104.
+
+**Pregunta NETA que queda para el equipo ROMA (mucho más acotada):**
+> En el reporte "Provisiones de Ingreso", ¿cuál es la **fórmula exacta del campo
+> "saldo"**? Específicamente: ¿bajo qué condición por fila se resta `monto_rebaja`
+> (parcial/total/según qué flag o estado de la rebaja)? Con eso, la query ROMA
+> reproduce los 104 / $370,5M / 553d.
+
 ## Qué desbloquea esto
 Con el SQL confirmado, activamos `PROVISIONES_ENABLED=1` en el Job Amazon
 (`jobs/amazon-snapshot-roma/`) y Provisiones >90d pasa también a **ROMA vivo**.
