@@ -24,13 +24,9 @@ import {
 } from "@/lib/historico/calcular-score-gerencial-historico";
 import {
   capitalDesdePayloads,
-  construirMapasVinMarca,
-  marcaDeProvision,
-  marcaDeSaldo,
+  marcasConCapital,
 } from "@/lib/historico/capital-por-corte";
 import { ETIQUETA_FUENTE } from "@/lib/historico/calcular-scores-por-dia";
-import { resolverVinsSaldos } from "@/lib/selectors/saldos";
-import { normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
 import type {
   ParsedExcel,
   ParsedFNE,
@@ -126,44 +122,6 @@ async function cargarPayloadsVigentes(): Promise<PayloadsVigentes> {
 }
 
 /**
- * Marcas con capital atribuido en CUALQUIER componente vigente (stock,
- * saldos, bonos, provisiones — misma jerarquía P1→P4 del cálculo). Garantiza
- * que la suma de los scopes MARCA cuadre con el TOTAL: todo peso atribuido
- * tiene su fila, incluido el bucket "SIN MARCA ORIGEN" cuando exista.
- */
-function marcasConCapital(args: {
-  stock: ParsedExcel | null;
-  saldos: ParsedSaldos | null;
-  provisiones: ParsedProvisiones | null;
-  fne: ParsedFNE | null;
-}): string[] {
-  const set = new Set<string>();
-  for (const v of args.stock?.vehiculos ?? []) {
-    set.add(normalizarMarcaOperacional(v.marcaPompeyo || v.marca || ""));
-  }
-  // Enriquecimiento oficial de vinResuelto (misma razón que en
-  // capitalDesdePayloads): la lista de marcas sale de la MISMA atribución.
-  if (args.saldos) {
-    resolverVinsSaldos(
-      args.saldos.registros,
-      args.stock?.vehiculos ?? [],
-      args.stock?.vinsExtra ?? null,
-      args.fne,
-    );
-  }
-  const mapas = construirMapasVinMarca(args.stock, args.fne);
-  for (const s of args.saldos?.registros ?? []) {
-    if (s.categoria !== "vehiculo" && s.categoria !== "bono_comision") continue;
-    set.add(marcaDeSaldo(s, mapas));
-  }
-  for (const p of args.provisiones?.registros ?? []) {
-    if (p.area !== "ventas" || (p.saldo || 0) <= 0) continue;
-    set.add(marcaDeProvision(p));
-  }
-  return Array.from(set).sort();
-}
-
-/**
  * Genera (o reemplaza) el snapshot diario de hoy para TOTAL + cada marca.
  * Idempotente por día: upsert sobre [fecha, scopeTipo, marca] y limpieza de
  * scopes de marca que ya no existan en el stock vigente.
@@ -209,11 +167,13 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
       scoreGerencial = sg.score;
     }
 
+    // Las 4 métricas OFICIALES (fuente única capital-trabajo.ts). El total es
+    // la suma de los montos presentes — mismo capital que pondera Score.
     const montosPresentes = [
       capital.stockPagado?.monto,
-      capital.saldosVehiculo?.monto,
-      capital.bonos?.monto,
-      capital.provisiones?.monto,
+      capital.saldosT3?.monto,
+      capital.creditoPompeyo15?.monto,
+      capital.provisiones90?.monto,
     ].filter((m): m is number => m != null);
     const capitalTrabajoTotal =
       montosPresentes.length > 0 ? montosPresentes.reduce((a, b) => a + b, 0) : null;
@@ -226,12 +186,18 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
       scoreVelocidad: null,
       stockPagadoUnidades: capital.stockPagado?.unidades ?? null,
       stockPagadoMonto: capital.stockPagado?.monto ?? null,
-      saldosUnidades: capital.saldosVehiculo?.unidades ?? null,
-      saldosMonto: capital.saldosVehiculo?.monto ?? null,
-      bonosUnidades: capital.bonos?.unidades ?? null,
-      bonosMonto: capital.bonos?.monto ?? null,
-      provisionesUnidades: capital.provisiones?.unidades ?? null,
-      provisionesMonto: capital.provisiones?.monto ?? null,
+      // columna `saldos*` ahora porta Saldos Vehículo T3+ (definición oficial).
+      saldosUnidades: capital.saldosT3?.unidades ?? null,
+      saldosMonto: capital.saldosT3?.monto ?? null,
+      // columna `provisiones*` ahora porta Provisiones >90 días (definición oficial).
+      provisionesUnidades: capital.provisiones90?.unidades ?? null,
+      provisionesMonto: capital.provisiones90?.monto ?? null,
+      // Crédito Pompeyo >15 días (cuarta métrica oficial — columnas nuevas).
+      cpUnidades: capital.creditoPompeyo15?.unidades ?? null,
+      cpMonto: capital.creditoPompeyo15?.monto ?? null,
+      // `bonos*` DEPRECADO (no es una de las 4 oficiales) — se deja de poblar.
+      bonosUnidades: null,
+      bonosMonto: null,
       capitalTrabajoTotal,
       cobertura: coberturaJson,
     };

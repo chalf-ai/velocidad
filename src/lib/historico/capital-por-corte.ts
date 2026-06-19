@@ -1,48 +1,49 @@
 /**
- * Capital de trabajo por fecha de corte — componentes REALES desde payloads
- * históricos (mismas fuentes que el dashboard, misma rehidratación que el
- * motor V5 de /tendencias).
+ * Capital de trabajo por fecha de corte — las 4 métricas OFICIALES desde
+ * payloads históricos, con la MISMA fuente única y el MISMO universo lógico
+ * que /score-gerencial.
  *
- * Reglas (decisión usuario 2026-06):
- *   · Cada componente se calcula SOLO si su fuente está presente en el
- *     corte. Si falta, el componente queda null — nunca se inventa.
- *   · Stock Pagado  ← BASE_STOCK  (unidades pagadas + costo neto, mismo
- *     selector calcularCapitalPagado del dashboard).
- *   · Saldos        ← SALDOS, categoría "vehiculo" (unidades + $ por
- *     documentar).
- *   · Bonos y Com.  ← SALDOS, categoría "bono_comision".
- *   · Provisiones   ← PROVISIONES, área ventas con saldo > 0 (capital
- *     realmente comprometido, mismo criterio que saldoPositivo).
+ * FUENTE ÚNICA (decisión negocio 2026-06, fase 4 de la unificación):
+ *   1. Stock Pagado        ← capital-trabajo.stockPagado
+ *   2. Provisiones >90d     ← capital-trabajo.provisiones90
+ *   3. Crédito Pompeyo >15d ← capital-trabajo.creditoPompeyo15
+ *   4. Saldos Vehículo T3+  ← capital-trabajo.saldosT3
+ * Tendencias NO recalcula con fórmulas propias: invoca exactamente esas
+ * funciones. "Bonos y Comisiones" se elimina (no es una de las 4 oficiales).
  *
- * ATRIBUCIÓN POR MARCA (decisión usuario 2026-06, corrección):
- * jerarquía única para saldos/bonos/provisiones — intentar SIEMPRE atribuir
- * antes de declarar algo no atribuible:
- *   P1 · VIN → Stock vigente → marca (espacio de marca física normalizada,
- *        el mismo del filtro de stock).
- *   P2 · VIN → FNE vigente → marca (sucursal de venta, función madre).
- *   P3 · Marca explícita en la fuente, vía función madre
- *        getMarcaOperacional: Saldo.marca (+ regla empresa PC Automóviles →
- *        USADOS), bonos → sucursal de negocio, Provisión.origen.
- *   P4 · "SIN MARCA ORIGEN" — solo si nada de lo anterior resuelve.
- *        Es el ÚNICO caso realmente no atribuible.
+ * RECONCILIACIÓN DE MARCA (crítico): antes Tendencias atribuía marca con una
+ * jerarquía propia P1→P4 (VIN→stock, VIN→FNE, origen). Eso DIFERÍA de Score,
+ * que filtra con `useDatosFiltrados`. Para que coincidan al 100%, aquí se
+ * replica EXACTAMENTE el filtro de Score:
+ *   · vehículos / vinsExtra → owner ∪ originador (filtrarPorMarcaOwnerUOriginador)
+ *   · saldos / provisiones / fne → owner operacional (filtrarPorMarcaOperacional)
+ * Luego se construye el MISMO VehiculoUnificado y se llaman las mismas 4
+ * funciones. Mismo input + misma función ⇒ mismo resultado que Score.
+ *
+ * Cada componente se calcula SOLO si su fuente está presente; si falta, queda
+ * null — nunca se inventa.
  */
 
-import { calcularCapitalPagado } from "@/lib/selectors/capital-pagado";
-import { resolverVinsSaldos } from "@/lib/selectors/saldos";
 import {
+  stockPagado,
+  provisiones90,
+  creditoPompeyo15,
+  saldosT3,
+  type MetricaCapital,
+} from "@/lib/selectors/capital-trabajo";
+import { buildVehiculosUnificados } from "@/lib/selectors/vehiculo-unificado";
+import {
+  filtrarPorMarcaOperacional,
+  filtrarPorMarcaOwnerUOriginador,
   getMarcaOperacional,
-  MARCA_SIN_ORIGEN,
+  getMarcaOriginadora,
   normalizarMarcaOperacional,
 } from "@/lib/selectors/owner-operacional";
-import { limpiarVIN } from "@/lib/parser/venta-apc";
 import type {
   ParsedExcel,
   ParsedFNE,
   ParsedProvisiones,
   ParsedSaldos,
-  ProvisionRegistro,
-  SaldoRegistro,
-  Vehiculo,
 } from "@/lib/types";
 
 export interface ComponenteCapital {
@@ -53,127 +54,129 @@ export interface ComponenteCapital {
 export interface CapitalCorte {
   /** null = fuente BASE_STOCK ausente en el corte. */
   stockPagado: ComponenteCapital | null;
-  /** null = fuente SALDOS ausente. */
-  saldosVehiculo: ComponenteCapital | null;
-  /** null = fuente SALDOS ausente. */
-  bonos: ComponenteCapital | null;
   /** null = fuente PROVISIONES ausente. */
-  provisiones: ComponenteCapital | null;
+  provisiones90: ComponenteCapital | null;
+  /** null = fuente BASE_STOCK ausente (CP se deriva de los VU). */
+  creditoPompeyo15: ComponenteCapital | null;
+  /** null = fuente SALDOS ausente. */
+  saldosT3: ComponenteCapital | null;
 }
 
-function vehiculosDeMarca(vehiculos: Vehiculo[], marcaCanonica: string | null): Vehiculo[] {
-  if (!marcaCanonica) return vehiculos;
-  return vehiculos.filter(
-    (v) => normalizarMarcaOperacional(v.marcaPompeyo || v.marca || "") === marcaCanonica,
-  );
-}
+const comp = (m: MetricaCapital<unknown>): ComponenteCapital => ({
+  unidades: m.unidades,
+  monto: m.monto,
+});
 
-// ────────────────────────────────────────────────────────────────────
-// Mapas VIN → marca (P1 stock, P2 FNE) y resolución por jerarquía
-// ────────────────────────────────────────────────────────────────────
-
-export interface MapasVinMarca {
-  /** VIN limpio → marca (física normalizada — mismo espacio que el stock). */
-  stock: Map<string, string>;
-  /** VIN limpio → marca operacional del registro FNE (sucursal de venta). */
-  fne: Map<string, string>;
-}
-
-export function construirMapasVinMarca(
-  stock: ParsedExcel | null,
-  fne: ParsedFNE | null,
-): MapasVinMarca {
-  const stockMap = new Map<string, string>();
-  for (const v of stock?.vehiculos ?? []) {
-    const vin = limpiarVIN(v.vin);
-    if (vin && !stockMap.has(vin)) {
-      stockMap.set(vin, normalizarMarcaOperacional(v.marcaPompeyo || v.marca || ""));
-    }
+/**
+ * Filtra los payloads crudos por marca EXACTAMENTE como `useDatosFiltrados`
+ * (el hook que alimenta a Score). marca = null → sin filtro (TOTAL).
+ */
+function filtrarPayloadsPorMarca(args: {
+  stock: ParsedExcel | null;
+  fne: ParsedFNE | null;
+  saldos: ParsedSaldos | null;
+  provisiones: ParsedProvisiones | null;
+  marca: string | null;
+}): {
+  stock: ParsedExcel | null;
+  fne: ParsedFNE | null;
+  saldos: ParsedSaldos | null;
+  provisiones: ParsedProvisiones | null;
+} {
+  const { marca } = args;
+  if (!marca) {
+    return {
+      stock: args.stock,
+      fne: args.fne,
+      saldos: args.saldos,
+      provisiones: args.provisiones,
+    };
   }
-  const fneMap = new Map<string, string>();
-  for (const r of fne?.registros ?? []) {
-    const vin = limpiarVIN(r.vin);
-    if (vin && !fneMap.has(vin)) fneMap.set(vin, getMarcaOperacional(r));
-  }
-  return { stock: stockMap, fne: fneMap };
-}
-
-/** Marca de un saldo (vehículo o bono/comisión) por la jerarquía P1→P4. */
-export function marcaDeSaldo(s: SaldoRegistro, mapas: MapasVinMarca): string {
-  const vin = s.vinResuelto ? limpiarVIN(s.vinResuelto) : null;
-  if (vin) {
-    const porStock = mapas.stock.get(vin);
-    if (porStock && porStock !== MARCA_SIN_ORIGEN) return porStock; // P1
-    const porFNE = mapas.fne.get(vin);
-    if (porFNE && porFNE !== MARCA_SIN_ORIGEN) return porFNE; // P2
-  }
-  return getMarcaOperacional(s); // P3 (marca explícita / empresa / sucursal) o P4
-}
-
-/** Marca de una provisión (no tiene VIN): origen vía función madre. */
-export function marcaDeProvision(p: ProvisionRegistro): string {
-  return getMarcaOperacional(p); // P3 (origen) o P4
+  const objetivo = normalizarMarcaOperacional(marca);
+  return {
+    stock: args.stock
+      ? {
+          ...args.stock,
+          vehiculos: filtrarPorMarcaOwnerUOriginador(args.stock.vehiculos, marca),
+          vinsExtra: args.stock.vinsExtra
+            ? new Map(
+                [...args.stock.vinsExtra].filter(
+                  ([, info]) => normalizarMarcaOperacional(info.marca) === objetivo,
+                ),
+              )
+            : args.stock.vinsExtra,
+        }
+      : null,
+    fne: args.fne
+      ? { ...args.fne, registros: filtrarPorMarcaOperacional(args.fne.registros, marca) }
+      : null,
+    saldos: args.saldos
+      ? { ...args.saldos, registros: filtrarPorMarcaOperacional(args.saldos.registros, marca) }
+      : null,
+    provisiones: args.provisiones
+      ? {
+          ...args.provisiones,
+          registros: filtrarPorMarcaOperacional(args.provisiones.registros, marca),
+        }
+      : null,
+  };
 }
 
 export function capitalDesdePayloads(args: {
   stock: ParsedExcel | null;
   saldos: ParsedSaldos | null;
   provisiones: ParsedProvisiones | null;
-  /** FNE vigente — habilita la vía P2 (VIN → FNE) de la jerarquía. */
+  /** FNE vigente — entra al build de VU igual que en Score. */
   fne?: ParsedFNE | null;
   marca: string | null;
 }): CapitalCorte {
-  const marcaCanonica = args.marca ? normalizarMarcaOperacional(args.marca) : null;
+  const f = filtrarPayloadsPorMarca({
+    stock: args.stock,
+    fne: args.fne ?? null,
+    saldos: args.saldos,
+    provisiones: args.provisiones,
+    marca: args.marca,
+  });
 
-  // ── Stock Pagado ───────────────────────────────────────────────────
-  let stockPagado: ComponenteCapital | null = null;
-  if (args.stock) {
-    const vehiculosMarca = vehiculosDeMarca(args.stock.vehiculos, marcaCanonica);
-    const stats = calcularCapitalPagado(vehiculosMarca);
-    stockPagado = { unidades: stats.totalUnidades, monto: stats.capitalTotal };
+  // VehiculoUnificado: MISMO build que Score (stock + fne + saldos filtrados).
+  const vus = f.stock
+    ? Array.from(
+        buildVehiculosUnificados({ data: f.stock, fne: f.fne, saldos: f.saldos }).values(),
+      )
+    : null;
+
+  return {
+    stockPagado: vus ? comp(stockPagado(vus)) : null,
+    creditoPompeyo15: vus ? comp(creditoPompeyo15(vus)) : null,
+    provisiones90: f.provisiones ? comp(provisiones90(f.provisiones.registros)) : null,
+    saldosT3: f.saldos ? comp(saldosT3(f.saldos.registros)) : null,
+  };
+}
+
+/**
+ * Marcas con capital atribuido en CUALQUIER fuente vigente, usando la MISMA
+ * atribución que el filtro de Score (owner ∪ originador para vehículos; owner
+ * para saldos/provisiones). Garantiza que cada scope MARCA generado coincida
+ * con lo que Score mostraría al filtrar por esa marca.
+ */
+export function marcasConCapital(args: {
+  stock: ParsedExcel | null;
+  saldos: ParsedSaldos | null;
+  provisiones: ParsedProvisiones | null;
+  fne: ParsedFNE | null;
+}): string[] {
+  const set = new Set<string>();
+  for (const v of args.stock?.vehiculos ?? []) {
+    set.add(getMarcaOperacional(v)); // owner
+    set.add(getMarcaOriginadora(v)); // originador (segunda dimensión del filtro)
   }
-
-  // ── Saldos vehículo + Bonos y comisiones (jerarquía P1→P4) ─────────
-  let saldosVehiculo: ComponenteCapital | null = null;
-  let bonos: ComponenteCapital | null = null;
-  if (args.saldos) {
-    // Enriquecimiento oficial de vinResuelto (resolverVinsSaldos) antes de
-    // atribuir. Determinista: depende solo de estos inputs, no del orden de
-    // ejecución de otros cálculos.
-    resolverVinsSaldos(
-      args.saldos.registros,
-      args.stock?.vehiculos ?? [],
-      args.stock?.vinsExtra ?? null,
-      args.fne ?? null,
-    );
-    const mapas = construirMapasVinMarca(args.stock, args.fne ?? null);
-
-    const veh = { unidades: 0, monto: 0 };
-    const bon = { unidades: 0, monto: 0 };
-    for (const s of args.saldos.registros) {
-      if (s.categoria !== "vehiculo" && s.categoria !== "bono_comision") continue;
-      if (marcaCanonica && marcaDeSaldo(s, mapas) !== marcaCanonica) continue;
-      const acc = s.categoria === "vehiculo" ? veh : bon;
-      acc.unidades++;
-      acc.monto += s.saldoXDocumentar;
-    }
-    saldosVehiculo = veh;
-    bonos = bon;
+  for (const s of args.saldos?.registros ?? []) {
+    if (s.categoria !== "vehiculo" && s.categoria !== "bono_comision") continue;
+    set.add(getMarcaOperacional(s));
   }
-
-  // ── Provisiones (ventas · saldo > 0 = capital comprometido) ────────
-  let provisiones: ComponenteCapital | null = null;
-  if (args.provisiones) {
-    const acc = { unidades: 0, monto: 0 };
-    for (const p of args.provisiones.registros) {
-      if (p.area !== "ventas") continue;
-      if ((p.saldo || 0) <= 0) continue;
-      if (marcaCanonica && marcaDeProvision(p) !== marcaCanonica) continue;
-      acc.unidades++;
-      acc.monto += p.saldo || 0;
-    }
-    provisiones = acc;
+  for (const p of args.provisiones?.registros ?? []) {
+    if (p.area !== "ventas" || (p.saldo || 0) <= 0) continue;
+    set.add(getMarcaOperacional(p));
   }
-
-  return { stockPagado, saldosVehiculo, bonos, provisiones };
+  return Array.from(set).sort();
 }
