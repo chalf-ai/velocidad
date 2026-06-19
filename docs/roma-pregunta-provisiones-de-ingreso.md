@@ -69,19 +69,32 @@ quedó confirmada VIN/ID a ID**:
 | Saldo vigente | `≠ 0` (incluye negativos — 13 de los 104 son negativos; NO es `>0`) |
 | Período | `FechaPeriodo` dentro de ventana (~`>= 2024-06-01`; los 104 caen en FechaPeriodo 2024-11 → 2026-02) |
 
-**Lo único que NO cierra: la fórmula EXACTA de saldo (y por ende el count).**
-- `monto − monto_factura` (sobre los 104) = **$534,2M**.
-- `monto − monto_factura − monto_rebaja` = **$303,7M**.
-- Oficial Velocidad = **$370,5M** — queda EN MEDIO.
-- `monto_nota_credito` = 0, `monto_diferencia` = 0, `MontoAjuste` = −$26,8M (no cuadran el gap).
-- El gap a explicar (534,2 − 370,5 = **$163,7M**) es **~71% del `monto_rebaja`** (230,5M), y el split por estado muestra que el rebaja vive casi todo en estado 2 pero se aplica **parcial por fila** → el reporte aplica el rebaja de forma **CONDICIONAL a nivel de fila** (no por estado, no como columna limpia).
-- Una query directa con la ventana de período da SUM(monto−monto_factura)=**$371,2M** (¡dentro de ±$500k del monto!) pero **count 1075** (el resto neto ~0) → sin la fórmula de saldo correcta no se aísla el universo de 104.
+**FÓRMULA DE SALDO — CRACKEADA (fit fila a fila contra los 104):**
+> **saldo = `monto − monto_factura`** — el **`monto_rebaja` NO se resta NUNCA.**
 
-**Pregunta NETA que queda para el equipo ROMA (mucho más acotada):**
-> En el reporte "Provisiones de Ingreso", ¿cuál es la **fórmula exacta del campo
-> "saldo"**? Específicamente: ¿bajo qué condición por fila se resta `monto_rebaja`
-> (parcial/total/según qué flag o estado de la rebaja)? Con eso, la query ROMA
-> reproduce los 104 / $370,5M / 553d.
+Evidencia: de los 104, **102 tienen `saldo = monto − monto_factura` EXACTO**; solo
+**2 difieren (ids 9772, 9442), ambos `ProvisionAjustada=2`**, y su diferencia suma
+**$163.700.638 = exactamente el gap** — son **DRIFT** (provisiones ajustadas entre
+el snapshot 16-jun y ROMA vivo 19-jun; en vivo su saldo actual es la verdad). La
+hipótesis previa del "rebaja parcial" era un artefacto de ese drift: `SUM(monto −
+monto_factura)` sobre los 104 = $370,5M una vez excluido el drift.
+
+**Lo único que QUEDA: el SCOPE del universo del reporte (qué filas, no la fórmula).**
+Con la definición ya correcta (`AreaNegocioID=1 ∧ estado IN(2,3) ∧ (monto−monto_factura)≠0
+∧ DATEDIFF(corte,fecha)>90 ∧ FechaPeriodo en ventana`), ROMA devuelve **~835–1.067
+filas**, no 104. Las ~731–963 de más son provisiones Venta de **saldo chico** que
+el reporte EXCLUYE y que **no** se distinguen por `tipo`/`motivo` (50 combinaciones
+dispersas), `estado_conta` (todas =2), ni por afinar la ventana. → El reporte
+"Provisiones de Ingreso" tiene un **scope adicional NO presente en las columnas de
+`VT_Provisiones`** (probable JOIN a otra tabla — venta/ingreso — o un flag de
+configuración del reporte).
+
+**Pregunta NETA final para el equipo ROMA (ya mínima):**
+> Confirmada la métrica (saldo = monto − monto_factura, estado IN(2,3), aging desde
+> `fecha` >90, área Venta): **¿qué join/filtro adicional limita el universo del
+> reporte "Provisiones de Ingreso" a estas ~104 filas** (vs las ~835 provisiones
+> Venta con saldo≠0 y aging>90 del mismo período)? ¿Se une a alguna tabla de
+> venta/ingreso, o filtra por algún flag/configuración del reporte?
 
 ## Qué desbloquea esto
 Con el SQL confirmado, activamos `PROVISIONES_ENABLED=1` en el Job Amazon
