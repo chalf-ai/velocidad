@@ -54,6 +54,21 @@ export interface ResumenGeneracion {
   marcas: string[];
   cobertura: CoberturaVigente[];
   eliminadosStale: number;
+  /** true si la foto usó Provisiones/FNE en vivo posteados por el Job Amazon. */
+  romaEnVivo: boolean;
+}
+
+/**
+ * Datos de ROMA EN VIVO que el Job Amazon puede postear (ROMA no es alcanzable
+ * desde Railway). Si se entrega, OVERRIDE las Provisiones/FNE del scope TOTAL
+ * (ROMA entrega totales, no por marca). Si no se entrega, se usan los snapshots
+ * activos (fuente Excel validada equivalente a ROMA). Forward-compatible.
+ */
+export interface RomaPosted {
+  /** Provisiones >90d Venta desde ROMA vivo. */
+  provisiones?: { casos: number; monto: number; agingMax?: number | null };
+  /** FNE operativo desde ROMA vivo (Reporte Actas, Acta=NO, FechaFactura≥2026-01-01). */
+  fne?: { unidades: number; monto: number };
 }
 
 /** Día actual en America/Santiago, normalizado a 00:00 UTC (columna DATE). */
@@ -126,9 +141,12 @@ async function cargarPayloadsVigentes(): Promise<PayloadsVigentes> {
  * Idempotente por día: upsert sobre [fecha, scopeTipo, marca] y limpieza de
  * scopes de marca que ya no existan en el stock vigente.
  */
-export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> {
+export async function generarDailyCapitalSnapshot(
+  opts: { roma?: RomaPosted } = {},
+): Promise<ResumenGeneracion> {
   const { ymd, fecha } = fechaHoySantiago();
   const { stock, saldos, provisiones, fne, cobertura } = await cargarPayloadsVigentes();
+  let romaEnVivo = false;
 
   const marcas = marcasConCapital({ stock, saldos, provisiones, fne });
   const scopes: { scopeTipo: ScopeSnapshotDiario; marca: string }[] = [
@@ -150,6 +168,23 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
       fne,
       marca: marcaFiltro,
     });
+
+    // ROMA EN VIVO (Job Amazon): override de Provisiones/FNE SOLO en TOTAL
+    // (ROMA entrega totales, no por marca). Sin ROMA → snapshots activos.
+    const usarRoma = scope.scopeTipo === "TOTAL" && opts.roma != null;
+    if (usarRoma) romaEnVivo = true;
+    const provComp =
+      usarRoma && opts.roma!.provisiones
+        ? { unidades: opts.roma!.provisiones.casos, monto: opts.roma!.provisiones.monto }
+        : capital.provisiones90;
+    const provAgingMax =
+      usarRoma && opts.roma!.provisiones
+        ? opts.roma!.provisiones.agingMax ?? null
+        : capital.provisionesAgingMax;
+    const fneComp =
+      usarRoma && opts.roma!.fne
+        ? { unidades: opts.roma!.fne.unidades, monto: opts.roma!.fne.monto }
+        : capital.fne;
 
     // Score Gerencial legacy: exige las 4 fuentes vigentes. Con menos, null
     // (misma política que el histórico — no se calculan parciales).
@@ -173,7 +208,7 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
       capital.stockPagado?.monto,
       capital.saldosT3?.monto,
       capital.creditoPompeyo15?.monto,
-      capital.provisiones90?.monto,
+      provComp?.monto,
     ].filter((m): m is number => m != null);
     const capitalTrabajoTotal =
       montosPresentes.length > 0 ? montosPresentes.reduce((a, b) => a + b, 0) : null;
@@ -190,8 +225,8 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
       saldosUnidades: capital.saldosT3?.unidades ?? null,
       saldosMonto: capital.saldosT3?.monto ?? null,
       // columna `provisiones*` ahora porta Provisiones >90 días (definición oficial).
-      provisionesUnidades: capital.provisiones90?.unidades ?? null,
-      provisionesMonto: capital.provisiones90?.monto ?? null,
+      provisionesUnidades: provComp?.unidades ?? null,
+      provisionesMonto: provComp?.monto ?? null,
       // Crédito Pompeyo >15 días (cuarta métrica oficial — columnas nuevas).
       cpUnidades: capital.creditoPompeyo15?.unidades ?? null,
       cpMonto: capital.creditoPompeyo15?.monto ?? null,
@@ -199,6 +234,20 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
       bonosUnidades: null,
       bonosMonto: null,
       capitalTrabajoTotal,
+      // ── PR 2 · métricas oficiales nuevas (persistencia histórica explícita) ──
+      cajaComercialUnidades: capital.cajaComercial?.unidades ?? null,
+      cajaComercialMonto: capital.cajaComercial?.monto ?? null,
+      cajaTotalUnidades: capital.cajaTotal?.unidades ?? null,
+      cajaTotalMonto: capital.cajaTotal?.monto ?? null,
+      testCarUnidades: capital.testCars?.unidades ?? null,
+      testCarMonto: capital.testCars?.monto ?? null,
+      autosCompaniaUnidades: capital.autosCompania?.unidades ?? null,
+      autosCompaniaMonto: capital.autosCompania?.monto ?? null,
+      judicialUnidades: capital.judicial?.unidades ?? null,
+      judicialMonto: capital.judicial?.monto ?? null,
+      fneUnidades: fneComp?.unidades ?? null,
+      fneMonto: fneComp?.monto ?? null,
+      provisionesAgingMax: provAgingMax ?? null,
       cobertura: coberturaJson,
     };
 
@@ -225,6 +274,6 @@ export async function generarDailyCapitalSnapshot(): Promise<ResumenGeneracion> 
     },
   });
 
-  return { fecha: ymd, scopes: scopes.length, marcas, cobertura, eliminadosStale };
+  return { fecha: ymd, scopes: scopes.length, marcas, cobertura, eliminadosStale, romaEnVivo };
 }
 

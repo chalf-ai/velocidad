@@ -53,7 +53,7 @@ export interface ComponenteCapital {
 }
 
 export interface CapitalCorte {
-  /** null = fuente BASE_STOCK ausente en el corte. */
+  /** null = fuente BASE_STOCK ausente en el corte. (Legacy — métrica Stock Pagado.) */
   stockPagado: ComponenteCapital | null;
   /** null = fuente PROVISIONES ausente. */
   provisiones90: ComponenteCapital | null;
@@ -61,6 +61,22 @@ export interface CapitalCorte {
   creditoPompeyo15: ComponenteCapital | null;
   /** null = fuente SALDOS ausente. */
   saldosT3: ComponenteCapital | null;
+
+  // ── PR 2 · métricas oficiales nuevas (persistencia histórica diaria) ──
+  /** Caja Comercial Gestionable (Score). null = BASE_STOCK ausente. */
+  cajaComercial: ComponenteCapital | null;
+  /** Caja Inmovilizada Total (Pagado∪Propio∪FinPropio). null = BASE_STOCK ausente. */
+  cajaTotal: ComponenteCapital | null;
+  /** Desglose · Test Cars. */
+  testCars: ComponenteCapital | null;
+  /** Desglose · Autos Compañía. */
+  autosCompania: ComponenteCapital | null;
+  /** Desglose · Judicial. */
+  judicial: ComponenteCapital | null;
+  /** FNE operativo (VIN / valor factura). null = fuente FNE ausente. */
+  fne: ComponenteCapital | null;
+  /** Aging máximo (días) de Provisiones >90d Venta. null = sin provisiones. */
+  provisionesAgingMax: number | null;
 }
 
 const comp = (m: MetricaCapital<unknown>): ComponenteCapital => ({
@@ -146,11 +162,33 @@ export function capitalDesdePayloads(args: {
       )
     : null;
 
+  // Una sola pasada: desglose de caja (total + comercial + 4 categorías) y
+  // provisiones (para reusar el aging máximo).
+  const desg = vus ? desglosarCajaInmovilizada(vus) : null;
+  const mProv = f.provisiones ? provisiones90(f.provisiones.registros) : null;
+  // FNE operativo: VUs con presencia en FNE (cruce ya filtra entregado=false).
+  const fneVus = vus ? vus.filter((v) => v.enFNE) : null;
+
   return {
     stockPagado: vus ? comp(stockPagado(vus)) : null,
     creditoPompeyo15: vus ? comp(creditoPompeyo15(vus)) : null,
-    provisiones90: f.provisiones ? comp(provisiones90(f.provisiones.registros)) : null,
+    provisiones90: mProv ? comp(mProv) : null,
     saldosT3: f.saldos ? comp(saldosT3(f.saldos.registros)) : null,
+    cajaComercial: desg ? comp(desg.comercial) : null,
+    cajaTotal: desg ? comp(desg.total) : null,
+    testCars: desg ? comp(desg.testCars) : null,
+    autosCompania: desg ? comp(desg.autosCompania) : null,
+    judicial: desg ? comp(desg.judicial) : null,
+    fne: fneVus
+      ? {
+          unidades: fneVus.length,
+          monto: fneVus.reduce((s, v) => s + (v.fneValorFactura ?? 0), 0),
+        }
+      : null,
+    provisionesAgingMax:
+      mProv && mProv.items.length > 0
+        ? Math.max(...mProv.items.map((p) => p.agingDias ?? 0))
+        : null,
   };
 }
 

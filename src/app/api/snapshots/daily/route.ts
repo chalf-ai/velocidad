@@ -10,11 +10,18 @@
  *   · Sesión NextAuth con rol ADMIN o GERENTE_GENERAL (acción manual UI).
  *   · Authorization: Bearer <DAILY_SNAPSHOT_TOKEN> — para el job diario del
  *     agent. Si la env var no está configurada, esta vía queda deshabilitada.
+ *
+ * Body (opcional, JSON): `{ roma: { provisiones?, fne? } }` — el Job Amazon
+ * postea Provisiones>90 Venta y FNE en VIVO desde ROMA (no alcanzable desde
+ * Railway). Si no se entrega, se usan los snapshots activos (Excel validado).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { generarDailyCapitalSnapshot } from "@/lib/snapshots/daily-capital";
+import {
+  generarDailyCapitalSnapshot,
+  type RomaPosted,
+} from "@/lib/snapshots/daily-capital";
 
 const ROLES_PERMITIDOS = new Set(["ADMIN", "GERENTE_GENERAL"]);
 
@@ -32,8 +39,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
 
+  // Body opcional con datos ROMA en vivo (Job Amazon). Sin body → snapshots activos.
+  let roma: RomaPosted | undefined;
+  const body = await req.json().catch(() => null);
+  if (body && typeof body === "object" && body.roma && typeof body.roma === "object") {
+    roma = body.roma as RomaPosted;
+  }
+
   try {
-    const resumen = await generarDailyCapitalSnapshot();
+    const resumen = await generarDailyCapitalSnapshot({ roma });
     return NextResponse.json({ ok: true, ...resumen });
   } catch (e) {
     console.error("[snapshots/daily] Error generando snapshot diario:", e);

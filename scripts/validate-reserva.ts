@@ -38,6 +38,7 @@ async function snap(f: string) {
   const corte = s?.fechaCorte ? new Date(s.fechaCorte) : new Date();
   console.log("Corte:", String(s?.fechaCorte).slice(0, 10), "(usado como 'hoy' para aging)");
   const stock = rehidratarStock(s!.payload);
+  if (!stock) throw new Error("Sin BASE_STOCK activo");
   const fne = f?.payload ? rehidratarFNE(f.payload) : null;
   const saldos = sl?.payload ? rehidratarSaldos(sl.payload) : null;
   const vus = Array.from(buildVehiculosUnificados({ data: stock, fne, saldos }).values());
