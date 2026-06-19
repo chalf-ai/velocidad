@@ -43,6 +43,8 @@ import {
   type PuntoScore,
 } from "@/components/tendencias/GraficosCapital";
 import { MarcaUrlSync } from "./MarcaUrlSync";
+import { cargarCajaInmovilizadaActual } from "@/lib/snapshots/caja-actual";
+import { CajaInmovilizadaPanel } from "@/components/tendencias/CajaInmovilizadaPanel";
 import { GenerarSnapshotHoy } from "./GenerarSnapshotHoy";
 
 export const dynamic = "force-dynamic";
@@ -323,6 +325,11 @@ export default async function TendenciasPage({
   const liberando = variacionTotal !== null && variacionTotal < 0;
   const sinCambio = variacionTotal !== null && Math.round(variacionTotal) === 0;
 
+  // ── Composición ACTUAL de la Caja Inmovilizada (en vivo, read-only) ─────
+  // Verdad financiera completa + desglose por categoría de gestión. No toca
+  // DailyCapitalSnapshot (la serie histórica se persiste en una etapa posterior).
+  const cajaActual = await cargarCajaInmovilizadaActual(marcaCanonica);
+
   return (
     <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-8 space-y-5 fade-in">
       <MarcaUrlSync marcaFromUrl={marca} />
@@ -421,6 +428,15 @@ export default async function TendenciasPage({
           </p>
         )}
       </section>
+
+      {/* ── 1.5 · Caja Inmovilizada · composición actual (en vivo) ─────── */}
+      {cajaActual && (
+        <CajaInmovilizadaPanel
+          desglose={cajaActual.desglose}
+          fechaCorte={cajaActual.fechaCorte}
+          marca={marcaCanonica}
+        />
+      )}
 
       {/* ── 2 · Score · indicador principal de tendencia ──────────────── */}
       <section className="surface bg-white p-5">

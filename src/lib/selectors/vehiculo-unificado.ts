@@ -23,6 +23,7 @@ import type {
   SaldoRegistro,
   StockAB,
   TipoStock,
+  UnidadNegocio,
   Vehiculo,
   VINSupplementary,
 } from "../types";
@@ -77,6 +78,15 @@ export interface VehiculoUnificado {
    *  "A" | "B" | "Judicial". Fuente oficial para el detalle de auditoría de
    *  Stock B / Judicial (NO el heurístico `esStockB`, que sobre-clasifica). */
   stockAB: StockAB | null;
+  /** "Estado Dealer" (Base_Stock col 29) — estado comercial crudo del activo
+   *  (DISPONIBLE, TEST CAR, JUDICIAL, COMPANY CAR, RENTING, …). Lo necesita
+   *  `clasificarCaja` (capital-trabajo.ts) para separar la Caja Inmovilizada en
+   *  Comercial / Test Cars / Autos Compañía / Judicial. */
+  estadoDealer: string | null;
+  /** "Unidad Negocio" (Base_Stock col 52): Nuevos | Usados | AutosCompania |
+   *  Desconocido. Lente de RESPONSABILIDAD gerencial de la Caja Inmovilizada:
+   *  solo Nuevos/Usados son caja comercial gestionable. */
+  unidadNegocio: UnidadNegocio;
   costoNeto: number;
   diasStock: number | null;
 
@@ -217,6 +227,8 @@ export function buildVehiculosUnificados(
         tipoStock: null,
         condicionDeStock: null,
         stockAB: null,
+        estadoDealer: null,
+        unidadNegocio: "Desconocido",
         costoNeto: 0,
         diasStock: null,
         marcaLineaVinculada: null,
@@ -267,6 +279,8 @@ export function buildVehiculosUnificados(
       vu.tipoStock = vu.tipoStock ?? v.tipoStock;
       vu.condicionDeStock = vu.condicionDeStock ?? v.condicionDeStock;
       vu.stockAB = vu.stockAB ?? v.stockAB;
+      vu.estadoDealer = vu.estadoDealer ?? v.estadoDealer;
+      if (vu.unidadNegocio === "Desconocido") vu.unidadNegocio = v.unidadNegocio;
       vu.costoNeto = vu.costoNeto || v.costoNeto;
       vu.diasStock = vu.diasStock ?? v.diasStock;
       vu.esJudicial = vu.esJudicial || v.esJudicial;
