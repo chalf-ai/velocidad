@@ -246,7 +246,7 @@ function FNEInner() {
   const pctListos = stats.total > 0 ? stats.listoParaEntregar / stats.total : 0;
 
   return (
-    <div className="max-w-[1400px] mx-auto px-10 py-10 space-y-8 fade-in">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-8 fade-in overflow-x-hidden lg:overflow-x-visible">
       {/* Hero */}
       <div className="relative overflow-hidden rounded-3xl border border-[--color-border] bg-gradient-to-br from-[#eef2ff] via-[#f0f9ff] to-white px-10 py-8">
         <div className="absolute -top-12 -right-12 size-56 rounded-full bg-[--color-info] opacity-[0.12] blur-3xl pointer-events-none" />
@@ -568,9 +568,9 @@ function FNEInner() {
             inline de cada bucket — son el mismo auto visto desde otro ángulo.
           </CardDescription>
         </CardHeader>
-        <CardBody className="p-0 overflow-x-auto">
-          <table className="w-full text-sm min-w-[1500px] linear-table">
-            <thead className="text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
+        <CardBody className="p-2 lg:p-0 lg:overflow-x-auto">
+          <table className="w-full text-sm block lg:table lg:min-w-[1500px] linear-table">
+            <thead className="hidden lg:table-header-group text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
               <tr>
                 <th className="text-left font-semibold px-4 py-3">Cliente · Vendedor</th>
                 <th className="text-left font-semibold px-4 py-3">Sucursal</th>
@@ -588,7 +588,7 @@ function FNEInner() {
                 <th className="text-left font-semibold px-4 py-3">Acciones</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block lg:table-row-group">
               {filtrado.slice(0, 200).map((c, idx) => {
                 const f = c.fne;
                 const dStato = c.diasEnEstado ?? 0;
@@ -602,12 +602,15 @@ function FNEInner() {
                       : dStato > 7
                         ? "Atención · >7d"
                         : null;
+                // Móvil: cada td se apila como fila etiquetada (card); desktop: celda.
+                const tdM =
+                  "block lg:table-cell before:content-[attr(data-label)] before:block before:text-[9px] before:uppercase before:tracking-[0.08em] before:text-[--color-fg-muted] before:font-semibold before:mb-0.5 lg:before:hidden";
                 return (
                   <tr
                     key={`${f.id}-${f.vin}-${f.rowIndex}`}
                     className={cn(
-                      "align-top transition",
-                      "border-b border-[--color-border-soft] last:border-0",
+                      "align-top transition block lg:table-row",
+                      "border border-[--color-border] rounded-xl mb-3 p-1.5 lg:p-0 lg:mb-0 lg:rounded-none lg:border-0 lg:border-b lg:border-[--color-border-soft] lg:last:border-0",
                       idx % 2 === 0
                         ? "bg-white hover:bg-[--color-bg-elev-1]"
                         : "bg-[--color-bg-elev-1]/40 hover:bg-[--color-bg-elev-1]",
@@ -617,43 +620,43 @@ function FNEInner() {
                         "shadow-[inset_3px_0_0_var(--color-warning)]",
                     )}
                   >
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-[13px] text-[--color-fg] truncate max-w-[220px]">
+                    <td className="px-4 py-2 lg:py-3 block lg:table-cell">
+                      <div className="font-semibold text-[13px] text-[--color-fg] truncate max-w-[220px]">
                         {f.cliente ?? "—"}
                       </div>
                       <div className="text-[11.5px] text-[--color-fg-muted] truncate max-w-[220px] mt-0.5">
                         {f.vendedor ?? "—"}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-[12px] text-[--color-fg]">
+                    <td className="hidden lg:table-cell px-4 py-3 text-[12px] text-[--color-fg]">
                       {f.sucursal ?? "—"}
                     </td>
-                    <td className="px-4 py-3 mono text-[11px] text-[--color-fg-muted]">
+                    <td data-label="VIN" className={cn(tdM, "px-4 py-1.5 lg:py-3 mono text-[11px] text-[--color-fg-muted]")}>
                       {f.vin}
                     </td>
-                    <td className="px-4 py-3">
+                    <td data-label="Estado" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
                       <Badge tone={ESTADO_ENTREGA_TONE[c.estadoEntrega]} size="xs">
                         {ESTADO_ENTREGA_LABEL[c.estadoEntrega]}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3">
+                    <td data-label="Aging" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
                       <Badge tone={AGING_REAL_TONE[c.agingBucket]} size="xs">
                         {AGING_REAL_LABEL[c.agingBucket]}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3 text-right mono text-[12.5px] text-[--color-fg]">
+                    <td className="hidden lg:table-cell px-4 py-3 text-right mono text-[12.5px] text-[--color-fg]">
                       {c.diasDesdeFactura ?? <span className="text-[--color-fg-dim]">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
+                    <td className="hidden lg:table-cell px-4 py-3 text-[11.5px] text-[--color-fg-muted]">
                       {ETAPA_LABEL[f.etapa]}
                     </td>
-                    <td className="px-4 py-3 text-[11.5px]">
+                    <td className="hidden lg:table-cell px-4 py-3 text-[11.5px]">
                       <PatenteCell c={c} />
                     </td>
-                    <td className="px-4 py-3 text-right mono text-[12.5px] font-medium text-[--color-fg]">
+                    <td data-label="Valor factura" className={cn(tdM, "px-4 py-1.5 lg:py-3 text-left lg:text-right mono text-[12.5px] font-medium text-[--color-fg]")}>
                       {fmtCLP(f.valorFactura)}
                     </td>
-                    <td className="px-4 py-3">
+                    <td data-label="Alerta" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
                       {alertaTexto && alertaSev ? (
                         <span
                           className={cn(
@@ -670,20 +673,20 @@ function FNEInner() {
                         <span className="text-[--color-fg-dim] text-[11px]">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="hidden lg:table-cell px-4 py-3">
                       {(() => {
                         const vinL = limpiarVIN(f.vin);
                         const cp = creditoMap.get(vinL);
                         return <CreditoPompeyoBadge tiene={!!cp} monto={cp?.monto ?? 0} compact />;
                       })()}
                     </td>
-                    <td className="px-4 py-3">
+                    <td data-label="Bloqueos" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
                       <BloqueosCell bloqueos={razonesBloqueoFNE(c, creditoMap)} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td data-label="Gestión" className={cn(tdM, "px-4 py-1.5 lg:py-3")}>
                       <AbrirCasoButton vin={limpiarVIN(f.vin)} origen="Facturados no entregados" />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="hidden lg:table-cell px-4 py-3">
                       <Link
                         href={`/stock?q=${encodeURIComponent(f.vin)}&dup=1`}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[--color-border] text-[11px] text-[--color-fg-muted] hover:text-[--color-accent] hover:border-[--color-accent]/40 hover:bg-[--color-accent]/5 transition"

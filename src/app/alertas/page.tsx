@@ -341,7 +341,7 @@ function AlertasInner() {
   }, [sel, unionVins, topCausas.top5, catSel]);
 
   return (
-    <div className="max-w-[1400px] mx-auto px-10 py-10 space-y-7 fade-in">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-7 fade-in overflow-x-hidden lg:overflow-x-visible">
       {/* Hero */}
       <div className="relative overflow-hidden rounded-3xl border border-[--color-border] bg-gradient-to-br from-[#fef2f2] via-[#fff7ed] to-white px-10 py-8">
         <div className="absolute -top-12 -right-12 size-56 rounded-full bg-[--color-danger] opacity-[0.10] blur-3xl pointer-events-none" />
