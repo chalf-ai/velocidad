@@ -228,7 +228,7 @@ function UsadosInner({
   const mayAlerta = dash.mayoristaAging;
 
   return (
-    <div className="max-w-[1400px] mx-auto px-10 py-10 space-y-7 fade-in">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-7 fade-in overflow-x-hidden lg:overflow-x-visible">
       {vinCtx && <VinContextoBanner vin={vinCtx} presentes={casos.length} />}
       {/* Hero + eficiencia */}
       <div className="relative overflow-hidden rounded-3xl border border-[--color-border] bg-gradient-to-br from-[#eef6ff] via-[#f3f0ff] to-white px-10 py-7">

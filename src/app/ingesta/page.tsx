@@ -88,7 +88,7 @@ export default function IngestaPage() {
   );
 
   return (
-    <div className="max-w-[1200px] mx-auto px-10 py-10 space-y-7 fade-in">
+    <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-10 py-6 lg:py-10 space-y-7 fade-in overflow-x-hidden lg:overflow-x-visible">
       {/* Header */}
       <div>
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[--color-accent] font-semibold">

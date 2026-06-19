@@ -65,7 +65,7 @@ function TescarInner() {
       : stats.rows;
 
   return (
-    <div className="max-w-[1400px] mx-auto px-8 py-8 space-y-6 fade-in">
+    <div className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8 space-y-6 fade-in overflow-x-hidden lg:overflow-x-visible">
       {/* Header */}
       <div className="surface top-strip strip-violet bg-white px-7 py-6">
         <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-[0.14em] text-[#7c3aed] font-semibold">
@@ -141,9 +141,9 @@ function TescarInner() {
             </button>
           )}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[1000px]">
-            <thead className="text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
+        <div className="lg:overflow-x-auto">
+          <table className="w-full text-sm block lg:table lg:min-w-[1000px]">
+            <thead className="hidden lg:table-header-group text-[10.5px] text-[--color-fg-muted] uppercase tracking-[0.08em] bg-[--color-bg-elev-1]">
               <tr>
                 <Th>Marca / Modelo</Th>
                 <Th>VIN</Th>
@@ -157,31 +157,32 @@ function TescarInner() {
                 <Th>Caso</Th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block lg:table-row-group">
               {detalle.slice(0, 300).map((r, idx) => {
                 const dias = r.diasPrestamo;
                 const diasColor = dias == null ? "text-[--color-fg-dim]" : dias > 180 ? "text-[--color-danger]" : dias > 60 ? "text-[--color-warning]" : "text-[--color-fg]";
+                const tdM = "block lg:table-cell before:content-[attr(data-label)] before:block before:text-[9px] before:uppercase before:tracking-[0.08em] before:text-[--color-fg-muted] before:font-semibold before:mb-0.5 lg:before:hidden";
                 return (
                   <tr
                     key={`${r.vin}-${r.rowIndex}`}
-                    className={cn("border-b border-[--color-border-soft] last:border-0", idx % 2 === 0 ? "bg-white hover:bg-[--color-bg-elev-1]" : "bg-[--color-bg-elev-1]/40")}
+                    className={cn("block lg:table-row border border-[--color-border] rounded-xl mb-3 p-1.5 lg:p-0 lg:mb-0 lg:rounded-none lg:border-0 lg:border-b lg:border-[--color-border-soft] lg:last:border-0", idx % 2 === 0 ? "bg-white hover:bg-[--color-bg-elev-1]" : "bg-[--color-bg-elev-1]/40")}
                   >
-                    <td className="px-4 py-2.5">
+                    <td className="px-4 py-2 lg:py-2.5 block lg:table-cell">
                       <div className="font-medium text-[12.5px] text-[--color-fg] flex items-center gap-1.5">
                         {r.marca ?? "—"}
                         <Badge tone={r.tipo === "bdr" ? "info" : "muted"} size="xs">{r.tipo === "bdr" ? "BDR" : "Test car"}</Badge>
                       </div>
                       <div className="text-[11px] text-[--color-fg-muted] truncate max-w-[200px]">{r.modelo ?? "—"}</div>
                     </td>
-                    <td className="px-4 py-2.5 mono text-[11px] text-[--color-fg-muted]">{r.vinLimpio || "—"}</td>
-                    <td className="px-4 py-2.5 mono text-[11px] text-[--color-fg]">{r.patente ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-[11.5px] text-[--color-fg-muted]">{r.sucursal ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-[11.5px] text-[--color-fg-muted]">{r.status ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-[11.5px] text-[--color-fg-muted]">{r.decisionVenta ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-[11.5px] text-[--color-fg-muted] truncate max-w-[140px]">{r.propietario ?? "—"}</td>
-                    <td className={cn("px-4 py-2.5 text-right mono text-[12.5px]", diasColor)}>{dias != null ? `${dias}d` : "—"}</td>
-                    <td className="px-4 py-2.5 text-right mono text-[12.5px] text-[--color-fg]">{fmtCLP(r.valorCompra)}</td>
-                    <td className="px-4 py-2.5">
+                    <td data-label="VIN" className={cn(tdM, "px-4 py-1.5 lg:py-2.5 mono text-[11px] text-[--color-fg-muted]")}>{r.vinLimpio || "—"}</td>
+                    <td className="hidden lg:table-cell px-4 py-2.5 mono text-[11px] text-[--color-fg]">{r.patente ?? "—"}</td>
+                    <td data-label="Sucursal" className={cn(tdM, "px-4 py-1.5 lg:py-2.5 text-[11.5px] text-[--color-fg-muted]")}>{r.sucursal ?? "—"}</td>
+                    <td data-label="Status" className={cn(tdM, "px-4 py-1.5 lg:py-2.5 text-[11.5px] text-[--color-fg-muted]")}>{r.status ?? "—"}</td>
+                    <td className="hidden lg:table-cell px-4 py-2.5 text-[11.5px] text-[--color-fg-muted]">{r.decisionVenta ?? "—"}</td>
+                    <td className="hidden lg:table-cell px-4 py-2.5 text-[11.5px] text-[--color-fg-muted] truncate max-w-[140px]">{r.propietario ?? "—"}</td>
+                    <td data-label="Días" className={cn(tdM, "px-4 py-1.5 lg:py-2.5 text-left lg:text-right mono text-[12.5px]", diasColor)}>{dias != null ? `${dias}d` : "—"}</td>
+                    <td data-label="Capital" className={cn(tdM, "px-4 py-1.5 lg:py-2.5 text-left lg:text-right mono text-[12.5px] text-[--color-fg]")}>{fmtCLP(r.valorCompra)}</td>
+                    <td data-label="Caso" className={cn(tdM, "px-4 py-1.5 lg:py-2.5")}>
                       {r.vinLimpio.length === 17 ? (
                         <AbrirCasoButton vin={r.vinLimpio} origen={`TESCAR · ${r.marca ?? ""}`} />
                       ) : (
