@@ -1,33 +1,35 @@
 #!/usr/bin/env python3
 """
-JOB AMAZON · Snapshot diario con Provisiones/FNE EN VIVO desde ROMA.
+JOB AMAZON · Snapshot diario con datos EN VIVO desde ROMA — FUENTE OFICIAL.
 
 ╔══════════════════════════════════════════════════════════════════════════╗
-║  DESPLEGAR EN AMAZON / VPC (con acceso a ROMA MySQL).                     ║
-║  NO desplegar en Railway: Railway NO alcanza ROMA (ver memoria proyecto). ║
+║  DESPLEGAR EN AMAZON / VPC (acceso directo a ROMA MySQL — ya existe).     ║
+║  Es la FUENTE OFICIAL del snapshot diario. Railway solo recibe/persiste.  ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
-Flujo (PR 2):
-  20:00 Chile (EventBridge / crontab)
-    → consulta ROMA: Provisiones >90d Venta + FNE operativo (Reporte Actas)
-    → POST {VELOCIDAD_URL}/api/snapshots/daily  con body {"roma": {...}} + Bearer
-    → Velocidad combina con carry-forward de Stock / Saldos / CP (snapshots activos)
-      y persiste la foto del día en DailyCapitalSnapshot (idempotente, upsert).
+Flujo Amazon-first (PR 2):
+  20:00 Chile (EventBridge / crontab Amazon)
+    → consulta ROMA vivo
+    → POST {VELOCIDAD_URL}/api/snapshots/daily  body {"roma": {...}} + Bearer
+    → Velocidad persiste (FNE = ROMA vivo; Caja/desglose/CP/Saldos desde sus
+      snapshots Stock/Saldos activos — NO son ROMA, son carga propia de Velocidad).
 
-IMPORTANTE — una sola fuente de disparo:
-  El agente César (Railway) ya tiene un job 20:00 que postea SIN body (usa los
-  snapshots Excel activos, fuente validada equivalente a ROMA). Cuando ESTE job
-  Amazon esté activo, deshabilitar el del agente para no disparar dos veces:
-  poner DAILY_SNAPSHOT_TOKEN="" en el servicio `velocidad-agent`. (Ambos hacen
-  upsert sobre [fecha, scope] → la última corrida gana; aun así conviene una
-  sola fuente para que Provisiones/FNE sean ROMA-vivo.)
+Estado de las fuentes ROMA (validado en vivo 2026-06-19 vía conexión directa):
+  · FNE operativo  → REPRODUCIBLE EXACTO desde ROMA. ACTIVO en este job.
+      VT_Ventas · EstadoActaEntregaID IN (0,1) ∧ FechaFactura >= '2026-01-01'
+      Vivo hoy: 514 reg / 513 VIN / $8.393,6M  (vs corte Excel 17-jun: 514 VIN/$8.4B).
+  · Provisiones >90d Venta → PENDIENTE del SQL exacto del reporte ROMA
+      "Provisiones de Ingreso". NO reproducible con query directa: 3 intentos en
+      vivo dieron 4.831 / 1.940 (saldo −$9,5B) / 386·$574,9M — ninguno = el oficial
+      de Velocidad (104 · $370,5M). Difieren la referencia de aging (718d vs 553d)
+      y el tratamiento de saldo. Es la pregunta abierta de la auditoría (Doc A).
+      MIENTRAS no se confirme: este job NO postea Provisiones → el endpoint usa el
+      snapshot activo (el Excel "Provisiones de Ingreso" ES ese reporte ROMA,
+      exportado a mano). Eso NO es "reconstruir ROMA": es el mismo reporte.
+      Cuando el equipo ROMA confirme el SQL, poner PROVISIONES_ENABLED=1.
 
-Env requeridas:
-  ROMA_DB_HOST, ROMA_DB_PORT (3306), ROMA_DB_USER, ROMA_DB_PASSWORD, ROMA_DB_NAME
-  VELOCIDAD_URL            (ej. https://velocidadoperacional.pompeyo.cl)
-  DAILY_SNAPSHOT_TOKEN     (MISMO valor que el servicio web de Velocidad)
-
-Deps:  pip install pymysql httpx
+Env:  ROMA_DB_{HOST,PORT,USER,PASSWORD,NAME}, VELOCIDAD_URL, DAILY_SNAPSHOT_TOKEN
+Deps: pip install pymysql httpx
 """
 from __future__ import annotations
 
@@ -35,6 +37,8 @@ import os
 import sys
 import pymysql
 import httpx
+
+PROVISIONES_ENABLED = os.environ.get("PROVISIONES_ENABLED", "0") == "1"
 
 
 def _roma_conn():
@@ -50,32 +54,31 @@ def _roma_conn():
     )
 
 
-# ── FNE operativo (validado EXACTO en la auditoría FNE) ───────────────────────
+# ── FNE operativo (VALIDADO EXACTO contra ROMA vivo) ──────────────────────────
 # Reporte Actas → Acta Entrega = NO (EstadoActaEntregaID IN (0,1)) ∧ FechaFactura
-# >= 2026-01-01. Universo reproducido: 515 reg / 514 VIN / $8.412,7M.
+# >= 2026-01-01. unidades = VIN distintos; monto = Σ ValorFactura.
 FNE_SQL = """
-SELECT Vin, ValorFactura
+SELECT COUNT(DISTINCT Vin) AS unidades,
+       SUM(ValorFactura)   AS monto
 FROM VT_Ventas
 WHERE EstadoActaEntregaID IN (0, 1)
   AND FechaFactura >= '2026-01-01'
 """
 
-# ── Provisiones >90d Venta (base Venta validada al 99,995% en la auditoría) ───
-# AreaNegocioID = 1 (Venta) ∧ estado IN (1,2,3). saldo = GREATEST(0, monto −
-# monto_factura − monto_rebaja). El filtro >90d se mide desde la fecha de
-# creación de la provisión.
-#   ⚠️ CONFIRMAR con el equipo ROMA el nombre exacto del campo de fecha de
-#   creación (las provisiones de ROMA NO historizan el aging — ver Doc A). Si el
-#   campo difiere, ajustar `fecha_creacion` abajo. Mientras tanto, el job del
-#   agente (snapshots activos) cubre Provisiones con la fuente validada.
+# ── Provisiones >90d Venta — ⚠️ PENDIENTE confirmar con el equipo ROMA ────────
+# Base Venta validada (AreaNegocioID=1 ∧ estado IN(1,2,3)), pero el filtro >90d
+# del reporte "Provisiones de Ingreso" NO es reproducible con esta query (ver
+# cabecera). NO usar en producción hasta confirmar referencia de aging + ventana
+# de período + tratamiento de saldo. Placeholder para cuando se confirme:
 PROV_SQL = """
-SELECT p.id AS id,
-       GREATEST(0, p.monto - COALESCE(p.monto_factura, 0) - COALESCE(p.monto_rebaja, 0)) AS saldo,
-       DATEDIFF(CURDATE(), p.fecha_creacion) AS aging_dias
+SELECT COUNT(*) AS casos,
+       SUM(GREATEST(0, p.monto - COALESCE(p.monto_factura,0) - COALESCE(p.monto_rebaja,0))) AS monto,
+       MAX(DATEDIFF(CURDATE(), p.fecha)) AS aging_max
 FROM VT_Provisiones p
 JOIN VT_ProvisionesConcepto c ON p.provision = c.ID
 WHERE c.AreaNegocioID = 1
   AND p.estado IN (1, 2, 3)
+  -- TODO equipo ROMA: ventana de período + referencia de aging del reporte oficial
 """
 
 
@@ -84,27 +87,27 @@ def consultar_roma() -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(FNE_SQL)
-            fne_rows = cur.fetchall()
-            cur.execute(PROV_SQL)
-            prov_rows = cur.fetchall()
+            fne_row = cur.fetchone()
+            prov_row = None
+            if PROVISIONES_ENABLED:
+                cur.execute(PROV_SQL)
+                prov_row = cur.fetchone()
     finally:
         conn.close()
 
-    # FNE: unidades = VIN distintos; monto = Σ ValorFactura.
-    vins = {r["Vin"] for r in fne_rows if r.get("Vin")}
-    fne = {
-        "unidades": len(vins),
-        "monto": float(sum((r["ValorFactura"] or 0) for r in fne_rows)),
+    roma: dict = {
+        "fne": {
+            "unidades": int(fne_row["unidades"] or 0),
+            "monto": float(fne_row["monto"] or 0),
+        }
     }
-
-    # Provisiones >90d: saldo ≠ 0 ∧ aging > 90.
-    prov90 = [r for r in prov_rows if (r["saldo"] or 0) != 0 and (r["aging_dias"] or 0) > 90]
-    provisiones = {
-        "casos": len(prov90),
-        "monto": float(sum(r["saldo"] for r in prov90)),
-        "agingMax": max((r["aging_dias"] for r in prov90), default=None),
-    }
-    return {"provisiones": provisiones, "fne": fne}
+    if prov_row is not None:
+        roma["provisiones"] = {
+            "casos": int(prov_row["casos"] or 0),
+            "monto": float(prov_row["monto"] or 0),
+            "agingMax": int(prov_row["aging_max"]) if prov_row["aging_max"] is not None else None,
+        }
+    return roma
 
 
 def main() -> int:

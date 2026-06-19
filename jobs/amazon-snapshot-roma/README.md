@@ -1,72 +1,72 @@
-# Job Amazon · Snapshot diario con ROMA en vivo (PR 2)
+# Job Amazon · Snapshot diario · FUENTE OFICIAL (ROMA en vivo)
 
-Entregable de PR 2. Hace que **Provisiones >90d Venta** y **FNE operativo** del
-snapshot diario salgan de **ROMA en vivo**, no de los Excel cargados.
-
-## Por qué Amazon y no Railway
-ROMA vive en Amazon/VPC y **no es alcanzable desde Railway** (donde corren el
-web y el agente). Por eso la consulta a ROMA debe originarse en Amazon. Este job
-solo consulta ROMA y **postea el resultado** a Velocidad; el resto del cálculo
-(Caja Comercial/Total, desglose, CP, Saldos — carry-forward de los snapshots
-activos) vive en Velocidad.
-
-## Flujo
+Enfoque **Amazon-first** (PR 2). El snapshot diario se origina en **Amazon**,
+donde existe acceso directo a ROMA, y alimenta el endpoint de Velocidad. Railway
+**solo recibe y persiste** — no reconstruye ROMA.
 
 ```
-20:00 Chile (EventBridge / crontab Amazon)
-  → snapshot_roma_job.py
-      consulta ROMA: Provisiones>90 Venta {casos, monto, agingMax}
-                     FNE operativo        {unidades, monto}
-      POST {VELOCIDAD_URL}/api/snapshots/daily
-           Authorization: Bearer <DAILY_SNAPSHOT_TOKEN>
-           body: { "roma": { "provisiones": {...}, "fne": {...} } }
-  → Velocidad: generarDailyCapitalSnapshot({ roma })
-      · override Provisiones/FNE (scope TOTAL) con los datos ROMA
-      · Caja Comercial/Total/desglose/CP/Saldos: carry-forward (snapshots activos)
-      · upsert DailyCapitalSnapshot  (idempotente, 1 fila por [fecha, scope])
+ROMA vivo  →  Job Amazon  →  POST /api/snapshots/daily  →  Velocidad (Railway) persiste
 ```
 
-Si el body NO trae `roma`, el endpoint usa los snapshots activos (Excel
-validado, equivalente a ROMA). Forward-compatible: este job es un **upgrade
-drop-in**.
+## Evidencia de conectividad Amazon → ROMA (verificada en vivo 2026-06-19)
+Conexión directa confirmada (`SELECT DATABASE(), NOW()` → `db=roma`,
+`2026-06-19 09:57:56`). Queries corridas contra ROMA en producción:
 
-## ⚠️ Una sola fuente de disparo
-El **agente César (Railway)** ya tiene un job 20:00 (`snapshot_diario_capital`)
-que postea **sin body** (snapshots activos). Cuando este job Amazon esté activo,
-**deshabilitar el del agente** para no disparar dos veces el mismo día:
-poner `DAILY_SNAPSHOT_TOKEN=""` en el servicio `velocidad-agent` (Railway).
-Ambos hacen upsert (la última corrida gana), pero conviene una sola fuente para
-que Provisiones/FNE sean ROMA-vivo.
+| Fuente | Query ROMA | Resultado vivo | ¿Reproducible? |
+|---|---|---|---|
+| **FNE operativo** | `VT_Ventas` · `EstadoActaEntregaID IN (0,1)` ∧ `FechaFactura ≥ 2026-01-01` | **513 VIN · $8.393,6M** | ✅ **EXACTO** (vs auditoría 514 VIN/$8,4B) |
+| Provisiones >90d | `VT_Provisiones ⋈ Concepto` · `AreaNegocioID=1` ∧ `estado IN(1,2,3)` | 4.831 / 1.940(−$9,5B) / 386·$574,9M | ❌ **no reproducible** (oficial = 104·$370,5M) |
 
-## Variables de entorno
+**Conclusión técnica:** Amazon **sí puede operar** la captura — FNE sale exacto de
+ROMA vivo y es la fuente oficial. **Provisiones >90d NO es reproducible** con query
+directa: la referencia de aging (718d vs 553d), la ventana de período y el
+tratamiento de saldo del reporte "Provisiones de Ingreso" son la **pregunta abierta
+de la auditoría (Doc A)**. Hasta que el equipo ROMA confirme el SQL, Provisiones
+NO se postea y el endpoint usa el snapshot activo (el Excel "Provisiones de Ingreso"
+**es** ese reporte ROMA, exportado a mano — no es reconstrucción indirecta).
+
+## Payload exacto a `/api/snapshots/daily`
+```http
+POST /api/snapshots/daily
+Authorization: Bearer <DAILY_SNAPSHOT_TOKEN>
+Content-Type: application/json
+
+{ "roma": { "fne": { "unidades": 513, "monto": 8393628851 } } }
 ```
-ROMA_DB_HOST, ROMA_DB_PORT (3306), ROMA_DB_USER, ROMA_DB_PASSWORD, ROMA_DB_NAME
-VELOCIDAD_URL          # https://velocidadoperacional.pompeyo.cl
-DAILY_SNAPSHOT_TOKEN   # MISMO valor que el servicio web de Velocidad
+Cuando se confirme Provisiones (`PROVISIONES_ENABLED=1`):
+```json
+{ "roma": { "fne": { "unidades": 513, "monto": 8393628851 },
+            "provisiones": { "casos": 104, "monto": 370500000, "agingMax": 553 } } }
 ```
+El endpoint hace **override del scope TOTAL** con lo que venga en `roma`; lo no
+provisto (Provisiones, Caja, desglose, CP, Saldos) lo calcula de los snapshots
+activos. Respuesta incluye `"romaEnVivo": true`.
 
-## Deploy (ejemplo crontab Amazon)
+## Qué calcula cada lado (Railway solo recibe/persiste)
+| Métrica | Fuente | Dónde se calcula |
+|---|---|---|
+| **FNE operativo** | **ROMA vivo** | Job Amazon (este script) |
+| Provisiones >90d | snapshot activo (= reporte ROMA exportado) | Velocidad — *ROMA-vivo cuando se confirme el SQL* |
+| Caja Comercial/Total + desglose | Stock activo (carga propia Velocidad, NO ROMA) | Velocidad |
+| Crédito Pompeyo >15d / Saldos T3+ | Saldos/Salvin activos (NO ROMA) | Velocidad |
+
+## Deploy SIN doble cron
+1. Desplegar este job en Amazon, cron **20:00 America/Santiago** (EventBridge o crontab).
+2. **Deshabilitar el cron del agente** (Railway): `DAILY_SNAPSHOT_TOKEN=""` en el
+   servicio `velocidad-agent`. Así el job del agente (`snapshot_diario_capital`)
+   no se registra y **Amazon queda como única fuente de disparo**.
+3. Variables del job Amazon: `ROMA_DB_{HOST,PORT,USER,PASSWORD,NAME}`,
+   `VELOCIDAD_URL` (https://velocidadoperacional.pompeyo.cl), `DAILY_SNAPSHOT_TOKEN`
+   (mismo valor que el web).
+
 ```bash
 pip install pymysql httpx
-# 20:00 America/Santiago — ajustar TZ del host o usar UTC equivalente
-0 20 * * *  cd /opt/velocidad-jobs && /usr/bin/python3 snapshot_roma_job.py >> /var/log/snapshot_roma.log 2>&1
+# crontab Amazon (TZ America/Santiago)
+0 20 * * *  cd /opt/velocidad-jobs && python3 snapshot_roma_job.py >> /var/log/snapshot_roma.log 2>&1
 ```
-(o EventBridge Scheduler con timezone `America/Santiago` → ECS/Lambda).
 
-## Queries ROMA (validadas en las auditorías)
-- **FNE**: `VT_Ventas` con `EstadoActaEntregaID IN (0,1)` ∧ `FechaFactura >= '2026-01-01'`
-  (reproducción exacta: 514 VIN / $8.412,7M).
-- **Provisiones Venta**: `VT_Provisiones ⋈ VT_ProvisionesConcepto` con
-  `AreaNegocioID=1` ∧ `estado IN (1,2,3)`, saldo = `GREATEST(0, monto −
-  monto_factura − monto_rebaja)`, filtro `>90d` por `DATEDIFF`.
-  **CONFIRMAR con el equipo ROMA el campo de fecha de creación** (`fecha_creacion`
-  en el SQL) — las provisiones de ROMA no historizan el aging (ver Doc A de la
-  auditoría). Hasta confirmarlo, el job del agente cubre Provisiones con la
-  fuente validada.
-
-## Validación post-deploy
-Tras una corrida, verificar en Velocidad (read-only):
+## Validación post-deploy (read-only, desde Velocidad)
 ```
 railway run --service Postgres sh -c 'DATABASE_URL="$DATABASE_PUBLIC_URL" npx tsx scripts/validate-snapshot-diario.ts'
 ```
-El campo `romaEnVivo: true` en la respuesta del POST confirma que se usó ROMA.
+`romaEnVivo: true` en la respuesta del POST confirma que se usó ROMA vivo.
