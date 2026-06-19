@@ -96,7 +96,7 @@ async def enviar_seguimiento() -> None:
 
 # ── Snapshot diario de capital (Tendencias persistentes) ─────────────────────
 
-async def generar_snapshot_diario() -> None:
+async def generar_snapshot_diario() -> dict:
     """
     Dispara la foto diaria del estado vigente llamando al endpoint Next.js.
     El cálculo vive en TypeScript (mismos selectores que la app).
@@ -112,9 +112,11 @@ async def generar_snapshot_diario() -> None:
 
     # 1. FNE en vivo desde el gateway ROMA Amazon. Falla → fuente validada.
     roma_payload = None
+    gateway_fne = None
     try:
         fne = await consultar_fne_gateway()
         roma_payload = {"fne": fne}
+        gateway_fne = fne["unidades"]
         logger.info("FNE gateway ROMA en vivo: %s VIN", fne["unidades"])
     except Exception:
         logger.exception(
@@ -140,12 +142,20 @@ async def generar_snapshot_diario() -> None:
                 len(data.get("marcas", [])),
                 data.get("romaEnVivo"),
             )
-        else:
-            logger.error(
-                "Snapshot diario falló — HTTP %s: %s", resp.status_code, resp.text[:300]
-            )
-    except Exception:
+            return {
+                "ok": True,
+                "gateway_fne_unidades": gateway_fne,
+                "romaEnVivo": data.get("romaEnVivo"),
+                "fecha": data.get("fecha"),
+                "scopes": data.get("scopes"),
+            }
+        logger.error(
+            "Snapshot diario falló — HTTP %s: %s", resp.status_code, resp.text[:300]
+        )
+        return {"ok": False, "status": resp.status_code, "gateway_fne_unidades": gateway_fne}
+    except Exception as e:  # noqa: BLE001
         logger.exception("Snapshot diario: error llamando a %s", url)
+        return {"ok": False, "error": str(e), "gateway_fne_unidades": gateway_fne}
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────

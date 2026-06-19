@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from .config import settings
-from .cron import build_scheduler
+from .cron import build_scheduler, generar_snapshot_diario
 from . import database as db
 from .agent import chat, get_agent
 from .tareas import estado_tareas, procesar_tareas_asignadas
@@ -167,6 +167,20 @@ async def debug_tareas_ciclo():
     """
     try:
         return await procesar_tareas_asignadas()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/debug/snapshot/ciclo")
+async def debug_snapshot_ciclo():
+    """
+    Dispara generar_snapshot_diario() a demanda (Camino A): consulta FNE al
+    gateway ROMA Amazon y postea a /api/snapshots/daily. Para validar el flujo
+    sin esperar las 20:00. Si el gateway falla, cae a fuente validada (sin
+    inventar FNE). No expone secretos.
+    """
+    try:
+        return await generar_snapshot_diario()
     except Exception as e:
         return {"error": str(e)}
 
