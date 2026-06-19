@@ -293,11 +293,11 @@ function ColaVins({
   );
 
   const titulo =
-    modo === "cp" ? "Crédito Pompeyo · > 15 días desde factura" : "VINs Propio / FinPropio";
+    modo === "cp" ? "Crédito Pompeyo · > 15 días desde factura" : "VINs Stock Pagado";
   const origen =
     modo === "cp"
       ? "/score-gerencial · CP >15d"
-      : "/score-gerencial · Stock propio";
+      : "/score-gerencial · Stock pagado";
 
   if (vus.length === 0) {
     return (
