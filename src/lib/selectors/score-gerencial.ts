@@ -4,10 +4,14 @@
  * Mide cómo el gerente de marca administra el capital de su unidad, con 4
  * indicadores aprobados y pesos fijos:
  *
- *   1. Stock propio (40)        · capitalPropio / stockValorizado ≤ 5%
- *   2. Provisiones >90d (40)    · count(no_facturada · aging>90) = 0
+ *   1. Stock pagado (40)        · stockPagado / stockActivoValorizado ≤ 5%
+ *   2. Provisiones >90d (40)    · count(saldo≠0 · aging>90) = 0
  *   3. Crédito Pompeyo >15d (10) · count(VIN con CP · dias>15) = 0
  *   4. Saldos vehículo T3+ (10) · sum(saldoT3+) / sum(saldosVehículo) ≤ 15%
+ *
+ * Las 4 métricas se computan desde la FUENTE ÚNICA `capital-trabajo.ts` — la
+ * misma que consume Tendencias. Score y Tendencias NO mantienen definiciones
+ * paralelas (decisión de negocio 2026-06).
  *
  * Cada indicador entrega puntos LINEALES entre la meta (puntos completos)
  * y el "valorMax" (cero puntos). Cumplimiento parcial, no binario.
@@ -18,9 +22,15 @@
  */
 
 import type { SaldoRegistro, ProvisionRegistro } from "../types";
-import { diasMaxCreditoPompeyo } from "../gestion/caso";
 import type { VehiculoUnificado } from "./vehiculo-unificado";
-import { MARCA_USADOS } from "./owner-operacional";
+import { diasMaxCreditoPompeyo } from "../gestion/caso";
+import {
+  stockPagado,
+  stockActivoValorizado,
+  provisiones90,
+  creditoPompeyo15,
+  saldosT3 as saldosT3Metrica,
+} from "./capital-trabajo";
 
 // ─── Umbrales (calibrables sin cambiar lógica) ──────────────────────────────
 
@@ -41,8 +51,6 @@ export const MAX_SALDOS_T3_PCT = 40;
 
 export const ESTADO_BUENO = 85;
 export const ESTADO_RIESGO = 60;
-
-const TRAMOS_T3PLUS = new Set(["T3", "T4", "T5", "T6", "T7"]);
 
 export type EstadoScore = "bueno" | "riesgo" | "critico";
 
@@ -144,128 +152,54 @@ export interface ScoreGerencialInput {
   provisiones: ProvisionRegistro[];
 }
 
-/**
- * Condición de Stock oficial para "Stock Propio" — definición de Control de
- * Gestión (correo validado 2026-06), con criterio SEPARADO por unidad:
- *
- *  · Marcas de NUEVOS: Existencia Nuevos + VN con Patente + Test Cars
- *    (ya sean de SPA o TM). Excluye Renting, Company Car, Sin Match, Activo
- *    Fijo, Existencia Usados, VU por Recibir.
- *  · Unidad USADOS: Existencia Usados (su análogo de stock propio).
- *
- * En AMBOS casos se mantiene el filtro financiero (Tipo Stock = Propio/
- * FinPropio).
- *
- * Stock B / Judicial (decisión de negocio 2026-06, validada con evidencia):
- *  · STOCK B → SÍ cuenta en el score: es stock PAGADO inmovilizado, capital
- *    de trabajo real (sigue afectando caja). Se ve además en auditoría.
- *  · JUDICIAL → NO cuenta en el score (no es stock propio gestionable). Se
- *    excluye del universo vía la columna OFICIAL Stock A/B (no heurístico) y
- *    queda segregado en el bloque de auditoría.
- */
-const COND_STOCK_PROPIO_NUEVOS = new Set([
-  "EXISTENCIA NUEVOS",
-  "VN CON PATENTE",
-  "TEST CARS",
-]);
-const COND_STOCK_PROPIO_USADOS = new Set(["EXISTENCIA USADOS"]);
-const normCondicion = (c: string | null | undefined): string =>
-  (c ?? "").trim().toUpperCase();
-
 export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerencialResultado {
   const { marca, vus, saldos, provisiones } = input;
 
-  // ─── Universo del indicador Stock Propio ───────────────────────────────
-  // Decisión de negocio 2026-06: JUDICIAL queda fuera del score (numerador y
-  // denominador) en TODAS las marcas, vía la columna OFICIAL Stock A/B
-  // (`stockAB === "Judicial"`), NO el heurístico esJudicial/esStockB. Stock B
-  // permanece (es stock pagado · capital de trabajo real).
-  const esUsados = marca === MARCA_USADOS;
-  const aplicaEnStockPropio = (vu: VehiculoUnificado): boolean => {
-    if (!vu.enStockActivo) return false;
-    if (vu.stockAB === "Judicial") return false;
-    return true;
-  };
-
-  // ─── Numerador Stock Propio · regla oficial (correo Control de Gestión) ──
-  // Cuenta como Stock Propio sólo lo que es propio EN CAPITAL (Tipo Stock =
-  // Propio/FinPropio) Y de condición oficial — separada por unidad:
-  //  · NUEVOS  → Existencia Nuevos · VN con Patente · Test Cars
-  //  · USADOS  → Existencia Usados
-  // Antes el numerador miraba sólo lo financiero y sumaba Renting, Company Car,
-  // Sin Match, Activo Fijo y Existencia Usados de otras marcas.
-  //
-  // Stock B / Judicial: NO se descuentan acá con el flag heurístico `esStockB`
-  // (sobre-clasifica · genera falsos positivos). El numerador se basa SÓLO en
-  // la condición oficial; el detalle Stock B/Judicial se arma aparte desde la
-  // columna oficial Stock A/B de Base_Stock (ver drill.stockB/judicial).
-  //
-  // PENDIENTE DE NEGOCIO (no se resuelve acá): el DENOMINADOR (stockValorizado)
-  // se mantiene = todo el stock activo; el correo sólo cuestiona el numerador.
-  const condicionesPropio = esUsados ? COND_STOCK_PROPIO_USADOS : COND_STOCK_PROPIO_NUEVOS;
-  const esPropioOficial = (vu: VehiculoUnificado): boolean =>
-    (vu.tipoStock === "Propio" || vu.tipoStock === "FinPropio") &&
-    condicionesPropio.has(normCondicion(vu.condicionDeStock));
-
-  // ─── 1. Stock propio · capitalPropio / stockValorizado ──────────────────
-  // Universo: VUs con enStockActivo (stock vigente, no FNE ni saldos).
-  // Para USADOS, además se excluyen Stock B y Judicial — ver bloque arriba.
-  let stockValorizado = 0;
-  let capitalPropio = 0;
-  let unidadesStock = 0;
-  let unidadesPropio = 0;
-  for (const vu of vus) {
-    if (!aplicaEnStockPropio(vu)) continue;
-    const costo = vu.costoNeto ?? 0;
-    stockValorizado += costo;
-    unidadesStock++;
-    if (esPropioOficial(vu)) {
-      capitalPropio += costo;
-      unidadesPropio++;
-    }
-  }
-  const pctStockPropio = stockValorizado > 0
-    ? (capitalPropio / stockValorizado) * 100
+  // ─── 1. Stock pagado · stockPagado / stockActivoValorizado ─────────────
+  // FUENTE ÚNICA (capital-trabajo.ts) — el MISMO número que muestra Tendencias.
+  // Reemplaza el antiguo "Stock Propio" (tipoStock Propio/FinPropio + condición
+  // oficial), que mezclaba test cars y autos NO pagados y NO era capital de
+  // trabajo. El KPI correcto es lo PAGADO e inmovilizado: `Pagado?`=pagado ∧ en
+  // stock activo ∧ NO Judicial. Denominador = stock activo no-judicial (mismo
+  // universo, sin el flag pagado). Judicial queda fuera (num y denom).
+  const mPagado = stockPagado(vus);
+  const mActivo = stockActivoValorizado(vus);
+  const capitalPagado = mPagado.monto;
+  const unidadesPagado = mPagado.unidades;
+  const stockValorizado = mActivo.monto;
+  const unidadesStock = mActivo.unidades;
+  const pctStockPagado = stockValorizado > 0
+    ? (capitalPagado / stockValorizado) * 100
     : 0;
-  const p1 = puntosLineal(pctStockPropio, META_STOCK_PROPIO_PCT, MAX_STOCK_PROPIO_PCT, PESO_I1);
-
-  // Drill consistente con el numerador: NO listar autos excluidos del cálculo.
-  const drillStockPropio = vus.filter(
-    (vu) => aplicaEnStockPropio(vu) && esPropioOficial(vu),
-  );
+  const p1 = puntosLineal(pctStockPagado, META_STOCK_PROPIO_PCT, MAX_STOCK_PROPIO_PCT, PESO_I1);
+  const drillStockPagado = mPagado.items;
 
   // Conteo de Judicial de la marca · solo para la nota del indicador (Judicial
-  // queda fuera del score vía aplicaEnStockPropio). El detalle Stock No
-  // Disponible (universo stockAB="B") se arma aparte, desde el store crudo.
+  // queda fuera del score, num y denom). El detalle Stock No Disponible
+  // (universo stockAB="B") se arma aparte, desde el store crudo.
   const judicialMarca = vus.filter((vu) => vu.enStockActivo && vu.stockAB === "Judicial").length;
 
-  // ─── 2. Provisiones envejecidas >90d ──────────────────────────────────
-  // Criterio alineado con módulo /provisiones (decisión usuario 2026-06):
-  // "envejecida" = saldo ABIERTO (saldo ≠ 0) con aging > 90 días.
-  // Antes filtraba por estado === "no_facturada" — eso era más estricto y
-  // dejaba afuera provisiones parcialmente facturadas con saldo abierto que
-  // SÍ están arrastrando capital y SÍ aparecen en /provisiones como críticas.
-  // El selector ahora considera el universo COMPLETO de saldos abiertos.
-  const prov90 = provisiones.filter(
-    (p) => (p.saldo ?? 0) !== 0 && (p.agingDias ?? 0) > 90,
-  );
+  // ─── 2. Provisiones envejecidas >90d · FUENTE ÚNICA ───────────────────
+  // saldo ABIERTO (saldo ≠ 0) con aging > 90 días — definición en capital-trabajo.ts.
+  const mProv90 = provisiones90(provisiones);
+  const prov90 = mProv90.items;
   const p2 = puntosLineal(prov90.length, META_PROV_90D, MAX_PROV_90D, PESO_I2);
-  const montoProv90 = prov90.reduce((s, p) => s + (p.saldo ?? 0), 0);
+  const montoProv90 = mProv90.monto;
 
-  // ─── 3. Crédito Pompeyo >15d (sobre VUs) ──────────────────────────────
-  const cp15 = vus.filter((vu) => {
-    if (vu.creditoPompeyo <= 0) return false;
-    const d = diasMaxCreditoPompeyo(vu);
-    return d != null && d > 15;
-  });
+  // ─── 3. Crédito Pompeyo >15d · FUENTE ÚNICA ───────────────────────────
+  const mCP15 = creditoPompeyo15(vus);
+  const cp15 = mCP15.items;
   const p3 = puntosLineal(cp15.length, META_CP_15D, MAX_CP_15D, PESO_I3);
-  const montoCP = cp15.reduce((s, vu) => s + vu.creditoPompeyo, 0);
+  const montoCP = mCP15.monto;
 
   // ─── 4. Saldos vehículo T3+ · monto T3+ / monto total vehículo ────────
+  // Numerador (T3+) desde FUENTE ÚNICA; denominador = TODO saldo vehículo (base
+  // del ratio, no es una de las 4 métricas).
+  const mSaldosT3 = saldosT3Metrica(saldos);
+  const saldosT3 = mSaldosT3.items;
   const saldosVeh = saldos.filter((r) => r.categoria === "vehiculo");
-  const saldosT3 = saldosVeh.filter((r) => TRAMOS_T3PLUS.has(r.statusDPS));
   const montoSaldosVeh = saldosVeh.reduce((s, r) => s + (r.saldoXDocumentar ?? 0), 0);
-  const montoSaldosT3 = saldosT3.reduce((s, r) => s + (r.saldoXDocumentar ?? 0), 0);
+  const montoSaldosT3 = mSaldosT3.monto;
   const pctSaldosT3 = montoSaldosVeh > 0 ? (montoSaldosT3 / montoSaldosVeh) * 100 : 0;
   const p4 = puntosLineal(pctSaldosT3, META_SALDOS_T3_PCT, MAX_SALDOS_T3_PCT, PESO_I4);
   const pctSaldosT3Unidades = saldosVeh.length > 0
@@ -280,14 +214,16 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
   // ─── Indicadores empaquetados ──────────────────────────────────────────
   const indicadores: Indicador[] = [
     {
+      // id interno estable "stock_propio" (clave histórica + UI); el KPI ahora
+      // es Stock Pagado — capital propio efectivamente desembolsado e inmovilizado.
       id: "stock_propio",
-      nombre: "Stock propio",
-      metaTexto: `≤ ${META_STOCK_PROPIO_PCT}% del stock valorizado`,
-      valorTexto: `${pctStockPropio.toFixed(1)}%`,
-      valor: pctStockPropio,
-      detalle: `${unidadesPropio} de ${unidadesStock} VIN · ${
+      nombre: "Stock pagado",
+      metaTexto: `≤ ${META_STOCK_PROPIO_PCT}% del stock activo valorizado`,
+      valorTexto: `${pctStockPagado.toFixed(1)}%`,
+      valor: pctStockPagado,
+      detalle: `${unidadesPagado} de ${unidadesStock} VIN · ${
         unidadesStock > 0
-          ? ((unidadesPropio / unidadesStock) * 100).toFixed(0)
+          ? ((unidadesPagado / unidadesStock) * 100).toFixed(0)
           : 0
       }% por unidades`,
       // Nota chica · Judicial (columna oficial Stock A/B) queda fuera del score.
@@ -295,12 +231,12 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
         judicialMarca > 0
           ? `Judicial (${judicialMarca}) fuera del score · ver Stock No Disponible`
           : undefined,
-      monto: capitalPropio,
-      casos: unidadesPropio,
+      monto: capitalPagado,
+      casos: unidadesPagado,
       puntos: p1,
       peso: PESO_I1,
-      cumple: pctStockPropio <= META_STOCK_PROPIO_PCT,
-      accion: "Reducir stock propio · vender o pasar a Floor Plan.",
+      cumple: pctStockPagado <= META_STOCK_PROPIO_PCT,
+      accion: "Reducir stock pagado · vender o pasar a Floor Plan.",
       color: "#1F2A44",
     },
     {
@@ -383,7 +319,8 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     estado,
     capitalGestionado: {
       stockTotal: stockValorizado,
-      stockPropio: capitalPropio,
+      // campo `stockPropio` (clave estable) ahora porta el monto de Stock Pagado.
+      stockPropio: capitalPagado,
       fne,
       saldos: montoSaldosVeh,
       provisiones: provActivo,
@@ -391,7 +328,7 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
     indicadores,
     plan,
     drill: {
-      stockPropio: drillStockPropio,
+      stockPropio: drillStockPagado,
       provisiones90d: prov90,
       cp15d: cp15,
       saldosT3: saldosT3,
@@ -405,7 +342,7 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
 // Decisión usuario 2026-06 (Fase 1b-B): el nuevo Score Gerencial del
 // Velocity OS mide DISCIPLINA OPERACIONAL (alertas, brechas, reincidencia),
 // no higiene financiera. El score histórico que vive en este archivo mide
-// HIGIENE DE CAPITAL (Stock Propio, Provisiones >90d, CP >15d, Saldos T3+).
+// HIGIENE DE CAPITAL (Stock Pagado, Provisiones >90d, CP >15d, Saldos T3+).
 //
 // Para evitar convivencia ambigua de dos "Scores Gerenciales", el legacy
 // se renombra a `calcularScoreHigieneCapital`. Mantenemos `calcularScoreGerencial`
@@ -414,7 +351,7 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
 // ────────────────────────────────────────────────────────────────────
 
 /**
- * Score de HIGIENE de capital (Stock Propio, Provisiones >90d, CP >15d, Saldos T3+).
+ * Score de HIGIENE de capital (Stock Pagado, Provisiones >90d, CP >15d, Saldos T3+).
  * Lectura financiera. NO es el Score Gerencial del Velocity OS histórico
  * (ese mide disciplina operacional · ver `extraer-1b-b.ts`).
  */

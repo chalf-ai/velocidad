@@ -5,7 +5,7 @@
  *
  * Decisión nomenclatura 2026-06: el "Score Gerencial" de esta pantalla mide
  * la capacidad del gerente de administrar el capital bajo su responsabilidad
- * (Stock Propio, Provisiones >90d, CP >15d, Saldos T3+, pesos 40/40/10/10) —
+ * (Stock Pagado, Provisiones >90d, CP >15d, Saldos T3+, pesos 40/40/10/10) —
  * eso es exactamente lo que un gerente controla y gestiona. Coherente.
  * El score histórico de DISCIPLINA OPERACIONAL del Velocity OS se llama
  * "Score Cumplimiento Operacional" y vive en /tendencias.
@@ -182,7 +182,7 @@ export default function ScoreGerencialPage() {
           Capital gestionado · contexto
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[11.5px]">
-          <CapitalMini label="Stock total" value={fmtCLPCompact(capitalGestionado.stockTotal)} sub={`${fmtCLPCompact(capitalGestionado.stockPropio)} propio`} />
+          <CapitalMini label="Stock total" value={fmtCLPCompact(capitalGestionado.stockTotal)} sub={`${fmtCLPCompact(capitalGestionado.stockPropio)} pagado`} />
           <CapitalMini label="FNE" value={fmtCLPCompact(capitalGestionado.fne)} />
           <CapitalMini label="Saldos vehículo" value={fmtCLPCompact(capitalGestionado.saldos)} />
           <CapitalMini label="Provisiones" value={fmtCLPCompact(capitalGestionado.provisiones)} />
