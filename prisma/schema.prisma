@@ -512,6 +512,30 @@ model DailyCapitalSnapshot {
   /// Suma de los montos presentes (las 4 oficiales). null si ninguno disponible.
   capitalTrabajoTotal Float?
 
+  // ── PR 2 · métricas oficiales nuevas (Caja Comercial/Total + desglose + FNE) ──
+  // Persistencia histórica explícita — NO reconstruir después. Todas nullable:
+  // null = la fuente de ese componente no estaba vigente al generar la foto.
+  /// Caja Comercial Gestionable (Score) — VIN / valor.
+  cajaComercialUnidades Int?
+  cajaComercialMonto    Float?
+  /// Caja Inmovilizada Total (Pagado∪Propio∪FinPropio) — VIN / valor.
+  cajaTotalUnidades     Int?
+  cajaTotalMonto        Float?
+  /// Desglose · Test Cars.
+  testCarUnidades       Int?
+  testCarMonto          Float?
+  /// Desglose · Autos Compañía.
+  autosCompaniaUnidades Int?
+  autosCompaniaMonto    Float?
+  /// Desglose · Judicial.
+  judicialUnidades      Int?
+  judicialMonto         Float?
+  /// FNE operativo — VIN / valor factura.
+  fneUnidades           Int?
+  fneMonto              Float?
+  /// Aging máximo (días) de Provisiones >90d Venta.
+  provisionesAgingMax   Int?
+
   /// Fuentes vigentes usadas al generar:
   /// [{ fuente, etiqueta, presente, snapshotId, nombre, fechaCorte, cargadoEl }]
   cobertura Json
