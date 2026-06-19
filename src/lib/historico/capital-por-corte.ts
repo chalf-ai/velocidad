@@ -29,6 +29,7 @@ import {
   provisiones90,
   creditoPompeyo15,
   saldosT3,
+  desglosarCajaInmovilizada,
   type MetricaCapital,
 } from "@/lib/selectors/capital-trabajo";
 import { buildVehiculosUnificados } from "@/lib/selectors/vehiculo-unificado";
@@ -150,6 +151,53 @@ export function capitalDesdePayloads(args: {
     creditoPompeyo15: vus ? comp(creditoPompeyo15(vus)) : null,
     provisiones90: f.provisiones ? comp(provisiones90(f.provisiones.registros)) : null,
     saldosT3: f.saldos ? comp(saldosT3(f.saldos.registros)) : null,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────
+// DESGLOSE DE CAJA INMOVILIZADA · composición ACTUAL (Tendencias, en vivo)
+//
+// Lente financiero completo (Caja Inmovilizada Total = Pagado ∪ Propio ∪
+// FinPropio) separado en sus 4 categorías de gestión. Recompute desde los
+// payloads vigentes con el MISMO filtro de marca que Score. NO persiste nada
+// (no toca DailyCapitalSnapshot ni su generación). Cuando PR 2 persista estos
+// campos a diario, esto pasa a ser también serie histórica.
+// ────────────────────────────────────────────────────────────────────
+
+export interface DesgloseCajaCorte {
+  total: ComponenteCapital;
+  comercial: ComponenteCapital;
+  testCars: ComponenteCapital;
+  autosCompania: ComponenteCapital;
+  judicial: ComponenteCapital;
+  otros: ComponenteCapital;
+}
+
+export function desgloseCajaDesdePayloads(args: {
+  stock: ParsedExcel | null;
+  saldos: ParsedSaldos | null;
+  fne?: ParsedFNE | null;
+  marca: string | null;
+}): DesgloseCajaCorte | null {
+  const f = filtrarPayloadsPorMarca({
+    stock: args.stock,
+    fne: args.fne ?? null,
+    saldos: args.saldos,
+    provisiones: null,
+    marca: args.marca,
+  });
+  if (!f.stock) return null;
+  const vus = Array.from(
+    buildVehiculosUnificados({ data: f.stock, fne: f.fne, saldos: f.saldos }).values(),
+  );
+  const d = desglosarCajaInmovilizada(vus);
+  return {
+    total: comp(d.total),
+    comercial: comp(d.comercial),
+    testCars: comp(d.testCars),
+    autosCompania: comp(d.autosCompania),
+    judicial: comp(d.judicial),
+    otros: comp(d.otros),
   };
 }
 

@@ -4,7 +4,7 @@
  * Mide cómo el gerente de marca administra el capital de su unidad, con 4
  * indicadores aprobados y pesos fijos:
  *
- *   1. Stock pagado (40)        · stockPagado / stockActivoValorizado ≤ 5%
+ *   1. Caja Comercial Gestionable (40) · cajaComercialGestionable / stockActivoValorizado ≤ 5%
  *   2. Provisiones >90d Venta (40) · count(area=ventas · saldo≠0 · aging>90) = 0
  *   3. Crédito Pompeyo >15d (10) · count(VIN con CP · dias>15) = 0
  *   4. Saldos vehículo T3+ (10) · sum(saldoT3+) / sum(saldosVehículo) ≤ 15%
@@ -25,7 +25,10 @@ import type { SaldoRegistro, ProvisionRegistro } from "../types";
 import type { VehiculoUnificado } from "./vehiculo-unificado";
 import { diasMaxCreditoPompeyo } from "../gestion/caso";
 import {
-  stockPagado,
+  cajaComercialGestionable,
+  cajaTestCars,
+  cajaAutosCompania,
+  cajaJudicial,
   stockActivoValorizado,
   provisiones90,
   creditoPompeyo15,
@@ -155,29 +158,33 @@ export interface ScoreGerencialInput {
 export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerencialResultado {
   const { marca, vus, saldos, provisiones } = input;
 
-  // ─── 1. Stock pagado · stockPagado / stockActivoValorizado ─────────────
-  // FUENTE ÚNICA (capital-trabajo.ts) — el MISMO número que muestra Tendencias.
-  // Reemplaza el antiguo "Stock Propio" (tipoStock Propio/FinPropio + condición
-  // oficial), que mezclaba test cars y autos NO pagados y NO era capital de
-  // trabajo. El KPI correcto es lo PAGADO e inmovilizado: `Pagado?`=pagado ∧ en
-  // stock activo ∧ NO Judicial. Denominador = stock activo no-judicial (mismo
-  // universo, sin el flag pagado). Judicial queda fuera (num y denom).
-  const mPagado = stockPagado(vus);
+  // ─── 1. Caja Comercial Gestionable · cajaComercial / stockActivoValorizado ─
+  // FUENTE ÚNICA (capital-trabajo.ts). Lente de RESPONSABILIDAD gerencial: solo
+  // la caja inmovilizada que el gerente comercial CONTROLA (Nuevos/Usados, incl.
+  // Stock B). Excluye Test Cars, Autos Compañía y Judicial — el gerente no
+  // responde por activos que no gestiona (Responsabilidad = Capacidad de acción).
+  // Reemplaza al antiguo "Stock Pagado" (que mezclaba test cars + autos compañía
+  // pagados). Auditoría PAGADO vs PROPIO por marca, 2026-06. Denominador = stock
+  // activo no-judicial (sin cambios), para no mover la base del ratio.
+  const mComercial = cajaComercialGestionable(vus);
   const mActivo = stockActivoValorizado(vus);
-  const capitalPagado = mPagado.monto;
-  const unidadesPagado = mPagado.unidades;
+  const capitalPagado = mComercial.monto;
+  const unidadesPagado = mComercial.unidades;
   const stockValorizado = mActivo.monto;
   const unidadesStock = mActivo.unidades;
   const pctStockPagado = stockValorizado > 0
     ? (capitalPagado / stockValorizado) * 100
     : 0;
   const p1 = puntosLineal(pctStockPagado, META_STOCK_PROPIO_PCT, MAX_STOCK_PROPIO_PCT, PESO_I1);
-  const drillStockPagado = mPagado.items;
+  const drillStockPagado = mComercial.items;
 
-  // Conteo de Judicial de la marca · solo para la nota del indicador (Judicial
-  // queda fuera del score, num y denom). El detalle Stock No Disponible
-  // (universo stockAB="B") se arma aparte, desde el store crudo.
-  const judicialMarca = vus.filter((vu) => vu.enStockActivo && vu.stockAB === "Judicial").length;
+  // Bloques de caja inmovilizada que NO carga el gerente comercial — solo para
+  // la nota del indicador (van a indicadores secundarios / Tendencias, no al
+  // score). El detalle Stock No Disponible (stockAB="B") se arma aparte.
+  const mTest = cajaTestCars(vus);
+  const mCia = cajaAutosCompania(vus);
+  const mJudic = cajaJudicial(vus);
+  const judicialMarca = mJudic.unidades;
 
   // ─── 2. Provisiones envejecidas >90d · FUENTE ÚNICA ───────────────────
   // saldo ABIERTO (saldo ≠ 0) con aging > 90 días — definición en capital-trabajo.ts.
@@ -215,9 +222,10 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
   const indicadores: Indicador[] = [
     {
       // id interno estable "stock_propio" (clave histórica + UI); el KPI ahora
-      // es Stock Pagado — capital propio efectivamente desembolsado e inmovilizado.
+      // es Caja Comercial Gestionable — caja inmovilizada bajo responsabilidad
+      // del gerente comercial (sin Test Cars / Autos Compañía / Judicial).
       id: "stock_propio",
-      nombre: "Stock pagado",
+      nombre: "Caja Comercial Gestionable",
       metaTexto: `≤ ${META_STOCK_PROPIO_PCT}% del stock activo valorizado`,
       valorTexto: `${pctStockPagado.toFixed(1)}%`,
       valor: pctStockPagado,
@@ -226,17 +234,24 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
           ? ((unidadesPagado / unidadesStock) * 100).toFixed(0)
           : 0
       }% por unidades`,
-      // Nota chica · Judicial (columna oficial Stock A/B) queda fuera del score.
-      nota:
-        judicialMarca > 0
-          ? `Judicial (${judicialMarca}) fuera del score · ver Stock No Disponible`
-          : undefined,
+      // Nota chica · bloques de caja inmovilizada que NO carga el gerente
+      // comercial (van a Tendencias, no al score).
+      nota: (() => {
+        const fuera = [
+          mTest.unidades > 0 ? `Test Cars (${mTest.unidades})` : null,
+          mCia.unidades > 0 ? `Autos Compañía (${mCia.unidades})` : null,
+          judicialMarca > 0 ? `Judicial (${judicialMarca})` : null,
+        ].filter(Boolean);
+        return fuera.length > 0
+          ? `Fuera del score: ${fuera.join(" · ")} · ver Tendencias`
+          : undefined;
+      })(),
       monto: capitalPagado,
       casos: unidadesPagado,
       puntos: p1,
       peso: PESO_I1,
       cumple: pctStockPagado <= META_STOCK_PROPIO_PCT,
-      accion: "Reducir stock pagado · vender o pasar a Floor Plan.",
+      accion: "Reducir caja comercial · vender o pasar a Floor Plan.",
       color: "#1F2A44",
     },
     {

@@ -113,3 +113,149 @@ export function stockActivoValorizado(vus: VehiculoUnificado[]): MetricaCapital<
     items,
   };
 }
+
+// ────────────────────────────────────────────────────────────────────
+// CAJA INMOVILIZADA · dos lentes (auditoría PAGADO vs PROPIO, 2026-06)
+//
+// La auditoría definitiva demostró que ni `Pagado?` ni `tipoStock=Propio`
+// bastan por separado (están desactualizados en direcciones opuestas). La
+// VERDAD FINANCIERA de caja propia inmovilizada es la UNIÓN:
+//     Caja Inmovilizada = Pagado ∪ Propio ∪ FinPropio   (en stock activo)
+//
+// Sobre ese universo se separan dos LENTES:
+//  • Score Gerencial  → "Caja Comercial Gestionable" (solo lo que el gerente
+//    controla: Nuevos/Usados, incl. Stock B; sin Test Cars, Autos Compañía
+//    ni Judicial). Principio: Responsabilidad = Capacidad de acción.
+//  • Tendencias       → "Caja Inmovilizada Total" con desglose obligatorio
+//    (Comercial / Test Cars / Autos Compañía / Judicial). No esconder caja.
+//
+// La clasificación es VIN a VIN y reproduce EXACTO la auditoría aprobada
+// (corte 17-jun: Total 555 · Comercial 320 · Test 132 · Cía 70 · Judicial 33).
+// ────────────────────────────────────────────────────────────────────
+
+/** Categoría de gestión de un VIN dentro de la Caja Inmovilizada. */
+export type CategoriaCaja =
+  | "comercial"
+  | "test_car"
+  | "autos_compania"
+  | "judicial"
+  | "otros";
+
+/**
+ * BASE financiera: caja propia efectivamente inmovilizada =
+ *   Pagado ∪ tipoStock∈{Propio, FinPropio}, en stock activo.
+ * (FinPropio entra por la fórmula oficial de la auditoría; la diferencia con la
+ *  base Pagado∪Propio son los FinPropio no pagados.)
+ */
+export function esCajaInmovilizada(vu: VehiculoUnificado): boolean {
+  return (
+    vu.enStockActivo &&
+    (vu.esPagado || vu.tipoStock === "Propio" || vu.tipoStock === "FinPropio")
+  );
+}
+
+/**
+ * Clasifica un VU ACTIVO en su categoría de gestión. Precedencia exclusiva:
+ *   Judicial > Test Car > Autos Compañía > Comercial > Otros.
+ * Misma lógica (mismos ORs) que la auditoría definitiva PAGADO vs PROPIO por
+ * marca responsable — por eso reproduce los conteos VIN a VIN.
+ */
+export function clasificarCaja(vu: VehiculoUnificado): CategoriaCaja {
+  const dealer = (vu.estadoDealer ?? "").toUpperCase();
+  const cond = (vu.condicionDeStock ?? "").toUpperCase();
+  if (vu.stockAB === "Judicial" || dealer === "JUDICIAL" || vu.esJudicial) {
+    return "judicial";
+  }
+  if (vu.esTescar || dealer === "TEST CAR" || cond.includes("TEST CAR")) {
+    return "test_car";
+  }
+  if (
+    vu.unidadNegocio === "AutosCompania" ||
+    dealer.includes("COMPANY") ||
+    dealer.includes("RENTING")
+  ) {
+    return "autos_compania";
+  }
+  if (vu.unidadNegocio === "Nuevos" || vu.unidadNegocio === "Usados") {
+    return "comercial";
+  }
+  return "otros";
+}
+
+function agregar(items: VehiculoUnificado[]): MetricaCapital<VehiculoUnificado> {
+  return {
+    unidades: items.length,
+    monto: items.reduce((s, v) => s + (v.costoNeto ?? 0), 0),
+    items,
+  };
+}
+
+/**
+ * CAJA INMOVILIZADA TOTAL — verdad financiera (Tendencias). Toda la caja propia
+ * inmovilizada, sin importar quién la gestiona. = base `esCajaInmovilizada`.
+ */
+export function cajaInmovilizadaTotal(
+  vus: VehiculoUnificado[],
+): MetricaCapital<VehiculoUnificado> {
+  return agregar(vus.filter(esCajaInmovilizada));
+}
+
+/**
+ * CAJA COMERCIAL GESTIONABLE — lente de RESPONSABILIDAD gerencial (Score). Caja
+ * inmovilizada que el gerente comercial controla: Nuevos/Usados (incl. Stock B),
+ * excluye Test Cars, Autos Compañía y Judicial.
+ */
+export function cajaComercialGestionable(
+  vus: VehiculoUnificado[],
+): MetricaCapital<VehiculoUnificado> {
+  return agregar(
+    vus.filter((vu) => esCajaInmovilizada(vu) && clasificarCaja(vu) === "comercial"),
+  );
+}
+
+/** Caja inmovilizada en Test Cars (bloque aparte — la marca los ve, no el score). */
+export function cajaTestCars(vus: VehiculoUnificado[]): MetricaCapital<VehiculoUnificado> {
+  return agregar(
+    vus.filter((vu) => esCajaInmovilizada(vu) && clasificarCaja(vu) === "test_car"),
+  );
+}
+
+/** Caja inmovilizada en Autos Compañía / corporativos (Responsable = Empresa). */
+export function cajaAutosCompania(
+  vus: VehiculoUnificado[],
+): MetricaCapital<VehiculoUnificado> {
+  return agregar(
+    vus.filter((vu) => esCajaInmovilizada(vu) && clasificarCaja(vu) === "autos_compania"),
+  );
+}
+
+/** Caja inmovilizada Judicial (Responsable = Legal/Recuperación). */
+export function cajaJudicial(vus: VehiculoUnificado[]): MetricaCapital<VehiculoUnificado> {
+  return agregar(
+    vus.filter((vu) => esCajaInmovilizada(vu) && clasificarCaja(vu) === "judicial"),
+  );
+}
+
+/** Desglose completo de la Caja Inmovilizada — para el panel de Tendencias.
+ *  Garantía: comercial + testCars + autosCompania + judicial + otros = total. */
+export interface DesgloseCaja {
+  total: MetricaCapital<VehiculoUnificado>;
+  comercial: MetricaCapital<VehiculoUnificado>;
+  testCars: MetricaCapital<VehiculoUnificado>;
+  autosCompania: MetricaCapital<VehiculoUnificado>;
+  judicial: MetricaCapital<VehiculoUnificado>;
+  otros: MetricaCapital<VehiculoUnificado>;
+}
+
+export function desglosarCajaInmovilizada(vus: VehiculoUnificado[]): DesgloseCaja {
+  const base = vus.filter(esCajaInmovilizada);
+  const por = (c: CategoriaCaja) => agregar(base.filter((vu) => clasificarCaja(vu) === c));
+  return {
+    total: agregar(base),
+    comercial: por("comercial"),
+    testCars: por("test_car"),
+    autosCompania: por("autos_compania"),
+    judicial: por("judicial"),
+    otros: por("otros"),
+  };
+}
