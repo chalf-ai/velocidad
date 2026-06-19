@@ -99,25 +99,46 @@ async def enviar_seguimiento() -> None:
 async def generar_snapshot_diario() -> None:
     """
     Dispara la foto diaria del estado vigente llamando al endpoint Next.js.
-    El cálculo vive en TypeScript (mismos selectores que la app) — este job
-    solo agenda y autentica. NO lee Excel, NO toca payloads.
+    El cálculo vive en TypeScript (mismos selectores que la app).
+
+    Camino A: antes de postear, consulta FNE EN VIVO al gateway ROMA Amazon
+    (ROMA se consulta DENTRO de Amazon; el agente solo orquesta por HTTP) y lo
+    manda como payload parcial {roma:{fne}}. Si el gateway falla, postea SIN
+    override → el endpoint usa la fuente validada (snapshot activo). NUNCA
+    inventa FNE.
     """
     import httpx
+    from .roma_gateway import consultar_fne_gateway
 
+    # 1. FNE en vivo desde el gateway ROMA Amazon. Falla → fuente validada.
+    roma_payload = None
+    try:
+        fne = await consultar_fne_gateway()
+        roma_payload = {"fne": fne}
+        logger.info("FNE gateway ROMA en vivo: %s VIN", fne["unidades"])
+    except Exception:
+        logger.exception(
+            "Gateway ROMA no disponible — snapshot con fuente validada (sin override FNE)"
+        )
+
+    # 2. POST a Velocidad. body=None → endpoint usa snapshots activos (fallback).
     url = f"{settings.app_base_url.rstrip('/')}/api/snapshots/daily"
+    body = {"roma": roma_payload} if roma_payload else None
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {settings.daily_snapshot_token}"},
+                json=body,
             )
         if resp.status_code == 200:
             data = resp.json()
             logger.info(
-                "Snapshot diario OK — fecha=%s scopes=%s marcas=%s",
+                "Snapshot diario OK — fecha=%s scopes=%s marcas=%s romaEnVivo=%s",
                 data.get("fecha"),
                 data.get("scopes"),
                 len(data.get("marcas", [])),
+                data.get("romaEnVivo"),
             )
         else:
             logger.error(

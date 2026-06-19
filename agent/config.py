@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     daily_snapshot_token: str = ""               # Bearer de /api/snapshots/daily; vacío = job deshabilitado
     snapshot_hora: str = "20:00"                 # HH:MM, hora Chile — todos los días
 
+    # Gateway ROMA Amazon (Camino A) — el agente consulta FNE en vivo vía el
+    # MISMO gateway que usa el MCP `roma-db` (ROMA se consulta DENTRO de Amazon).
+    # Vacío → no se llama al gateway; el snapshot usa la fuente validada (sin
+    # override FNE). El api key NUNCA se imprime en logs.
+    roma_gateway_url: str = ""                    # /mcp/ del gateway (con slash final; evita el 307)
+    roma_gateway_api_key: str = ""               # X-API-Key del gateway (mismo del MCP roma-db)
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property
