@@ -71,13 +71,15 @@ function labelDiaLargo(dia: string): string {
 // Indicadores · definición única
 // ────────────────────────────────────────────────────────────────────
 
-type IndicadorKey = "stockPagado" | "saldosVehiculo" | "bonos" | "provisiones";
+// Las 4 métricas OFICIALES de Capital de Trabajo — las MISMAS que /score-gerencial
+// (fuente única capital-trabajo.ts). Mismo orden que los indicadores del Score.
+type IndicadorKey = "stockPagado" | "provisiones90" | "creditoPompeyo15" | "saldosT3";
 
 const INDICADORES: { key: IndicadorKey; nombre: string; descripcion: string }[] = [
-  { key: "stockPagado", nombre: "Stock Pagado", descripcion: "autos pagados con caja propia, sin rotar" },
-  { key: "saldosVehiculo", nombre: "Saldos", descripcion: "saldos de vehículo por documentar" },
-  { key: "bonos", nombre: "Bonos y Comisiones", descripcion: "bonos / comisiones por cobrar" },
-  { key: "provisiones", nombre: "Provisiones", descripcion: "provisiones de ventas con saldo abierto" },
+  { key: "stockPagado", nombre: "Stock Pagado", descripcion: "autos pagados con caja propia, en stock activo (sin Judicial)" },
+  { key: "provisiones90", nombre: "Provisiones >90 días", descripcion: "provisiones con saldo abierto y aging > 90 días" },
+  { key: "creditoPompeyo15", nombre: "Crédito Pompeyo >15 días", descripcion: "diferencia por cobrar al cliente > 15 días desde factura" },
+  { key: "saldosT3", nombre: "Saldos Vehículo T3+", descripcion: "saldos de vehículo por documentar en tramos T3+" },
 ];
 
 // ────────────────────────────────────────────────────────────────────
@@ -222,9 +224,9 @@ export default async function TendenciasPage({
       dia: f.fecha.toISOString().slice(0, 10),
       capital: {
         stockPagado: componente(f.stockPagadoUnidades, f.stockPagadoMonto),
-        saldosVehiculo: componente(f.saldosUnidades, f.saldosMonto),
-        bonos: componente(f.bonosUnidades, f.bonosMonto),
-        provisiones: componente(f.provisionesUnidades, f.provisionesMonto),
+        provisiones90: componente(f.provisionesUnidades, f.provisionesMonto),
+        creditoPompeyo15: componente(f.cpUnidades, f.cpMonto),
+        saldosT3: componente(f.saldosUnidades, f.saldosMonto),
       },
       score: f.scoreGerencial,
       capitalTotal: f.capitalTrabajoTotal,

@@ -491,17 +491,25 @@ model DailyCapitalSnapshot {
   scoreCumplimientoOperacional Int?
   scoreVelocidad               Int?
 
-  // ── Componentes del capital de trabajo ─────────────────────────────
-  // null = la fuente de ese componente no estaba vigente al generar.
+  // ── Componentes del capital de trabajo · 4 métricas OFICIALES ──────
+  // Fuente única capital-trabajo.ts (fase 4 unificación, 2026-06). null = la
+  // fuente de ese componente no estaba vigente al generar.
   stockPagadoUnidades Int?
   stockPagadoMonto    Float?
+  /// `saldos*` porta Saldos Vehículo T3+ (statusDPS T3..T7), no el total.
   saldosUnidades      Int?
   saldosMonto         Float?
-  bonosUnidades       Int?
-  bonosMonto          Float?
+  /// `provisiones*` porta Provisiones >90 días (saldo≠0 ∧ aging>90).
   provisionesUnidades Int?
   provisionesMonto    Float?
-  /// Suma de los montos presentes. null si ningún componente disponible.
+  /// Crédito Pompeyo >15 días (CP>0 ∧ máx. días desde factura>15).
+  cpUnidades          Int?
+  cpMonto             Float?
+  /// DEPRECADO — "Bonos y Comisiones" no es una de las 4 oficiales. Se dejó de
+  /// poblar en fase 4; columnas se mantienen para no romper filas previas.
+  bonosUnidades       Int?
+  bonosMonto          Float?
+  /// Suma de los montos presentes (las 4 oficiales). null si ninguno disponible.
   capitalTrabajoTotal Float?
 
   /// Fuentes vigentes usadas al generar:
