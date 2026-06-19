@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
@@ -172,13 +173,21 @@ async def debug_tareas_ciclo():
 
 
 @app.get("/debug/snapshot/ciclo")
-async def debug_snapshot_ciclo():
+async def debug_snapshot_ciclo(request: Request):
     """
     Dispara generar_snapshot_diario() a demanda (Camino A): consulta FNE al
-    gateway ROMA Amazon y postea a /api/snapshots/daily. Para validar el flujo
-    sin esperar las 20:00. Si el gateway falla, cae a fuente validada (sin
-    inventar FNE). No expone secretos.
+    gateway ROMA Amazon y postea a /api/snapshots/daily. Útil para validar el
+    flujo o ejecutarlo manualmente sin esperar las 20:00. Si el gateway falla,
+    cae a fuente validada (sin inventar FNE). No expone secretos.
+
+    PROTEGIDO con Bearer: exige `Authorization: Bearer <DAILY_SNAPSHOT_TOKEN>`
+    (el mismo token que el agente usa para postear a Velocidad). Sin token
+    configurado o header inválido → 401. Ya no es público.
     """
+    token = settings.daily_snapshot_token
+    auth = request.headers.get("authorization", "")
+    if not token or not secrets.compare_digest(auth, f"Bearer {token}"):
+        return Response(status_code=401)
     try:
         return await generar_snapshot_diario()
     except Exception as e:
