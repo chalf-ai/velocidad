@@ -34,7 +34,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/cn";
-import { fmtCLPCompact, fmtNum } from "@/lib/format";
+import { fmtCLPCompact, fmtNum, fmtDate } from "@/lib/format";
 import { AbrirCasoButton } from "@/components/AbrirCasoButton";
 import { FichaGestionDocumental } from "@/components/FichaGestionDocumental";
 import { limpiarVIN } from "@/lib/parser/venta-apc";
@@ -50,6 +50,26 @@ import type {
   Indicador,
 } from "@/lib/selectors/score-gerencial";
 import type { VehiculoUnificado } from "@/lib/selectors/vehiculo-unificado";
+import {
+  reservaDeVU,
+  tieneReservaVigente,
+  type EstadoReserva,
+} from "@/lib/selectors/reserva";
+
+// Semáforo de reserva (decisión usuario 2026-06) — verde claro / amarillo /
+// rojo suave. Tintes de fila SUAVES: no confundir con "resuelto".
+const RESERVA_ROW_TINT: Record<EstadoReserva, string> = {
+  vigente: "bg-emerald-50/70 hover:bg-emerald-50",
+  vencida: "bg-amber-50/70 hover:bg-amber-50",
+  caida: "bg-red-50/60 hover:bg-red-50",
+  sin_reserva: "",
+};
+const RESERVA_BADGE_TONE: Record<EstadoReserva, "success" | "warning" | "danger" | "muted"> = {
+  vigente: "success",
+  vencida: "warning",
+  caida: "danger",
+  sin_reserva: "muted",
+};
 import type { ProvisionRegistro, SaldoRegistro } from "@/lib/types";
 
 const ICON_POR_INDICADOR: Record<IndicadorId, LucideIcon> = {
@@ -257,6 +277,15 @@ function TramoBadge({ tramo }: { tramo: string }) {
 }
 
 // Helper para Marca · derivación desde sucursal si el campo viene vacío.
+function LeyendaColor({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={cn("inline-block size-2 rounded-sm", className)} />
+      {label}
+    </span>
+  );
+}
+
 function marcaVisible(vu: VehiculoUnificado): string {
   if (vu.marca && vu.marca.trim()) return vu.marca;
   if (vu.marcaOriginadora && vu.marcaOriginadora.trim()) return vu.marcaOriginadora;
@@ -292,6 +321,13 @@ function ColaVins({
     [vus, modo],
   );
 
+  // Reservas vigentes (solo Caja Comercial Gestionable). NO salen de la métrica —
+  // se marcan visualmente como "en proceso de salida".
+  const reservados = useMemo(
+    () => (modo === "cp" ? 0 : vus.filter((vu) => tieneReservaVigente(vu)).length),
+    [vus, modo],
+  );
+
   const titulo =
     modo === "cp"
       ? "Crédito Pompeyo · > 15 días desde factura"
@@ -323,11 +359,25 @@ function ColaVins({
       totalMonto={totalMonto}
       totalMontoLabel={modo === "cp" ? "retenido" : "capital"}
     >
-      <div className="px-4 py-1.5 text-[11px] text-[--color-fg-muted] border-b border-[--color-border-soft] bg-[--color-bg-elev-1]/40">
-        {titulo}
+      <div className="px-4 py-1.5 text-[11px] text-[--color-fg-muted] border-b border-[--color-border-soft] bg-[--color-bg-elev-1]/40 flex flex-wrap items-center justify-between gap-2">
+        <span>
+          {titulo}
+          {modo !== "cp" && reservados > 0 && (
+            <span className="text-[--color-fg-dim]">
+              {" "}· <b className="text-emerald-700">{reservados}</b> en proceso de salida (siguen contando)
+            </span>
+          )}
+        </span>
+        {modo !== "cp" && reservados > 0 && (
+          <span className="flex items-center gap-2.5 text-[10px] text-[--color-fg-dim]">
+            <LeyendaColor className="bg-emerald-200" label="Reserva vigente" />
+            <LeyendaColor className="bg-amber-200" label="Sin avance >15d" />
+            <LeyendaColor className="bg-red-200" label="Resciliación" />
+          </span>
+        )}
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px] min-w-[1100px]">
+        <table className={cn("w-full text-[12.5px]", modo === "cp" ? "min-w-[1100px]" : "min-w-[1320px]")}>
           <thead>
             <tr className="text-left text-[10.5px] uppercase tracking-[0.05em] text-[--color-fg-muted] bg-[--color-bg-elev-1]">
               <th className="px-3 py-2 font-semibold">Marca / Modelo</th>
@@ -341,6 +391,7 @@ function ColaVins({
               <th className="px-3 py-2 font-semibold">
                 {modo === "cp" ? "Aging CP" : "Aging stock"}
               </th>
+              {modo !== "cp" && <th className="px-3 py-2 font-semibold">Reserva / Venta</th>}
               <th className="px-3 py-2 font-semibold">Responsable / Físico</th>
               <th className="px-3 py-2 font-semibold">Estado</th>
               <th className="px-3 py-2 font-semibold">Gestión</th>
@@ -356,14 +407,20 @@ function ColaVins({
                 modo === "cp" ? vu.creditoPompeyo : vu.capitalComprometido;
               const g = gestionByVin[vu.vinLimpio] ?? null;
               const fisico = chipFisicoSimple(vu);
+              const reserva = modo === "cp" ? null : reservaDeVU(vu);
+              const tint =
+                reserva && reserva.estado !== "sin_reserva"
+                  ? RESERVA_ROW_TINT[reserva.estado]
+                  : "";
               return (
                 <tr
                   key={vu.vinLimpio}
                   className={cn(
                     "border-b border-[--color-border-soft] transition",
-                    idx % 2 === 0
-                      ? "bg-white hover:bg-[--color-bg-elev-1]/60"
-                      : "bg-[--color-bg-elev-1]/30 hover:bg-[--color-bg-elev-1]/70",
+                    tint ||
+                      (idx % 2 === 0
+                        ? "bg-white hover:bg-[--color-bg-elev-1]/60"
+                        : "bg-[--color-bg-elev-1]/30 hover:bg-[--color-bg-elev-1]/70"),
                   )}
                 >
                   <td className="px-3 py-2">
@@ -408,6 +465,32 @@ function ColaVins({
                       <AgingBadge dias={diasStock} umbralWarn={90} umbralDanger={180} />
                     )}
                   </td>
+                  {modo !== "cp" && (
+                    <td className="px-3 py-2">
+                      {reserva && reserva.estado !== "sin_reserva" ? (
+                        <div className="space-y-0.5">
+                          <Badge tone={RESERVA_BADGE_TONE[reserva.estado]} size="xs">
+                            {reserva.badge}
+                          </Badge>
+                          {(reserva.folio || reserva.vendedor) && (
+                            <div className="text-[10.5px] text-[--color-fg-muted] truncate max-w-[170px]">
+                              {reserva.folio ? `Folio ${reserva.folio}` : ""}
+                              {reserva.folio && reserva.vendedor ? " · " : ""}
+                              {reserva.vendedor ?? ""}
+                            </div>
+                          )}
+                          {reserva.fechaVenta && (
+                            <div className="text-[10px] text-[--color-fg-dim]">
+                              {fmtDate(reserva.fechaVenta)}
+                              {reserva.agingDias != null ? ` · ${reserva.agingDias}d` : ""}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-[--color-fg-dim]">—</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-3 py-2">
                     <div className="text-[11.5px] text-[--color-fg] truncate max-w-[150px]">
                       {g?.responsable ?? (

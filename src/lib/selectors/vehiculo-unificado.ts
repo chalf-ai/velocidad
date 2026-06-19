@@ -87,6 +87,14 @@ export interface VehiculoUnificado {
    *  Desconocido. Lente de RESPONSABILIDAD gerencial de la Caja Inmovilizada:
    *  solo Nuevos/Usados son caja comercial gestionable. */
   unidadNegocio: UnidadNegocio;
+  /** "Estado Venta" (Base_Stock col 8): "Vigente" | "Aprobada" | null. Señal de
+   *  reserva/venta vigente — el auto sigue consumiendo caja pero está en proceso
+   *  comercial de salida. NO lo saca de Caja Comercial Gestionable. Ver reserva.ts. */
+  estadoVenta: string | null;
+  /** "Folio Venta" (Base_Stock col 6) — folio de la reserva/venta vigente. */
+  folioVenta: string | null;
+  /** "Fecha Venta" (Base_Stock col 9) — fecha de la reserva (base del aging). */
+  fechaVenta: Date | null;
   costoNeto: number;
   diasStock: number | null;
 
@@ -229,6 +237,9 @@ export function buildVehiculosUnificados(
         stockAB: null,
         estadoDealer: null,
         unidadNegocio: "Desconocido",
+        estadoVenta: null,
+        folioVenta: null,
+        fechaVenta: null,
         costoNeto: 0,
         diasStock: null,
         marcaLineaVinculada: null,
@@ -281,6 +292,9 @@ export function buildVehiculosUnificados(
       vu.stockAB = vu.stockAB ?? v.stockAB;
       vu.estadoDealer = vu.estadoDealer ?? v.estadoDealer;
       if (vu.unidadNegocio === "Desconocido") vu.unidadNegocio = v.unidadNegocio;
+      vu.estadoVenta = vu.estadoVenta ?? v.estadoVenta;
+      vu.folioVenta = vu.folioVenta ?? v.folioVenta;
+      vu.fechaVenta = vu.fechaVenta ?? v.fechaVenta;
       vu.costoNeto = vu.costoNeto || v.costoNeto;
       vu.diasStock = vu.diasStock ?? v.diasStock;
       vu.esJudicial = vu.esJudicial || v.esJudicial;
