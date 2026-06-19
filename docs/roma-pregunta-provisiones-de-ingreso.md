@@ -89,12 +89,43 @@ dispersas), `estado_conta` (todas =2), ni por afinar la ventana. → El reporte
 `VT_Provisiones`** (probable JOIN a otra tabla — venta/ingreso — o un flag de
 configuración del reporte).
 
+### (b2) Caza del discriminador del universo (timebox) — descartados con evidencia
+Objetivo: hallar el join/filtro que reduce las ~835–1.075 provisiones Venta (saldo≠0,
+aging>90, estado IN(2,3), período) a las **104** oficiales. **Probado y DESCARTADO:**
+
+| Hipótesis | Resultado |
+|---|---|
+| Concepto (qué conceptos son "ingreso") | ❌ los 104 están repartidos en TODOS los conceptos (Bono Marca 34/265, Incentivo 22/255, Bono Financiera 14/182, …). `Activo=1` en todos. |
+| `tipo` / `motivo` | ❌ 50 combinaciones dispersas |
+| `estado_conta = 2` | ❌ se cumple en ~todo (1067) |
+| `sol_factura`, `notificar_conta`, `monto_sol_factura`, `gerencia` | ❌ idénticos en en104 vs extra |
+| Ventana `FechaPeriodo` (afinar) | ❌ no aísla (835–1.075) |
+| Vigencia por rebaja: `monto−monto_factura−monto_rebaja ≠ 0` | ❌ da **1.939** (dirección contraria) |
+| Vigencia por DETALLE de facturas (`VT_RebajaProvisionDetalleFactura`, `monto − SUM(detalle) ≠ 0`) | ❌ da **1.307** (dirección contraria) |
+
+**Patrón observado (la pista que queda):** la proporción `en104 / total` por
+período **sube monótonamente hacia lo reciente** y es **0 en los períodos viejos**:
+2024-06→10 = 0; 2025-10 = 6/46; 2025-11 = 15/53; 2026-01 = 18/55; **2026-02 = 30/56**.
+Dentro de cada período reciente ~la mitad son extra. Dos filas casi idénticas
+(9640 en104 vs 9839 extra, ambas casi 100% facturadas, mismo concepto/gerencia)
+difieren solo en `estado` (2 vs 3) y `FechaAjuste` reciente — ambas
+`ProvisionAjustada=2` (drift-prone). → El universo parece definido por un criterio
+de **"provisión aún pendiente/abierta"** que correlaciona con recencia pero **NO**
+está en `estado`, `estado_conta`, el header de factura, ni el detalle de facturas.
+Tablas adicionales presentes: `VT_RebajaProvisionDetalleFactura` (ProvisionID, Monto,
+FechaFactura, EstadoID) — probada, no es el filtro por sí sola.
+
 **Pregunta NETA final para el equipo ROMA (ya mínima):**
 > Confirmada la métrica (saldo = monto − monto_factura, estado IN(2,3), aging desde
-> `fecha` >90, área Venta): **¿qué join/filtro adicional limita el universo del
-> reporte "Provisiones de Ingreso" a estas ~104 filas** (vs las ~835 provisiones
-> Venta con saldo≠0 y aging>90 del mismo período)? ¿Se une a alguna tabla de
-> venta/ingreso, o filtra por algún flag/configuración del reporte?
+> `fecha` >90, área Venta = AreaNegocioID 1): el reporte "Provisiones de Ingreso"
+> devuelve **104** filas, pero `VT_Provisiones` con esos filtros devuelve **~1.075**.
+> Las ~971 de más son provisiones Venta de saldo chico, repartidas en los mismos
+> conceptos/gerencias, que el reporte EXCLUYE; la selección sube hacia los períodos
+> recientes y es 0 en los viejos. **¿Qué join/filtro adicional aplica el reporte
+> para limitar el universo?** Específicamente: ¿hay una tabla de estado/repositorio
+> (¿`RepositorioID` del detalle?), un flag de "provisión vigente/cerrada", o un
+> filtro de generación que excluye las provisiones Venta con saldo residual? No
+> reproducible desde `VT_Provisiones` + `VT_RebajaProvisionDetalleFactura` solas.
 
 ## Qué desbloquea esto
 Con el SQL confirmado, activamos `PROVISIONES_ENABLED=1` en el Job Amazon
