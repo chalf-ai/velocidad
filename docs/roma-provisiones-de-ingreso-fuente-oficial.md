@@ -16,12 +16,13 @@
 |---|---|
 | **Módulo / pantalla** | Provisiones = `MenuSecundarioID = 73` (confirmado vía `SIS_Seguimientos`) |
 | **Tabla base** | `roma.VT_Provisiones` (10.241 filas, 1 fila = 1 provisión) |
-| **Saldo Pendiente por Facturar** | `monto − COALESCE(monto_factura, 0)` — **rebaja NO se resta**. Validado a peso contra 10295=$0 / 10300=$2.500.000 / 10309=$30 |
+| **Saldo Pendiente por Facturar** | `monto + (EstadoAjusteID=2 ? MontoAjuste : 0) − COALESCE(monto_factura,0)` — **CORREGIDO** contra export real (§11): aplica el ajuste aprobado, NO es `monto−factura`. Cuadra al peso (2832/2832). |
 | **Fecha de antigüedad (>90 d)** | `VT_Provisiones.fecha` = la fecha del seguimiento *"Se ha generado una nueva provisión"* (validado: coincide en 7.626/7.633 = 99,9%; única fuente para 2.608 sin evento) |
 | **Estado a excluir** | `estado = 4` = **ANULADA** (comprobado: comentarios "Se ha Anulado Registro") |
 | **🚩 Hallazgo crítico** | **$34,8B son provisiones legacy 2018-2019 sin marca** (`origen` 0/NULL). **Excluir con `origen > 0`** |
 | **Regla de producto** | Capital de Trabajo usa **"Provisiones vigentes generadas desde jun-2024"** (`fecha >= '2024-06-01'`). Corte de calidad histórica, **adicional** al aging >90. |
-| **KPIs oficiales (2026-06-19)** | Vigentes **837 · $5.510,8M** · >90 días **624 · $890,7M** |
+| **KPIs oficiales (2026-06-20, CUADRADOS al peso vs export §11)** | Vigentes **290 · $5.121,7M** · >90 días **90 · $547,9M** |
+| **Cuadre** | ✅ La fórmula corregida reproduce el export ROMA **exacto en las 5 métricas**. **Autorizado** para implementación. |
 
 No hay acceso al código PHP de ROMA (`~/Desktop/Roma` contiene solo documentos/PPTs,
 0 archivos `.php`). Toda la fuente se demostró **desde la base de datos**, que es
@@ -72,7 +73,12 @@ y la única fuente para el 25% sin evento).
 ## 4. Fórmulas exactas — DEFINICIÓN OFICIAL (Capital de Trabajo)
 
 ```
-saldo_pendiente_por_facturar = monto − COALESCE(monto_factura, 0)
+saldo_pendiente_por_facturar = monto
+                               + (CASE WHEN EstadoAjusteID = 2 THEN COALESCE(MontoAjuste,0) ELSE 0 END)
+                               − COALESCE(monto_factura, 0)
+   -- ⚠ CORREGIDO 2026-06-20 contra export real: NO es monto−factura. La pantalla
+   --   aplica el AJUSTE APROBADO (EstadoAjusteID=2) de la provisión. Valida al peso
+   --   (2832/2832 filas del export). Provisiones ajustadas-y-aprobadas quedan saldo 0.
 fecha_generacion             = VT_Provisiones.fecha   (proxy validado vs SIS_Seguimientos)
 
 UNIVERSO OFICIAL (Velocity / Capital de Trabajo):
@@ -111,39 +117,42 @@ Notas:
 
 ## 6. KPIs recalculados (al 2026-06-19) — universo OFICIAL desde jun-2024
 
-### 6.0 · Comparación de cortes (entregable 7)
+> **NOTA (2026-06-20):** los KPIs de abajo están **CORREGIDOS** con la fórmula real de
+> saldo (`monto + ajuste_aprobado − factura`, §4) y **cuadran al peso contra el export
+> ROMA** (§11). Las cifras previas de esta sección (837/$5.510,8M; 624/$890,7M) usaban
+> `monto−factura` y quedaron **obsoletas** (sobre-contaban provisiones ya cerradas por ajuste).
 
-| Corte | Vigentes (n · monto) | >90 días (n · monto) |
-|---|---|---|
-| **Crudo** (estado≠4, saldo>0) | 4.792 · $66.627,1M | 4.579 · $62.007,0M |
-| **Limpio** (+ origen>0) | 3.107 · $31.835,3M | 2.894 · $27.215,2M |
-| **OFICIAL** (+ fecha ≥ 2024-06-01) | **837 · $5.510,8M** | **624 · $890,7M** |
+### 6.1 · KPIs oficiales (cuadrados vs export, al 2026-06-20)
+- **Total provisiones vigentes (saldo>0, desde jun-2024): 290 · $5.121.714.234**
+  (suma de columna `saldo` incl. negativos = $5.076.055.956)
+- **Provisiones >90 días: 90 · $547.858.850**
 
-El corte de calidad histórica (jun-2024) saca **$26.324,5M** de aging estancado pre-2024
-(saldos no gestionables). El "104 / $370,5M Área=Venta" viejo es **otra métrica** — corte
-angosto curado a mano — **no mezclar.**
+### 6.0 · Por qué cambió respecto a la versión `monto−factura`
+La fórmula vieja contaba como "pendiente" toda provisión con `factura < provisión`, pero
+la pantalla **cierra el saldo a 0 al aprobar el ajuste** (la provisión se ajusta al monto
+realmente facturado). Eso bajó vigentes de 837→290 y >90 de $890,7M→$547,9M. El universo
+(estado≠4, origen>0, fecha≥2024-06) no cambió; sí la fórmula del saldo.
 
-### 6.1 · KPIs oficiales
-- **Total provisiones vigentes (desde jun-2024): 837 · $5.510.846.697**
-- **Provisiones >90 días (dentro de ese universo): 624 · $890.697.953**
+> Recalculado desde el **export real** (ground truth) con la fórmula corregida. Universo
+> vigente = saldo>0, desde jun-2024 = **290 · $5.121,7M**.
 
 ### 6.3 · Desglose por marca (entregable 3) — vigente / >90
 
 | Marca | Vig n | Vigente | >90 |
 |---|--:|--:|--:|
-| MG | 120 | $1.560,9M | $185,1M |
-| Geely | 65 | $1.019,5M | $147,6M |
-| Peugeot | 114 | $624,2M | $91,4M |
-| Subaru | 59 | $386,3M | $23,9M |
-| Citroën | 96 | $360,8M | $104,6M |
-| Dfsk | 44 | $359,1M | $5,0M |
-| Usados | 30 | $325,3M | $141,8M |
-| Kia | 62 | $324,5M | $48,1M |
-| Opel | 80 | $172,1M | $51,1M |
-| Landking | 31 | $127,3M | $20,2M |
-| Leapmotor | 13 | $93,3M | $0 |
-| Nissan | 114 | $92,7M | $71,9M |
+| MG | 27 | $1.373,9M | $42,9M |
+| Geely | 37 | $1.014,2M | $142,3M |
+| Peugeot | 38 | $591,2M | $58,4M |
+| Subaru | 19 | $362,1M | $0 |
+| Dfsk | 11 | $354,1M | $0 |
+| Citroën | 33 | $343,9M | $87,6M |
+| Kia | 24 | $313,2M | $37,5M |
+| Usados | 18 | $289,7M | $106,1M |
+| Opel | 32 | $159,9M | $38,9M |
+| Landking | 21 | $126,3M | $19,1M |
+| Leapmotor | 12 | $93,2M | $0 |
 | Dongfeng | 4 | $45,0M | $0 |
+| Nissan | 9 | $35,4M | $14,9M |
 | Suzuki | 3 | $12,0M | $0 |
 | GWM | 2 | $7,9M | $0 |
 
@@ -151,50 +160,44 @@ angosto curado a mano — **no mezclar.**
 
 | Área | Vig n | Vigente | >90 |
 |---|--:|--:|--:|
-| 1 · Venta | 805 | $5.435,3M | $847,4M |
-| 2 · Post Venta | 32 | $75,5M | $43,3M |
+| 1 · Venta | 282 | $5.081,0M | $539,4M |
+| 2 · Post Venta (Incentivo Post Ventas) | 8 | $40,7M | $8,5M |
 
 ### 6.5 · Desglose por concepto (entregable 5) — vigente / >90
 
 | Concepto | Vig n | Vigente | >90 |
 |---|--:|--:|--:|
-| Bono Marca | 244 | $2.053,9M | $178,1M |
-| Bono Financiera | 167 | $1.742,8M | $77,4M |
-| Incentivo Ventas | 161 | $1.105,7M | $347,2M |
-| Bono Flotas | 54 | $271,1M | $97,5M |
-| Publicidad Coperada | 77 | $92,0M | $41,4M |
-| Incentivo Post Ventas | 32 | $75,5M | $43,3M |
-| Comisión Seguros | 75 | $74,5M | $18,9M |
-| Otros Bonos | 17 | $53,9M | $45,5M |
-| Bonos Usados | 8 | $35,7M | $35,7M |
-| Bonos Usados Incentivos | 2 | $5,7M | $5,7M |
+| Bono Marca | 88 | $2.006,0M | $130,6M |
+| Bono Financiera | 53 | $1.697,0M | $32,0M |
+| Incentivo Ventas | 65 | $943,1M | $229,4M |
+| Bono Flotas | 22 | $262,9M | $89,3M |
+| Publicidad Coperada | 30 | $60,2M | $10,0M |
+| Comisión Seguros | 12 | $55,5M | $0,1M |
+| Incentivo Post Ventas | 8 | $40,7M | $8,5M |
+| Bonos Usados | 6 | $31,3M | $31,3M |
+| Otros Bonos | 6 | $25,1M | $16,7M |
 
-### 6.6 · Top 20 provisiones >90 por saldo (entregable 6)
+### 6.6 · Top 15 provisiones >90 por saldo (entregable 6)
 
-| ID | Marca | Concepto | Generada | Días | Saldo |
-|--:|---|---|---|--:|--:|
-| 9868 | Geely | Incentivo Ventas | 2026-03-10 | 101 | $66.000.000 |
-| 9673 | Geely | Incentivo Ventas | 2026-02-06 | 133 | $37.319.769 |
-| 9134 | MG | Incentivo Ventas | 2025-10-08 | 254 | $32.127.794 |
-| 9626 | Usados | Incentivo Ventas | 2026-01-13 | 157 | $25.763.519 |
-| 9016 | MG | Otros Bonos | 2025-09-08 | 284 | $24.242.773 |
-| 9808 | Citroën | Bono Flotas | 2026-03-09 | 102 | $23.682.047 |
-| 9340 | Usados | Incentivo Ventas | 2025-11-13 | 218 | $23.502.118 |
-| 8973 | MG | Bono Marca | 2025-09-05 | 287 | $18.762.605 |
-| 8438 | Usados | Incentivo Ventas | 2025-04-09 | 436 | $16.900.000 |
-| 8043 | Usados | Incentivo Ventas | 2025-01-10 | 525 | $16.250.000 |
-| 9400 | Geely | Bono Flotas | 2025-12-09 | 192 | $15.405.807 |
-| 9775 | Peugeot | Bono Flotas | 2026-03-05 | 106 | $14.462.135 |
-| 9407 | Peugeot | Bono Marca | 2025-12-09 | 192 | $14.194.780 |
-| 9178 | Kia | Incentivo Ventas | 2025-10-10 | 252 | $13.620.280 |
-| 9259 | Citroën | Bono Flotas | 2025-11-07 | 224 | $12.469.948 |
-| 9396 | Opel | Bono Marca | 2025-12-09 | 192 | $12.184.875 |
-| 9405 | Citroën | Bono Marca | 2025-12-09 | 192 | $11.083.771 |
-| 9321 | Kia | Incentivo Ventas | 2025-11-10 | 221 | $10.567.000 |
-| 7066 | MG | Bono Marca | 2024-06-10 | 739 | $10.178.301 |
-| 9554 | Citroën | Bono Financiera | 2026-01-08 | 162 | $9.831.946 |
+| ID | Marca | Concepto | Generada | Saldo |
+|--:|---|---|---|--:|
+| 9868 | Geely | Incentivo Ventas | 2026-03-10 | $66.000.000 |
+| 9673 | Geely | Incentivo Ventas | 2026-02-06 | $37.319.769 |
+| 9626 | Usados | Incentivo Ventas | 2026-01-13 | $25.763.519 |
+| 9808 | Citroën | Bono Flotas | 2026-03-09 | $23.682.047 |
+| 9340 | Usados | Incentivo Ventas | 2025-11-13 | $23.502.118 |
+| 8973 | MG | Bono Marca | 2025-09-05 | $18.762.605 |
+| 8438 | Usados | Incentivo Ventas | 2025-04-09 | $16.900.000 |
+| 9400 | Geely | Bono Flotas | 2025-12-09 | $15.405.807 |
+| 9775 | Peugeot | Bono Flotas | 2026-03-05 | $14.462.135 |
+| 9407 | Peugeot | Bono Marca | 2025-12-09 | $14.194.780 |
+| 9178 | Kia | Incentivo Ventas | 2025-10-10 | $13.620.280 |
+| 9259 | Citroën | Bono Flotas | 2025-11-07 | $12.469.948 |
+| 9396 | Opel | Bono Marca | 2025-12-09 | $12.184.875 |
+| 9405 | Citroën | Bono Marca | 2025-12-09 | $11.083.771 |
+| 9321 | Kia | Incentivo Ventas | 2025-11-10 | $10.567.000 |
 
-El >90 ($890,7M) es **cola larga**: 624 provisiones, promedio ~$1,4M; el top 20 ≈ $408M (46%).
+El >90 ($547,9M) es **cola larga**: 90 provisiones, promedio ~$6,1M; las top 15 ≈ $316M (58%).
 
 ## 7. Validación contra pantalla real (los 3 ejemplos del usuario)
 
@@ -224,7 +227,8 @@ SELECT
   p.estado                                  AS estado,
   p.monto                                   AS provision_neto,
   COALESCE(p.monto_factura,0)               AS facturado_neto,
-  (p.monto - COALESCE(p.monto_factura,0))   AS saldo_pendiente_por_facturar,
+  (p.monto + CASE WHEN p.EstadoAjusteID=2 THEN COALESCE(p.MontoAjuste,0) ELSE 0 END
+   - COALESCE(p.monto_factura,0))           AS saldo_pendiente_por_facturar,  -- ⚠ §4 corregida
   p.ultima_fecha_factura                    AS ultima_fecha_factura,
   p.usuario                                 AS usuario_ingreso,
   p.fecha                                   AS fecha_generacion  -- == seguimiento "Se ha generado..."
@@ -237,20 +241,27 @@ WHERE p.estado <> 4                  -- excluye ANULADA
   AND p.origen > 0                   -- excluye legacy 2018-2019 sin marca
   AND p.fecha >= '2024-06-01';       -- CORTE DE CALIDAD: solo desde jun-2024
 
--- KPI 1 — Total vigentes (oficial, desde jun-2024)
-SELECT SUM(p.monto - COALESCE(p.monto_factura,0)) AS total_vigente
-FROM roma.VT_Provisiones p
-WHERE p.estado <> 4 AND p.origen > 0
-  AND (p.monto - COALESCE(p.monto_factura,0)) > 0
-  AND p.fecha >= '2024-06-01';
+-- saldo (reutilizar la expresión corregida; alias `sld`):
+--   sld = p.monto + (CASE WHEN p.EstadoAjusteID=2 THEN COALESCE(p.MontoAjuste,0) ELSE 0 END)
+--               - COALESCE(p.monto_factura,0)
 
--- KPI 2 — >90 días (oficial: corte de calidad + aging operativo, son DOS filtros)
-SELECT SUM(p.monto - COALESCE(p.monto_factura,0)) AS total_mayor_90
+-- KPI 1 — Total vigentes (oficial, desde jun-2024) → 290 · $5.121.714.234
+SELECT SUM(p.monto + CASE WHEN p.EstadoAjusteID=2 THEN COALESCE(p.MontoAjuste,0) ELSE 0 END
+           - COALESCE(p.monto_factura,0)) AS total_vigente
+FROM roma.VT_Provisiones p
+WHERE p.estado <> 4 AND p.origen > 0 AND p.fecha >= '2024-06-01'
+  AND (p.monto + CASE WHEN p.EstadoAjusteID=2 THEN COALESCE(p.MontoAjuste,0) ELSE 0 END
+       - COALESCE(p.monto_factura,0)) > 0;
+
+-- KPI 2 — >90 días (corte de calidad + aging operativo, DOS filtros) → 90 · $547.858.850
+SELECT SUM(p.monto + CASE WHEN p.EstadoAjusteID=2 THEN COALESCE(p.MontoAjuste,0) ELSE 0 END
+           - COALESCE(p.monto_factura,0)) AS total_mayor_90
 FROM roma.VT_Provisiones p
 WHERE p.estado <> 4 AND p.origen > 0
-  AND (p.monto - COALESCE(p.monto_factura,0)) > 0
   AND p.fecha >= '2024-06-01'                      -- calidad histórica (fijo)
-  AND p.fecha <= (CURDATE() - INTERVAL 90 DAY);    -- aging operativo (móvil)
+  AND p.fecha <= (CURDATE() - INTERVAL 90 DAY)     -- aging operativo (móvil)
+  AND (p.monto + CASE WHEN p.EstadoAjusteID=2 THEN COALESCE(p.MontoAjuste,0) ELSE 0 END
+       - COALESCE(p.monto_factura,0)) > 0;
 ```
 
 Variante de **máxima fidelidad** al seguimiento (para el <0,1% editado): reemplazar
@@ -272,10 +283,11 @@ Amazon → POST autenticado → `DailyCapitalSnapshot`), igual que FNE:
    del `DailyCapitalSnapshot` (override de scope TOTAL).
 4. **Flag:** poner `PROVISIONES_ENABLED=1` en el job recién cuando el total **cuadre
    contra el export de la pantalla** (ver §10).
-5. **Definición de producto (DECIDIDA):** el KPI de Capital de Trabajo usa
-   **"Provisiones vigentes generadas desde jun-2024"** (universo oficial §4):
-   vigentes $5.510,8M · >90 días $890,7M. **No** usar saldos legacy pre-2024.
-   **No** mezclar con el corte antiguo 104/$370,5M Área=Venta.
+5. **Definición de producto (DECIDIDA y CUADRADA):** el KPI de Capital de Trabajo usa
+   **"Provisiones vigentes generadas desde jun-2024"** con la fórmula de saldo corregida
+   (§4). KPIs oficiales: **vigentes 290 · $5.121,7M · >90 días 90 · $547,9M** (cuadrados al
+   peso vs export, §11). **No** usar saldos legacy pre-2024. **No** mezclar con el corte
+   antiguo 104/$370,5M Área=Venta. **AUTORIZADO** para implementar.
 
 ## 10. Lo único a confirmar contra ROMA (export de pantalla)
 
@@ -293,72 +305,51 @@ por Facturar", y comparar contra el `total_vigente` oficial de §6.1 ($5.510,8M)
 
 ---
 
-## 11. Cuadre contra export ROMA (2026-06-19)
+## 11. Cuadre contra export ROMA — ✅ CUADRA EXACTO (2026-06-20)
 
-### Alcance (honesto)
-**No puedo operar la UI de ROMA** (acceso = DB solo lectura vía MCP; no tengo el frontend
-ni credenciales). El "Export" de la pantalla es una acción de UI que debe hacer quien
-tenga acceso a ROMA. Abajo está el **lado query-oficial blindado** + el **mapa de filtros
-invisibles cuantificado** desde la DB, para que el export solo tenga que confirmar 1-2 números.
-No se fabrica un "total export" que no salga de la pantalla.
+Export usado: `Registros-Provisiones-20-06-2026_129.xlsx` (hoja ROMA, 2.832 filas, columna
+`saldo` propia de la pantalla). El export venía con Estados {Facturado 2143, Confirmado 684,
+Pendiente 5} — **sin anuladas** — y rango fechaCreacion 2024-04→2026-06 (1 sola fila previa
+a jun-2024, saldo 0): la pantalla **ya filtra a ~jun-2024 en adelante y excluye anuladas.**
 
-### Lado query oficial (DB, al 2026-06-19) — locked
-- **Total vigente: 837 · $5.510.846.697**
-- **>90 días: 624 · $890.697.953**
+### Resultado del cuadre (DB con fórmula corregida vs export)
 
-### Ancla de reconciliación mensual (suma exacta → 837 / 624)
-Comparar cada mes contra la vista mensual de la pantalla (por **fecha de generación**):
+| Métrica | Query DB corregido | Export real | Match |
+|---|--:|--:|:--:|
+| Vigentes (saldo>0) | **290** | 290 | ✅ |
+| Σ columna `saldo` | **$5.076.055.956** | $5.076.055.956 | ✅ al peso |
+| Σ saldo>0 (vigente) | **$5.121.714.234** | $5.121.714.234 | ✅ al peso |
+| >90 días (n) | **90** | 90 | ✅ |
+| >90 días (monto) | **$547.858.850** | $547.858.850 | ✅ al peso |
 
-| Mes gen | Vig n | Vig monto | >90 monto |
-|---|--:|--:|--:|
-| 2024-06 | 22 | $23,5M | $23,5M |
-| 2024-07..12 | 154 | $77,8M | $77,8M |
-| 2025-01..06 | 163 | $138,8M | $138,8M |
-| 2025-07..12 | 178 | $307,3M | $307,3M |
-| 2026-01 | 26 | $74,5M | $74,5M |
-| 2026-02 | 38 | $72,4M | $72,4M |
-| 2026-03 | 42 | $195,1M | $192,2M (1 < 90d) |
-| 2026-04 | 48 | $443,5M | $0 (todas < 90d) |
-| 2026-05 | 66 | $1.199,3M | $0 |
-| 2026-06 | 98 | $2.974,4M | $0 |
-| **Total** | **837** | **$5.510,8M** | **$890,7M** |
+### Qué estaba mal (y el ajuste demostrado contra pantalla)
+La causa NO era un filtro de universo: era la **fórmula del saldo**. La pantalla no usa
+`monto − factura`; usa **`monto + ajuste_aprobado − factura`**, donde `ajuste_aprobado =
+MontoAjuste` solo si `EstadoAjusteID = 2` (ajuste aprobado), 0 si `EstadoAjusteID = 1`
+(pendiente). Demostrado:
+- Fórmula `montoProvision + MontoAjusteProvision − montoFactura` matchea **2832/2832** filas
+  del export, suma exacta $5.076.055.956.
+- `MontoAjusteProvision` (export) = `MontoAjuste` cuando `EstadoAjusteID=2`; = 0 cuando =1
+  (32 filas de diferencia, todas EstadoAjusteID=1). Confirmado fila a fila en la DB.
+- La fórmula vieja `monto−factura` sobre-contaba 547 provisiones ya cerradas por ajuste
+  (ej. ID 8097: MP 475.000, MF 112.395, MontoAjuste −362.605 aprobado → saldo 0, no 362.605).
 
-(El detalle mes-a-mes completo está en el query §8 con `GROUP BY DATE_FORMAT(fecha,'%Y-%m')`.)
+### Filtros invisibles resueltos por el export
+- **Saldos negativos:** la pantalla SÍ los muestra (30 filas, ≈−$45,7M) y los netea en la
+  columna → por eso Σ columna ($5.076,1M) < Σ saldo>0 ($5.121,7M). "Vigente" = saldo>0.
+- **Anuladas:** excluidas (no aparecen en el export). ✓
+- **Saldo $0:** se muestran (2.512 filas) pero suman $0 → la pantalla tiene ~2.832 filas,
+  de las cuales solo **290 son vigentes** (saldo>0).
+- **Universo:** las ~97 filas extra que incluye el query DB (estado<>4/origen>0/fecha) vs
+  el export son todas saldo=0 → no afectan ningún KPI (la Σ cuadra al peso igual).
 
-### Mapa de filtros invisibles — cuánto movería cada uno
-
-| Ítem | Filas | Impacto monto | Riesgo |
-|---|--:|--:|---|
-| **Saldo negativo** (monto_factura>monto) — excluido por `saldo>0` | 616 | **−$695,9M (−12,6%)** | **ALTO** ¿la pantalla netea negativos? |
-| **Anuladas (estado=4)** recientes saldo>0 — excluidas | 358 | +$9.538,1M | **ALTO** si la pantalla no filtra anuladas (debería) |
-| Base de fecha: `FechaPeriodo` vs `fecha` (generación) | ±19 | +$15,2M (+0,3%) | bajo |
-| **Saldo $0** (facturadas 100%) — se muestran, suman $0 | 1.475 | $0 | afecta **conteo**, no monto |
-| Sin origen (0/NULL) recientes | 0 | $0 | nulo (legacy 100% pre-2024) |
-| estado=6 reciente | 0 | $0 | nulo |
-
-### Escenarios de lo que mostraría la pantalla (filtrada desde jun-2024, no anuladas)
-- **Solo saldo>0** (= def. oficial): **837 filas · $5.510,8M** ← nuestro KPI.
-- **Todas no-anuladas** (pos+cero+neg), suma neta de columna: **2.928 filas · $4.815,0M**.
-- (Si además incluyera anuladas: 3.286 filas · $14.353,1M — improbable.)
-
-### Decisión
-El query oficial es **internamente consistente y robusto**: suma exacta por mes, marca,
-área y concepto; los filtros `estado<>4` / `origen>0` / `fecha>=2024-06` están demostrados.
-El cuadre externo se reduce a **2 preguntas que SOLO el export resuelve**:
-
-1. **¿La pantalla netea los saldos negativos?** (616 filas, −$695,9M). Si los netea, el
-   total de la columna será **~$4.815,0M**; si filtra `saldo>0` como nosotros, **$5.510,8M**.
-2. **¿La pantalla excluye anuladas (estado=4)?** Debe; si no, sumaría +$9.538,1M.
-
-Todo lo demás cuadra dentro de **0,3%** o es **cero**.
-
-> **DECISIÓN PROVISIONAL:** *"Query oficial robusto; cuadre pendiente SOLO de confirmar,
-> contra el export filtrado desde jun-2024, (a) el tratamiento de saldos negativos y
-> (b) la exclusión de anuladas. No autorizar implementación hasta ese check (1 export)."*
+### DECISIÓN FINAL
+> ✅ **"Query oficial CUADRA (al peso, 5/5 métricas) con la fórmula de saldo corregida
+> (`monto + ajuste_aprobado − factura`). AUTORIZADO para implementación de Camino A."**
 >
-> Pasos para cerrar: exportar la pantalla filtrada desde jun-2024 → sumar "Saldo Pendiente
-> por Facturar" y contar filas → comparar contra los 3 escenarios de arriba. El escenario
-> que matchee define si la fórmula oficial debe netear negativos o no.
+> KPIs oficiales (2026-06-20): **Vigentes 290 · $5.121.714.234** · **>90 días 90 · $547.858.850**.
+> Única corrección vs versión previa: la fórmula del saldo (el universo y los filtros
+> estado/origen/fecha ya estaban bien). Las cifras 837/$5.510,8M quedaron obsoletas.
 
 ### Referencias de tablas (roma)
 `VT_Provisiones` (10.241) · `VT_ProvisionesConcepto` (11, AreaNegocioID) ·
