@@ -101,27 +101,55 @@ async def generar_snapshot_diario() -> dict:
     Dispara la foto diaria del estado vigente llamando al endpoint Next.js.
     El cálculo vive en TypeScript (mismos selectores que la app).
 
-    Camino A: antes de postear, consulta FNE EN VIVO al gateway ROMA Amazon
-    (ROMA se consulta DENTRO de Amazon; el agente solo orquesta por HTTP) y lo
-    manda como payload parcial {roma:{fne}}. Si el gateway falla, postea SIN
-    override → el endpoint usa la fuente validada (snapshot activo). NUNCA
-    inventa FNE.
+    Camino A: antes de postear, consulta EN VIVO al gateway ROMA Amazon (ROMA se
+    consulta DENTRO de Amazon; el agente solo orquesta por HTTP) FNE y Provisiones
+    de Ingreso, y los manda como payload parcial {roma:{fne, provisiones}}. Cada
+    fuente es independiente: si una falla, se postea la otra; si ambas fallan,
+    postea SIN override → el endpoint usa la fuente validada (snapshot activo).
+    NUNCA inventa datos. Provisiones está detrás de PROVISIONES_ENABLED (default OFF).
     """
     import httpx
-    from .roma_gateway import consultar_fne_gateway
+    from .roma_gateway import consultar_fne_gateway, consultar_provisiones_gateway
 
-    # 1. FNE en vivo desde el gateway ROMA Amazon. Falla → fuente validada.
-    roma_payload = None
+    # 1. ROMA en vivo desde el gateway Amazon. Cada fuente es INDEPENDIENTE: si una
+    #    falla, se postea la otra; si ambas faltan, body=None → fuente validada.
+    roma_payload: dict = {}
     gateway_fne = None
+    gateway_prov = None
+
+    # 1a. FNE operativo.
     try:
         fne = await consultar_fne_gateway()
-        roma_payload = {"fne": fne}
+        roma_payload["fne"] = fne
         gateway_fne = fne["unidades"]
         logger.info("FNE gateway ROMA en vivo: %s VIN", fne["unidades"])
     except Exception:
         logger.exception(
-            "Gateway ROMA no disponible — snapshot con fuente validada (sin override FNE)"
+            "Gateway ROMA (FNE) no disponible — sin override FNE (fuente validada)"
         )
+
+    # 1b. Provisiones de Ingreso >90d. Gate independiente (PROVISIONES_ENABLED);
+    #     OFF por defecto → Provisiones siguen saliendo de la fuente validada.
+    if settings.provisiones_enabled:
+        try:
+            prov = await consultar_provisiones_gateway()
+            roma_payload["provisiones"] = {
+                "casos": prov["mas90_unidades"],
+                "monto": prov["mas90_monto"],
+                "agingMax": prov["aging_max"],
+            }
+            gateway_prov = prov["mas90_unidades"]
+            logger.info(
+                "Provisiones gateway ROMA en vivo: >90d %s/$%s · vigentes %s/$%s",
+                prov["mas90_unidades"], int(prov["mas90_monto"]),
+                prov["vigentes_unidades"], int(prov["vigentes_monto"]),
+            )
+        except Exception:
+            logger.exception(
+                "Gateway ROMA (Provisiones) no disponible — sin override (fuente validada)"
+            )
+    else:
+        logger.info("Provisiones gateway deshabilitado (PROVISIONES_ENABLED=0)")
 
     # 2. POST a Velocidad. body=None → endpoint usa snapshots activos (fallback).
     url = f"{settings.app_base_url.rstrip('/')}/api/snapshots/daily"
@@ -145,6 +173,7 @@ async def generar_snapshot_diario() -> dict:
             return {
                 "ok": True,
                 "gateway_fne_unidades": gateway_fne,
+                "gateway_prov_unidades": gateway_prov,
                 "romaEnVivo": data.get("romaEnVivo"),
                 "fecha": data.get("fecha"),
                 "scopes": data.get("scopes"),
@@ -152,10 +181,20 @@ async def generar_snapshot_diario() -> dict:
         logger.error(
             "Snapshot diario falló — HTTP %s: %s", resp.status_code, resp.text[:300]
         )
-        return {"ok": False, "status": resp.status_code, "gateway_fne_unidades": gateway_fne}
+        return {
+            "ok": False,
+            "status": resp.status_code,
+            "gateway_fne_unidades": gateway_fne,
+            "gateway_prov_unidades": gateway_prov,
+        }
     except Exception as e:  # noqa: BLE001
         logger.exception("Snapshot diario: error llamando a %s", url)
-        return {"ok": False, "error": str(e), "gateway_fne_unidades": gateway_fne}
+        return {
+            "ok": False,
+            "error": str(e),
+            "gateway_fne_unidades": gateway_fne,
+            "gateway_prov_unidades": gateway_prov,
+        }
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────

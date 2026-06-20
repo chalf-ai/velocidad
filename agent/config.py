@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     roma_gateway_url: str = ""                    # /mcp/ del gateway (con slash final; evita el 307)
     roma_gateway_api_key: str = ""               # X-API-Key del gateway (mismo del MCP roma-db)
 
+    # Provisiones de Ingreso EN VIVO desde ROMA (Camino A) — gate independiente
+    # del de FNE. Default OFF: el código queda en su sitio pero el cron NO llama
+    # al gateway de provisiones hasta poner PROVISIONES_ENABLED=1. Con OFF, las
+    # Provisiones del snapshot siguen saliendo de la fuente validada (fallback).
+    # Fórmula y cuadre: docs/roma-provisiones-de-ingreso-fuente-oficial.md.
+    provisiones_enabled: bool = False
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property

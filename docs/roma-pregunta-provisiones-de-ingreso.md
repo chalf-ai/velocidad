@@ -1,3 +1,13 @@
+> ✅ **RESUELTO (2026-06-19).** Ya no hace falta preguntar a ROMA por el SQL: la
+> fuente oficial es la pantalla **Gestión de Provisiones de Ingreso** (`VT_Provisiones`,
+> módulo `MenuSecundarioID=73`), columna **Saldo Pendiente por Facturar** = `monto −
+> COALESCE(monto_factura,0)`, antigüedad por `fecha` (= seguimiento "Se ha generado una
+> nueva provisión"). Ver el diagnóstico definitivo y validado en
+> **[roma-provisiones-de-ingreso-fuente-oficial.md](./roma-provisiones-de-ingreso-fuente-oficial.md)**.
+> Lo único que queda es confirmar el grand-total contra el export de la pantalla
+> (tratamiento del bucket legacy 2018-2019). Este documento se conserva como historial
+> del reverse-engineering.
+
 # Pregunta formal · Equipo ROMA — Reporte "Provisiones de Ingreso"
 
 **Para:** Equipo ROMA
