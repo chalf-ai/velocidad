@@ -210,6 +210,7 @@ export async function calcularSGLegacyPorDia(args: {
     if (fuentesFaltantes.length > 0) {
       sgLegacy = {
         score: null,
+        estado: null,
         esConfiable: false,
         fuentesPresentes,
         fuentesFaltantes,

@@ -42,6 +42,8 @@ import { VentaPonderadaBlock } from "@/components/VentaPonderadaBlock";
 import {
   calcularScoreGerencial,
   type IndicadorId,
+  type Indicador,
+  type EstadoScore,
 } from "@/lib/selectors/score-gerencial";
 
 export default function ScoreGerencialPage() {
@@ -71,6 +73,54 @@ export default function ScoreGerencialPage() {
       provisiones: datos.provisiones?.registros ?? [],
     });
   }, [datos.data, datos.saldos, datos.provisiones, vus, marcaGlobal]);
+
+  // ── FUENTE ÚNICA · Score OFICIAL desde el último DailyCapitalSnapshot ──────
+  // El número principal y los componentes vienen de la foto canónica persistida
+  // (mismo campo que muestra /tendencias), NO del recálculo vivo del store. El
+  // drill VIN sigue operacional. Si aún no hay snapshot para el scope, cae al
+  // cálculo vivo con aviso. Regla: este valor == último punto de /tendencias.
+  const [oficial, setOficial] = useState<{
+    score: number;
+    estado: EstadoScore;
+    indicadores: Indicador[];
+    fecha: string;
+  } | null>(null);
+  const [oficialPendiente, setOficialPendiente] = useState(true);
+
+  useEffect(() => {
+    let cancelado = false;
+    setOficialPendiente(true);
+    const qs = marcaGlobal ? `?marca=${encodeURIComponent(marcaGlobal)}` : "";
+    fetch(`/api/snapshots/daily/score${qs}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http"))))
+      .then((d: { fila?: Record<string, unknown> | null }) => {
+        if (cancelado) return;
+        const f = d?.fila;
+        const comp = f?.scoreComponentes as
+          | { estado: EstadoScore; indicadores: Indicador[] }
+          | null
+          | undefined;
+        if (f && typeof f.scoreGerencial === "number" && comp?.indicadores) {
+          setOficial({
+            score: f.scoreGerencial as number,
+            estado: comp.estado,
+            indicadores: comp.indicadores,
+            fecha: String(f.fecha),
+          });
+        } else {
+          setOficial(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelado) setOficial(null);
+      })
+      .finally(() => {
+        if (!cancelado) setOficialPendiente(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [marcaGlobal]);
 
   // Stock No Disponible · universo COMPLETO `stockAB="B"` (todas las marcas),
   // desde el Vehiculo CRUDO del store SIN filtrar — trae Estado Dealer y Status
@@ -111,6 +161,17 @@ export default function ScoreGerencialPage() {
 
   const { capitalGestionado } = resultado;
 
+  // Score + componentes OFICIALES (snapshot) sobre la base viva (que aporta el
+  // drill VIN, capitalGestionado y plan). Si no hay snapshot, queda el vivo.
+  const resultadoOficial = oficial
+    ? {
+        ...resultado,
+        score: oficial.score,
+        estado: oficial.estado,
+        indicadores: oficial.indicadores,
+      }
+    : resultado;
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -127,8 +188,19 @@ export default function ScoreGerencialPage() {
         }
       />
 
-      {/* 1 · Hero ejecutivo (banner gradiente) */}
-      <HeroScore resultado={resultado} />
+      {/* 1 · Hero ejecutivo (banner gradiente) · score OFICIAL desde snapshot */}
+      <HeroScore resultado={resultadoOficial} />
+      {oficial ? (
+        <div className="text-[10.5px] text-[--color-fg-muted] px-1">
+          Score oficial · foto del <b className="text-[--color-fg]">{oficial.fecha}</b>{" "}
+          (snapshot canónico) · coincide con Tendencias.
+        </div>
+      ) : !oficialPendiente ? (
+        <div className="text-[10.5px] text-[--color-warning] px-1">
+          Score en vivo · aún sin snapshot oficial para este scope. Genera el snapshot
+          diario para fijarlo y que coincida con Tendencias.
+        </div>
+      ) : null}
 
       {/* 1.5 · Venta ponderada · base contextual de eficiencia (50/30/20) */}
       <VentaPonderadaBlock
@@ -144,7 +216,7 @@ export default function ScoreGerencialPage() {
 
       {/* 2 · Indicadores resumidos · 4 cards compactas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {resultado.indicadores.map((ind) => (
+        {resultadoOficial.indicadores.map((ind) => (
           <IndicadorResumido
             key={`res-${ind.id}`}
             indicador={ind}
@@ -155,11 +227,11 @@ export default function ScoreGerencialPage() {
       </div>
 
       {/* 3 · Cómo llegar a 100 (banner · acciones clicables → cola del indicador) */}
-      <PlanLlegarA100Banner resultado={resultado} onAccion={(id) => setFoco(id)} />
+      <PlanLlegarA100Banner resultado={resultadoOficial} onAccion={(id) => setFoco(id)} />
 
       {/* 4 · Indicadores detallados · 4 cards con drill clickeable */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {resultado.indicadores.map((ind) => (
+        {resultadoOficial.indicadores.map((ind) => (
           <IndicadorCard
             key={`det-${ind.id}`}
             indicador={ind}

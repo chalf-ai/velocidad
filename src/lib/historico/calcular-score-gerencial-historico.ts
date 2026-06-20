@@ -21,6 +21,7 @@ import { Fuente } from "@prisma/client";
 import {
   calcularScoreGerencial,
   type Indicador,
+  type EstadoScore,
 } from "@/lib/selectors/score-gerencial";
 import { buildVehiculosUnificados } from "@/lib/selectors/vehiculo-unificado";
 import { normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
@@ -96,6 +97,8 @@ export function rehidratarProvisiones(payload: unknown): ParsedProvisiones | nul
 
 export interface ResultadoScoreGerencialHistorico {
   score: number | null;
+  /** Estado semántico del score (bueno/riesgo/critico). null si score null. */
+  estado: EstadoScore | null;
   /** true sólo si están las 4 fuentes (BASE_STOCK + SALDOS + PROVISIONES + FNE). */
   esConfiable: boolean;
   fuentesPresentes: string[];
@@ -172,6 +175,9 @@ export function calcularSGLegacyDesdePayloads(args: {
   fuentesPresentes?: string[];
   /** Lista de fuentes que faltaron en este snapshot. */
   fuentesFaltantes?: string[];
+  /** Override canónico de Provisiones >90d (I2) — p.ej. ROMA-vivo. Se pasa tal
+   *  cual a calcularScoreGerencial (no cambia la fórmula). */
+  provisionesOverride?: { casos: number; monto: number };
 }): ResultadoScoreGerencialHistorico {
   const { stock, fne, saldos, provisiones, marca } = args;
   const fuentesPresentes = args.fuentesPresentes ?? [];
@@ -180,6 +186,7 @@ export function calcularSGLegacyDesdePayloads(args: {
   if (!stock || !fne || !saldos || !provisiones) {
     return {
       score: null,
+      estado: null,
       esConfiable: false,
       fuentesPresentes,
       fuentesFaltantes:
@@ -234,6 +241,7 @@ export function calcularSGLegacyDesdePayloads(args: {
   if (vus.length === 0 && marcaCanonica) {
     return {
       score: null,
+      estado: null,
       esConfiable: false,
       fuentesPresentes,
       fuentesFaltantes: [],
@@ -250,6 +258,7 @@ export function calcularSGLegacyDesdePayloads(args: {
     vus,
     saldos: saldosRegistros,
     provisiones: provRegistros,
+    provisionesOverride: args.provisionesOverride,
   });
 
   const ordenadosPorCastigo = [...result.indicadores].sort(
@@ -264,6 +273,7 @@ export function calcularSGLegacyDesdePayloads(args: {
 
   return {
     score: result.score,
+    estado: result.estado,
     esConfiable: true,
     fuentesPresentes,
     fuentesFaltantes: [],
@@ -303,6 +313,7 @@ export async function calcularScoreGerencialHistorico(args: {
   if (!esConfiable) {
     return {
       score: null,
+      estado: null,
       esConfiable: false,
       fuentesPresentes,
       fuentesFaltantes,

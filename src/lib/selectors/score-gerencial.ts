@@ -153,6 +153,13 @@ export interface ScoreGerencialInput {
   vus: VehiculoUnificado[];
   saldos: SaldoRegistro[];
   provisiones: ProvisionRegistro[];
+  /**
+   * Override CANÓNICO del conteo/monto de Provisiones >90d (I2) — p.ej. desde
+   * ROMA-vivo. Solo sustituye el VALOR del indicador (para que el card cuadre
+   * con la fuente oficial); el drill VIN sigue saliendo del Excel. NO cambia la
+   * fórmula. Sin override → usa el cálculo del Excel (`provisiones90`).
+   */
+  provisionesOverride?: { casos: number; monto: number };
 }
 
 export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerencialResultado {
@@ -189,9 +196,11 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
   // ─── 2. Provisiones envejecidas >90d · FUENTE ÚNICA ───────────────────
   // saldo ABIERTO (saldo ≠ 0) con aging > 90 días — definición en capital-trabajo.ts.
   const mProv90 = provisiones90(provisiones);
-  const prov90 = mProv90.items;
-  const p2 = puntosLineal(prov90.length, META_PROV_90D, MAX_PROV_90D, PESO_I2);
-  const montoProv90 = mProv90.monto;
+  const prov90 = mProv90.items; // drill VIN/caso (siempre desde el Excel)
+  // Conteo/monto del indicador: override canónico (ROMA-vivo) si viene; si no, Excel.
+  const prov90Casos = input.provisionesOverride?.casos ?? prov90.length;
+  const montoProv90 = input.provisionesOverride?.monto ?? mProv90.monto;
+  const p2 = puntosLineal(prov90Casos, META_PROV_90D, MAX_PROV_90D, PESO_I2);
 
   // ─── 3. Crédito Pompeyo >15d · FUENTE ÚNICA ───────────────────────────
   const mCP15 = creditoPompeyo15(vus);
@@ -258,16 +267,18 @@ export function calcularScoreGerencial(input: ScoreGerencialInput): ScoreGerenci
       id: "provisiones_90d",
       nombre: "Provisiones >90d Venta",
       metaTexto: `${META_PROV_90D} casos no facturados >90d (Área Venta)`,
-      valorTexto: `${prov90.length} casos`,
-      valor: prov90.length,
-      detalle: prov90.length > 0
-        ? `Aging máximo ${Math.max(...prov90.map((p) => p.agingDias ?? 0))}d`
+      valorTexto: `${prov90Casos} casos`,
+      valor: prov90Casos,
+      detalle: prov90Casos > 0
+        ? prov90.length > 0
+          ? `Aging máximo ${Math.max(...prov90.map((p) => p.agingDias ?? 0))}d`
+          : "Saldo abierto >90d (fuente ROMA-vivo)"
         : "Sin provisiones envejecidas",
       monto: montoProv90,
-      casos: prov90.length,
+      casos: prov90Casos,
       puntos: p2,
       peso: PESO_I2,
-      cumple: prov90.length <= META_PROV_90D,
+      cumple: prov90Casos <= META_PROV_90D,
       accion: "Facturar o reversar provisiones envejecidas.",
       color: "#B83B6A",
     },
