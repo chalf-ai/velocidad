@@ -87,8 +87,13 @@ const comp = (m: MetricaCapital<unknown>): ComponenteCapital => ({
 /**
  * Filtra los payloads crudos por marca EXACTAMENTE como `useDatosFiltrados`
  * (el hook que alimenta a Score). marca = null → sin filtro (TOTAL).
+ *
+ * FUENTE ÚNICA de atribución de marca: usa owner/originador (un Subaru/Kia USADO
+ * cae en USADOS, no en su marca física). Lo consume también el Score histórico
+ * (calcular-score-gerencial-historico) para que /score-gerencial y /tendencias
+ * atribuyan idéntico por marca.
  */
-function filtrarPayloadsPorMarca(args: {
+export function filtrarPayloadsPorMarca(args: {
   stock: ParsedExcel | null;
   fne: ParsedFNE | null;
   saldos: ParsedSaldos | null;
