@@ -14,7 +14,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { Fuente, ScopeSnapshotDiario } from "@prisma/client";
+import { Fuente, Prisma, ScopeSnapshotDiario } from "@prisma/client";
 import {
   calcularSGLegacyDesdePayloads,
   rehidratarFNE,
@@ -188,7 +188,11 @@ export async function generarDailyCapitalSnapshot(
 
     // Score Gerencial legacy: exige las 4 fuentes vigentes. Con menos, null
     // (misma política que el histórico — no se calculan parciales).
+    // FUENTE ÚNICA: este score + su descomposición es lo que muestran TANTO
+    // /score-gerencial (último punto) como /tendencias (serie). Nadie recalcula
+    // por su lado. En TOTAL con ROMA-vivo, I2 usa la Provisión ROMA (override).
     let scoreGerencial: number | null = null;
+    let scoreComponentes: Prisma.InputJsonValue | undefined;
     if (fuentesFaltantes.length === 0) {
       const sg = calcularSGLegacyDesdePayloads({
         stock: stock!,
@@ -198,8 +202,21 @@ export async function generarDailyCapitalSnapshot(
         marca: marcaFiltro,
         fuentesPresentes,
         fuentesFaltantes: [],
+        provisionesOverride:
+          usarRoma && opts.roma!.provisiones
+            ? {
+                casos: opts.roma!.provisiones.casos,
+                monto: opts.roma!.provisiones.monto,
+              }
+            : undefined,
       });
       scoreGerencial = sg.score;
+      if (sg.estado != null && sg.indicadores != null) {
+        scoreComponentes = {
+          estado: sg.estado,
+          indicadores: sg.indicadores,
+        } as unknown as Prisma.InputJsonValue;
+      }
     }
 
     // Las 4 métricas OFICIALES (fuente única capital-trabajo.ts). El total es
@@ -215,6 +232,9 @@ export async function generarDailyCapitalSnapshot(
 
     const datos = {
       scoreGerencial,
+      // Descomposición canónica del score (estado + 4 indicadores). FUENTE ÚNICA
+      // para /score-gerencial y /tendencias. DbNull si el score no se calculó.
+      scoreComponentes: scoreComponentes ?? Prisma.DbNull,
       // Reservados — se llenan cuando exista su motor server-side.
       scoreCapital: null,
       scoreCumplimientoOperacional: null,

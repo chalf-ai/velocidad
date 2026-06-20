@@ -486,6 +486,12 @@ model DailyCapitalSnapshot {
   // ── Scores (0-100) ─────────────────────────────────────────────────
   /// Score Gerencial legacy (exige las 4 fuentes vigentes; null si falta alguna).
   scoreGerencial               Int?
+  /// Descomposición CANÓNICA del Score Gerencial (estado + 4 indicadores), tal
+  /// como se calculó al generar el snapshot. FUENTE ÚNICA: /score-gerencial y
+  /// /tendencias muestran este score y estos componentes — nadie recalcula por
+  /// su lado. null si el score no se pudo calcular (faltaba alguna fuente).
+  /// Shape: { estado: "bueno"|"riesgo"|"critico", indicadores: Indicador[] }.
+  scoreComponentes             Json?
   /// Reservados: se llenan cuando exista su motor de cálculo server-side.
   scoreCapital                 Int?
   scoreCumplimientoOperacional Int?
