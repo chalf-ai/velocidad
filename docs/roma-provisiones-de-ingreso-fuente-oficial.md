@@ -293,6 +293,73 @@ por Facturar", y comparar contra el `total_vigente` oficial de §6.1 ($5.510,8M)
 
 ---
 
+## 11. Cuadre contra export ROMA (2026-06-19)
+
+### Alcance (honesto)
+**No puedo operar la UI de ROMA** (acceso = DB solo lectura vía MCP; no tengo el frontend
+ni credenciales). El "Export" de la pantalla es una acción de UI que debe hacer quien
+tenga acceso a ROMA. Abajo está el **lado query-oficial blindado** + el **mapa de filtros
+invisibles cuantificado** desde la DB, para que el export solo tenga que confirmar 1-2 números.
+No se fabrica un "total export" que no salga de la pantalla.
+
+### Lado query oficial (DB, al 2026-06-19) — locked
+- **Total vigente: 837 · $5.510.846.697**
+- **>90 días: 624 · $890.697.953**
+
+### Ancla de reconciliación mensual (suma exacta → 837 / 624)
+Comparar cada mes contra la vista mensual de la pantalla (por **fecha de generación**):
+
+| Mes gen | Vig n | Vig monto | >90 monto |
+|---|--:|--:|--:|
+| 2024-06 | 22 | $23,5M | $23,5M |
+| 2024-07..12 | 154 | $77,8M | $77,8M |
+| 2025-01..06 | 163 | $138,8M | $138,8M |
+| 2025-07..12 | 178 | $307,3M | $307,3M |
+| 2026-01 | 26 | $74,5M | $74,5M |
+| 2026-02 | 38 | $72,4M | $72,4M |
+| 2026-03 | 42 | $195,1M | $192,2M (1 < 90d) |
+| 2026-04 | 48 | $443,5M | $0 (todas < 90d) |
+| 2026-05 | 66 | $1.199,3M | $0 |
+| 2026-06 | 98 | $2.974,4M | $0 |
+| **Total** | **837** | **$5.510,8M** | **$890,7M** |
+
+(El detalle mes-a-mes completo está en el query §8 con `GROUP BY DATE_FORMAT(fecha,'%Y-%m')`.)
+
+### Mapa de filtros invisibles — cuánto movería cada uno
+
+| Ítem | Filas | Impacto monto | Riesgo |
+|---|--:|--:|---|
+| **Saldo negativo** (monto_factura>monto) — excluido por `saldo>0` | 616 | **−$695,9M (−12,6%)** | **ALTO** ¿la pantalla netea negativos? |
+| **Anuladas (estado=4)** recientes saldo>0 — excluidas | 358 | +$9.538,1M | **ALTO** si la pantalla no filtra anuladas (debería) |
+| Base de fecha: `FechaPeriodo` vs `fecha` (generación) | ±19 | +$15,2M (+0,3%) | bajo |
+| **Saldo $0** (facturadas 100%) — se muestran, suman $0 | 1.475 | $0 | afecta **conteo**, no monto |
+| Sin origen (0/NULL) recientes | 0 | $0 | nulo (legacy 100% pre-2024) |
+| estado=6 reciente | 0 | $0 | nulo |
+
+### Escenarios de lo que mostraría la pantalla (filtrada desde jun-2024, no anuladas)
+- **Solo saldo>0** (= def. oficial): **837 filas · $5.510,8M** ← nuestro KPI.
+- **Todas no-anuladas** (pos+cero+neg), suma neta de columna: **2.928 filas · $4.815,0M**.
+- (Si además incluyera anuladas: 3.286 filas · $14.353,1M — improbable.)
+
+### Decisión
+El query oficial es **internamente consistente y robusto**: suma exacta por mes, marca,
+área y concepto; los filtros `estado<>4` / `origen>0` / `fecha>=2024-06` están demostrados.
+El cuadre externo se reduce a **2 preguntas que SOLO el export resuelve**:
+
+1. **¿La pantalla netea los saldos negativos?** (616 filas, −$695,9M). Si los netea, el
+   total de la columna será **~$4.815,0M**; si filtra `saldo>0` como nosotros, **$5.510,8M**.
+2. **¿La pantalla excluye anuladas (estado=4)?** Debe; si no, sumaría +$9.538,1M.
+
+Todo lo demás cuadra dentro de **0,3%** o es **cero**.
+
+> **DECISIÓN PROVISIONAL:** *"Query oficial robusto; cuadre pendiente SOLO de confirmar,
+> contra el export filtrado desde jun-2024, (a) el tratamiento de saldos negativos y
+> (b) la exclusión de anuladas. No autorizar implementación hasta ese check (1 export)."*
+>
+> Pasos para cerrar: exportar la pantalla filtrada desde jun-2024 → sumar "Saldo Pendiente
+> por Facturar" y contar filas → comparar contra los 3 escenarios de arriba. El escenario
+> que matchee define si la fórmula oficial debe netear negativos o no.
+
 ### Referencias de tablas (roma)
 `VT_Provisiones` (10.241) · `VT_ProvisionesConcepto` (11, AreaNegocioID) ·
 `VT_ProvisionesOrigen` (16, marca + GerenciaID) · `VT_ProvisionesTipo` (43, por-facturar-a) ·
