@@ -25,6 +25,7 @@ import {
 } from "@/lib/selectors/score-gerencial";
 import { buildVehiculosUnificados } from "@/lib/selectors/vehiculo-unificado";
 import { normalizarMarcaOperacional } from "@/lib/selectors/owner-operacional";
+import { filtrarPayloadsPorMarca } from "@/lib/historico/capital-por-corte";
 import type {
   ParsedExcel,
   ParsedFNE,
@@ -207,36 +208,21 @@ export function calcularSGLegacyDesdePayloads(args: {
     };
   }
 
-  // Construir VUs
-  const vusMap = buildVehiculosUnificados({ data: stock, fne, saldos });
-  let vus = Array.from(vusMap.values());
-
-  // Filtro por marca
+  // Atribución de marca · FUENTE ÚNICA. Se filtran los payloads por marca
+  // (owner/originador) ANTES de construir los VUs — EXACTAMENTE como
+  // capitalDesdePayloads / useDatosFiltrados. Antes se filtraba por `vu.marca`,
+  // lo que atribuía los USADOS a su marca física (un Kia usado → KIA) en vez de
+  // a USADOS, inflando el card de Caja Comercial del Score y descuadrando contra
+  // Tendencias. Con el filtro de payloads, Score y Tendencias atribuyen idéntico.
   const marcaCanonica = marca ? normalizarMarcaOperacional(marca) : null;
-  if (marcaCanonica) {
-    vus = vus.filter((vu) => {
-      const m = normalizarMarcaOperacional(
-        vu.marca ?? vu.marcaOriginadora ?? "SIN MARCA",
-      );
-      return m === marcaCanonica;
-    });
-  }
-
-  let saldosRegistros = saldos.registros;
-  let provRegistros = provisiones.registros;
-  if (marcaCanonica) {
-    const vinsMarca = new Set(vus.map((vu) => vu.vinLimpio));
-    saldosRegistros = saldos.registros.filter((s) => {
-      if (s.categoria !== "vehiculo") return false;
-      if (!s.vinResuelto) return false;
-      const v = s.vinResuelto.replace(/\s+/g, "").toUpperCase();
-      return vinsMarca.has(v);
-    });
-    provRegistros = provisiones.registros.filter((p) => {
-      const m = normalizarMarcaOperacional(p.origen ?? "");
-      return m === marcaCanonica;
-    });
-  }
+  const f = filtrarPayloadsPorMarca({ stock, fne, saldos, provisiones, marca });
+  const vus = f.stock
+    ? Array.from(
+        buildVehiculosUnificados({ data: f.stock, fne: f.fne, saldos: f.saldos }).values(),
+      )
+    : [];
+  const saldosRegistros = f.saldos?.registros ?? [];
+  const provRegistros = f.provisiones?.registros ?? [];
 
   if (vus.length === 0 && marcaCanonica) {
     return {
