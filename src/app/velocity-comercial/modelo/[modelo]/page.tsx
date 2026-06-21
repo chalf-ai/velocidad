@@ -1,5 +1,5 @@
 /**
- * /comercial/modelo/[modelo] · Ficha ejecutiva de un modelo.
+ * /velocity-comercial/modelo/[modelo] · Ficha ejecutiva de un modelo.
  * Resumen · Qué pasa · Qué preocupa · Oportunidades · Acciones · Datos base · Limitaciones.
  * Datos ROMA en vivo (read-only). No inventa.
  */
@@ -63,7 +63,7 @@ export default async function FichaModeloPage({ params }: { params: Promise<{ mo
   }
 
   const back = (
-    <Link href="/comercial" className="inline-flex items-center gap-1.5 text-[12px] text-[--color-accent] hover:underline">
+    <Link href="/velocity-comercial" className="inline-flex items-center gap-1.5 text-[12px] text-[--color-accent] hover:underline">
       <ArrowLeft className="size-3.5" /> Volver a la torre
     </Link>
   );
@@ -111,7 +111,7 @@ export default async function FichaModeloPage({ params }: { params: Promise<{ mo
       <div className="relative surface bg-white px-5 py-4 overflow-hidden">
         <div className="absolute top-0 left-0 right-0 h-[3px]" style={{ backgroundColor: meta.color }} />
         <PageHeader
-          kicker="Velocity Comercial · Modelo"
+          kicker="Velocidad Comercial · Modelo"
           title={m.modelo}
           description={ev.motivo}
           actions={<span className={cn("inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-semibold", meta.chip)}>{meta.label}</span>}

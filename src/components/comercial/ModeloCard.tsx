@@ -41,7 +41,7 @@ export function ModeloCard({ m }: { m: ModeloComercial }) {
 
   return (
     <Link
-      href={`/comercial/modelo/${m.modelo.toLowerCase()}`}
+      href={`/velocity-comercial/modelo/${m.modelo.toLowerCase()}`}
       className="relative surface bg-white px-4 py-4 text-left transition w-full min-w-0 block hover:shadow-md hover:border-[--color-accent]/40"
     >
       <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-2xl" style={{ backgroundColor: meta.color }} />

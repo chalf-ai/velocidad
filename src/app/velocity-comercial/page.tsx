@@ -1,5 +1,6 @@
 /**
- * /comercial · Velocity Comercial V1 — Torre de Control de Modelos.
+ * /velocity-comercial · Velocidad Comercial V1 — Torre de Control de Modelos.
+ * Módulo INDEPENDIENTE (torre propia), no parte de Velocidad Operacional.
  *
  * Responde en <30s: ¿qué modelo requiere atención, por qué, dónde está la
  * oportunidad y qué acción ejecutar? Objeto = MODELO · acción = NEGOCIO.
@@ -73,7 +74,7 @@ export default async function ComercialPage() {
   return (
     <div className="mx-auto max-w-7xl px-5 py-6 space-y-6">
       <PageHeader
-        kicker="Velocity Comercial · V1"
+        kicker="Velocidad Comercial · V1"
         kickerIcon={<Target className="size-3.5" />}
         title="Torre de Control de Modelos"
         description="Qué modelos requieren atención y qué acción comercial ejecutar para vender más. Datos ROMA en vivo · jerarquía VPP > crédito."
