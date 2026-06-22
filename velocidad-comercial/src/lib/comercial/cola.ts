@@ -2,15 +2,10 @@ import "server-only";
 import { romaQuery } from "@/lib/roma";
 
 /**
- * Velocidad Comercial V2 · capa de datos de la COLA.
- *
- * Verdad: cesar-core/04-velocity-comercial/V2-ontologia-y-principios.md (dddb71d).
- * Principios: la cola se vacía (no se consulta); el negocio se reduce a una jugada;
- * la cola se vacía cuando cambia la realidad (no gestionando).
- *
- * Universo V2 = NÚCLEO GESTIONABLE: vigentes (VT_Ventas no facturadas, ≤90 días)
- * CON señal — VPP activa, crédito sin firmar, o sin VIN. NO incluye los ~9.200
- * aprobados de cotización (rompían la vaciabilidad). Solo lectura sobre ROMA.
+ * Velocidad Comercial · capa de datos de la COLA.
+ * Verdad: cesar-core/04-velocity-comercial/V2-ontologia-y-principios.md.
+ * Universo = núcleo gestionable: vigentes (VT_Ventas no facturadas ≤90d) CON señal
+ * (VPP activa / crédito sin firmar / sin VIN). NO incluye aprobados de cotización.
  */
 
 const WINDOW_DIAS = 90;
@@ -28,7 +23,7 @@ export type ColaItem = {
   sinVin: boolean;
   rung: 5 | 4 | 3;
   estadoDominante: EstadoDominante;
-  perecibilidad: number; // días desde FechaVenta
+  perecibilidad: number;
 };
 
 export type PortadaModelo = {
@@ -49,7 +44,6 @@ export type NegocioDetalle = ColaItem & {
 
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-// Cláusula que define el universo gestionable (vigente + señal).
 const WHERE_UNIVERSO =
   "v.FechaFactura IS NULL " +
   `AND v.FechaVenta >= CURDATE()-INTERVAL ${WINDOW_DIAS} DAY ` +
@@ -58,7 +52,6 @@ const WHERE_UNIVERSO =
 const JOIN_VPP =
   "LEFT JOIN (SELECT VentaID, MAX(Activo) activa FROM VT_Vpp WHERE Activo=1 GROUP BY VentaID) vp ON vp.VentaID=v.ID";
 
-// rung dominante: VPP(5) > crédito sin firmar(4) > sin VIN(3).
 const RUNG_SQL = "CASE WHEN vp.activa=1 THEN 5 WHEN v.CreditoFirmado=2 THEN 4 ELSE 3 END";
 
 function estadoDominante(rung: number): EstadoDominante {
@@ -89,7 +82,7 @@ function jugadaDe(e: EstadoDominante): string {
     : "Asignar VIN o reubicar stock";
 }
 
-/** PORTADA — modelos como puertas a colas (conteos por rung dominante). */
+/** PORTADA — modelos como puertas a colas. */
 export async function getPortadaModelos(): Promise<PortadaModelo[]> {
   const rows = await romaQuery<Record<string, unknown>>(
     `SELECT modelo, COUNT(*) total,
@@ -135,7 +128,7 @@ function mapItem(r: Record<string, unknown>): ColaItem {
   };
 }
 
-/** NIVEL 2 — la cola de negocios de un modelo. Orden: rung desc, perecibilidad desc. */
+/** NIVEL 2 — cola de un modelo. Orden: rung desc, perecibilidad desc. */
 export async function getCola(modelo: string): Promise<ColaItem[]> {
   const m = _safeModelo(modelo);
   if (!m) return [];

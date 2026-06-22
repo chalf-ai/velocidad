@@ -6,14 +6,8 @@ const nextConfig: NextConfig = {
   experimental: {
     // Turbopack en dev ya está activado via `next dev --turbopack`
   },
-  // Velocidad Comercial pasó a ser módulo independiente en /velocity-comercial.
-  // La ruta vieja /comercial redirige (permanente) para no romper enlaces.
-  async redirects() {
-    return [
-      { source: "/comercial", destination: "/velocity-comercial", permanent: true },
-      { source: "/comercial/:path*", destination: "/velocity-comercial/:path*", permanent: true },
-    ];
-  },
+  // Velocidad Comercial es ahora una app independiente (carpeta velocidad-comercial/),
+  // fuera de esta app de Velocidad Operacional. Sin rutas ni redirects comerciales acá.
   /**
    * Resolver `.js` → `.ts/.tsx` para imports ESM-style entre módulos del motor
    * histórico (src/lib/historico). El motor escribe `from "./parser.js"` para

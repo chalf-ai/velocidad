@@ -1,8 +1,6 @@
 /**
- * /velocity-comercial · Velocidad Comercial V2 — Torre de Control.
- * Portada: los MODELOS son PUERTAS a sus colas de negocios gestionables.
- * Verdad: V2-ontologia-y-principios.md (dddb71d). No reporte: cada modelo abre una cola.
- * Sin dinero, sin RVM, sin precio, sin aprobados masivos. Datos ROMA (read-only).
+ * / · Portada — los MODELOS son PUERTAS a sus colas de negocios gestionables.
+ * App Velocidad Comercial (independiente). Datos ROMA (read-only).
  */
 
 import Link from "next/link";
@@ -27,7 +25,7 @@ function Chip({ icon, label, value, tone }: { icon: React.ReactNode; label: stri
 function Puerta({ m }: { m: PortadaModelo }) {
   return (
     <Link
-      href={`/velocity-comercial/modelo/${m.modelo.toLowerCase()}/cola`}
+      href={`/modelo/${m.modelo.toLowerCase()}/cola`}
       className="surface bg-white px-4 py-3.5 flex items-center gap-4 transition hover:shadow-md hover:border-[--color-accent]/40"
     >
       <div className="min-w-0 flex-1">
@@ -53,7 +51,7 @@ function Puerta({ m }: { m: PortadaModelo }) {
   );
 }
 
-export default async function PortadaV2() {
+export default async function Portada() {
   let modelos: PortadaModelo[] = [];
   let error: string | null = null;
   try {
@@ -61,13 +59,12 @@ export default async function PortadaV2() {
   } catch (e) {
     error = e instanceof Error ? e.message : "Error consultando ROMA";
   }
-
   const totalNegocios = modelos.reduce((s, m) => s + m.total, 0);
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-6 space-y-5">
       <PageHeader
-        kicker="Velocidad Comercial · V2"
+        kicker="Velocidad Comercial"
         kickerIcon={<Target className="size-3.5" />}
         title="Torre de Control"
         description="Cada modelo es una puerta a su cola de negocios gestionables. La cola se vacía cuando cambia la realidad del negocio — no se consulta."
