@@ -1,7 +1,6 @@
 /**
- * /velocity-comercial/modelo/[modelo]/cola · Nivel 2 — la cola de negocios.
- * Vertical, no tabla. Cada ítem lleva SOLO: cliente+flag Pompeyo, vehículo,
- * marcador sin-VIN, estado dominante, perecibilidad. Sin vendedor/dinero/360/KPIs.
+ * /modelo/[modelo]/cola · Nivel 2 — la cola de negocios. Vertical, no tabla.
+ * Cada ítem: cliente+flag Pompeyo, vehículo, marcador sin-VIN, estado dominante, perecibilidad.
  * Orden: VPP > crédito sin firmar > sin VIN, luego perecibilidad desc.
  */
 
@@ -24,7 +23,7 @@ function Item({ n }: { n: ColaItem }) {
   const meta = ESTADO_META[n.estadoDominante];
   return (
     <Link
-      href={`/velocity-comercial/negocio/${n.tipo}/${n.negocioId}`}
+      href={`/negocio/${n.tipo}/${n.negocioId}`}
       className="relative surface bg-white pl-4 pr-3 py-3 flex items-center gap-3 transition hover:shadow-md hover:border-[--color-accent]/40"
     >
       <div className="absolute top-0 bottom-0 left-0 w-[3px] rounded-l-2xl" style={{ backgroundColor: meta.tone }} />
@@ -63,7 +62,7 @@ export default async function ColaModelo({ params }: { params: Promise<{ modelo:
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-6 space-y-4">
-      <Link href="/velocity-comercial" className="inline-flex items-center gap-1.5 text-[12px] text-[--color-accent] hover:underline">
+      <Link href="/" className="inline-flex items-center gap-1.5 text-[12px] text-[--color-accent] hover:underline">
         <ArrowLeft className="size-3.5" /> Volver a la torre
       </Link>
       <PageHeader

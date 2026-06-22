@@ -1,8 +1,7 @@
 /**
- * /velocity-comercial/negocio/[tipo]/[id] · Nivel 3 — el negocio se reduce a una jugada.
+ * /negocio/[tipo]/[id] · Nivel 3 — el negocio se reduce a una jugada.
  * Muestra SOLO: bloqueo exacto · dueño del bloqueo · estado de vida · jugada.
- * NO "marcar como hecho". NO sacar de la cola a mano. La cola se vacía cuando
- * cambia la realidad del negocio (Principio 3), no gestionando.
+ * Sin "marcar hecho", sin sacar de cola a mano (Principio 3).
  */
 
 import Link from "next/link";
@@ -43,7 +42,7 @@ export default async function FichaNegocio({ params }: { params: Promise<{ tipo:
   }
 
   const back = (
-    <Link href="/velocity-comercial" className="inline-flex items-center gap-1.5 text-[12px] text-[--color-accent] hover:underline">
+    <Link href="/" className="inline-flex items-center gap-1.5 text-[12px] text-[--color-accent] hover:underline">
       <ArrowLeft className="size-3.5" /> Volver a la torre
     </Link>
   );

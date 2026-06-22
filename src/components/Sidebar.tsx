@@ -24,7 +24,6 @@ import {
   PackageCheck,
   Receipt,
   ScrollText,
-  Target,
   TestTube2,
   TrendingUp,
   Trophy,
@@ -61,13 +60,6 @@ const ROL_COLOR: Record<string, string> = {
   GERENTE: "bg-blue-100 text-[#3358e8]",
   JEFE_MARCA: "bg-emerald-100 text-emerald-700",
 };
-
-// Velocidad Comercial — TORRE INDEPENDIENTE (módulo propio, par de Velocidad
-// Operacional y DyP). NO va dentro del menú Ejecutivo. Crece con su propia
-// navegación; hoy una entrada, mañana sus drilldowns.
-const NAV_COMERCIAL: NavItem[] = [
-  { href: "/velocity-comercial", label: "Torre de Control de Modelos", icon: Target },
-];
 
 const NAV_EXEC: NavItem[] = [
   { href: "/centro-accion", label: "Centro de Acción", icon: Gauge },
@@ -288,10 +280,6 @@ export function Sidebar({
         </div>
 
         <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 pb-4 pt-4">
-          {/* TORRE INDEPENDIENTE · Velocidad Comercial — arriba y separada del
-              resto (que es Velocidad Operacional). No es una página del menú Ejecutivo. */}
-          <NavSection title="Velocidad Comercial" items={NAV_COMERCIAL} onLinkClick={handleLinkClick} />
-          <div className="-mx-2.5 border-t border-[--color-border]" aria-hidden="true" />
           {showEjecutivo && (
             <NavSection title="Ejecutivo" items={NAV_EXEC} onLinkClick={handleLinkClick} />
           )}
