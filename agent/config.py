@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # Provisiones del snapshot siguen saliendo de la fuente validada (fallback).
     # Fórmula y cuadre: docs/roma-provisiones-de-ingreso-fuente-oficial.md.
     provisiones_enabled: bool = False
+    # Provisiones DETALLE en vivo: trae la LISTA COMPLETA de provisiones desde ROMA
+    # y la postea a /api/snapshots/provisiones-roma, que reemplaza la fuente
+    # PROVISIONES (Excel) por ROMA → el detalle /provisiones se actualiza solo.
+    # OFF por defecto. Requiere además PROVISIONES_ROMA_ENABLED=1 en el web.
+    provisiones_detalle_enabled: bool = False
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

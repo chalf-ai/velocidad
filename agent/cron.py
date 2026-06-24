@@ -109,7 +109,11 @@ async def generar_snapshot_diario() -> dict:
     NUNCA inventa datos. Provisiones está detrás de PROVISIONES_ENABLED (default OFF).
     """
     import httpx
-    from .roma_gateway import consultar_fne_gateway, consultar_provisiones_gateway
+    from .roma_gateway import (
+        consultar_fne_gateway,
+        consultar_provisiones_gateway,
+        consultar_provisiones_detalle_gateway,
+    )
 
     # 1. ROMA en vivo desde el gateway Amazon. Cada fuente es INDEPENDIENTE: si una
     #    falla, se postea la otra; si ambas faltan, body=None → fuente validada.
@@ -150,6 +154,32 @@ async def generar_snapshot_diario() -> dict:
             )
     else:
         logger.info("Provisiones gateway deshabilitado (PROVISIONES_ENABLED=0)")
+
+    # 1c. Provisiones DETALLE en vivo (lista completa) → reemplaza la fuente
+    #     PROVISIONES (Excel) por ROMA, para que el detalle /provisiones se
+    #     actualice solo. Gate independiente (PROVISIONES_DETALLE_ENABLED). Se
+    #     postea ANTES del snapshot diario para que el Score lea ya la fuente
+    #     fresca. Falla / sin filas → el endpoint conserva el Excel vigente.
+    if settings.provisiones_detalle_enabled:
+        try:
+            filas = await consultar_provisiones_detalle_gateway()
+            url_prov = f"{settings.app_base_url.rstrip('/')}/api/snapshots/provisiones-roma"
+            async with httpx.AsyncClient(timeout=120) as client:
+                rp = await client.post(
+                    url_prov,
+                    headers={"Authorization": f"Bearer {settings.daily_snapshot_token}"},
+                    json={"rows": filas},
+                )
+            logger.info(
+                "Provisiones DETALLE ROMA → %s filas, HTTP %s: %s",
+                len(filas), rp.status_code, rp.text[:200],
+            )
+        except Exception:
+            logger.exception(
+                "Provisiones detalle ROMA no disponible — se conserva el Excel vigente"
+            )
+    else:
+        logger.info("Provisiones detalle deshabilitado (PROVISIONES_DETALLE_ENABLED=0)")
 
     # 2. POST a Velocidad. body=None → endpoint usa snapshots activos (fallback).
     url = f"{settings.app_base_url.rstrip('/')}/api/snapshots/daily"

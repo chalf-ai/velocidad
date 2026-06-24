@@ -54,6 +54,29 @@ PROVISIONES_SQL = (
     "  WHERE estado<>4 AND origen>0 AND fecha>='2024-06-01') p"
 )
 
+# Provisiones DETALLE — la LISTA COMPLETA (no el agregado), con los JOINs que
+# resuelven texto: marca (origen), concepto + área (provision→Concepto), glosa
+# (motivo) y "Por Facturar a" (tipo). El saldo usa la MISMA fórmula validada
+# (2832/2832). Mismo universo que PROVISIONES_SQL. Las filas se POSTean a
+# /api/snapshots/provisiones-roma → adapter romaProvisionesToRegistros (TS) →
+# snapshot PROVISIONES activo. Caso 9178 valida Kia·Incentivo Ventas·Venta·
+# Incentivo dealer·Santander·Facturado·saldo $0.
+PROVISIONES_DETALLE_SQL = (
+    "SELECT p.ID AS id, p.fecha AS fecha, o.Origen AS marca, c.Concepto AS concepto, "
+    "m.motivo AS glosa, t.Tipo AS por_facturar_a, p.estado AS estado, p.periodo AS periodo, "
+    "p.monto AS monto, p.monto_factura AS monto_factura, "
+    "(p.monto + CASE WHEN p.EstadoAjusteID=2 THEN COALESCE(p.MontoAjuste,0) ELSE 0 END "
+    "  - COALESCE(p.monto_factura,0)) AS saldo, "
+    "p.ultima_fecha_factura AS ultima_fecha_factura, p.estado_conta AS estado_conta, "
+    "p.notificar_conta AS notificar_conta, p.EstadoAjusteID AS estado_ajuste_id "
+    "FROM VT_Provisiones p "
+    "LEFT JOIN VT_ProvisionesOrigen o   ON o.ID = p.origen "
+    "LEFT JOIN VT_ProvisionesConcepto c ON c.ID = CAST(p.provision AS UNSIGNED) "
+    "LEFT JOIN VT_ProvisionesMotivo m   ON m.id = p.motivo "
+    "LEFT JOIN VT_ProvisionesTipo t     ON t.ID = p.tipo "
+    "WHERE p.estado<>4 AND p.origen>0 AND p.fecha>='2024-06-01'"
+)
+
 
 async def _query_gateway(sql: str) -> list[dict]:
     """
@@ -135,3 +158,20 @@ async def consultar_provisiones_gateway() -> dict:
     if res["vigentes_unidades"] <= 0 or res["vigentes_monto"] <= 0:
         raise RuntimeError("Gateway ROMA: Provisiones vigentes no positivas — descartado")
     return res
+
+
+async def consultar_provisiones_detalle_gateway() -> list[dict]:
+    """
+    Devuelve la LISTA COMPLETA de Provisiones de Ingreso desde ROMA vía el gateway,
+    con marca/concepto/área/glosa/por-facturar-a resueltos (JOINs) y el saldo ya
+    calculado (fórmula validada 2832/2832). Las filas se POSTean tal cual a
+    /api/snapshots/provisiones-roma, que las adapta a ParsedProvisiones (mismo
+    shape que el Excel) y persiste el snapshot PROVISIONES activo.
+
+    Levanta excepción si el universo viene vacío → el endpoint conserva el Excel
+    vigente (fallback). NUNCA inventa datos.
+    """
+    rows = await _query_gateway(PROVISIONES_DETALLE_SQL)
+    if not rows:
+        raise RuntimeError("Gateway ROMA: Provisiones detalle vacío — descartado")
+    return rows
