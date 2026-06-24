@@ -110,21 +110,36 @@ def consultar_roma() -> dict:
     return roma
 
 
-def main() -> int:
+def run() -> dict:
+    """Consulta ROMA y postea a Velocidad. Devuelve el JSON de respuesta.
+    Reutilizable por el CLI (main) y por el handler de Lambda."""
     roma = consultar_roma()
     url = os.environ["VELOCIDAD_URL"].rstrip("/") + "/api/snapshots/daily"
+    print("ROMA →", roma, file=sys.stderr)
     resp = httpx.post(
         url,
         headers={"Authorization": f"Bearer {os.environ['DAILY_SNAPSHOT_TOKEN']}"},
         json={"roma": roma},
         timeout=120,
     )
-    print("ROMA →", roma, file=sys.stderr)
-    if resp.status_code != 200:
-        print(f"ERROR HTTP {resp.status_code}: {resp.text[:300]}", file=sys.stderr)
+    resp.raise_for_status()
+    data = resp.json()
+    print("OK", data)
+    return data
+
+
+def main() -> int:
+    try:
+        run()
+        return 0
+    except Exception as e:  # noqa: BLE001
+        print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    print("OK", resp.json())
-    return 0
+
+
+# Handler para AWS Lambda (mismo código; ver lambda_handler.py para el entrypoint).
+def lambda_handler(event=None, context=None):  # noqa: ANN001
+    return {"ok": True, "result": run()}
 
 
 if __name__ == "__main__":

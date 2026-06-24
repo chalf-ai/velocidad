@@ -8,6 +8,13 @@ donde existe acceso directo a ROMA, y alimenta el endpoint de Velocidad. Railway
 ROMA vivo  →  Job Amazon  →  POST /api/snapshots/daily  →  Velocidad (Railway) persiste
 ```
 
+> **Camino elegido: B (trigger dentro de Amazon).** Pasos de despliegue turnkey
+> (Lambda + EventBridge sa-east-1, o cron en el host del gateway) en
+> **[`DEPLOY-AMAZON.md`](DEPLOY-AMAZON.md)**. Ya existe infra Amazon conectada a
+> ROMA (el gateway `mcp-roma-server`, ELB sa-east-1); este job reusa esa misma
+> red/credenciales. `snapshot_roma_job.py` corre como CLI o como Lambda
+> (`lambda_handler`).
+
 ## Evidencia de conectividad Amazon → ROMA (verificada en vivo 2026-06-19)
 Conexión directa confirmada (`SELECT DATABASE(), NOW()` → `db=roma`,
 `2026-06-19 09:57:56`). Queries corridas contra ROMA en producción:
