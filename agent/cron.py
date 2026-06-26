@@ -162,17 +162,22 @@ async def generar_snapshot_diario() -> dict:
     #     fresca. Falla / sin filas → el endpoint conserva el Excel vigente.
     if settings.provisiones_detalle_enabled:
         try:
-            filas = await consultar_provisiones_detalle_gateway()
+            det = await consultar_provisiones_detalle_gateway()  # {rows, control, max_id}
             url_prov = f"{settings.app_base_url.rstrip('/')}/api/snapshots/provisiones-roma"
             async with httpx.AsyncClient(timeout=120) as client:
                 rp = await client.post(
                     url_prov,
                     headers={"Authorization": f"Bearer {settings.daily_snapshot_token}"},
-                    json={"rows": filas},
+                    json={
+                        "rows": det["rows"],
+                        "control": det["control"],
+                        "maxId": det["max_id"],
+                    },
                 )
             logger.info(
-                "Provisiones DETALLE ROMA → %s filas, HTTP %s: %s",
-                len(filas), rp.status_code, rp.text[:200],
+                "Provisiones DETALLE ROMA → %s/%s filas (control), maxId=%s, HTTP %s: %s",
+                len(det["rows"]), det["control"], det["max_id"],
+                rp.status_code, rp.text[:200],
             )
         except Exception:
             logger.exception(

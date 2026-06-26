@@ -74,7 +74,16 @@ PROVISIONES_DETALLE_SQL = (
     "LEFT JOIN VT_ProvisionesConcepto c ON c.ID = CAST(p.provision AS UNSIGNED) "
     "LEFT JOIN VT_ProvisionesMotivo m   ON m.id = p.motivo "
     "LEFT JOIN VT_ProvisionesTipo t     ON t.ID = p.tipo "
-    "WHERE p.estado<>4 AND p.origen>0 AND p.fecha>='2024-06-01'"
+    "WHERE p.estado<>4 AND p.origen>0 AND p.fecha>='2024-06-01' "
+    "  AND p.ID > {last_id} ORDER BY p.ID ASC LIMIT {batch}"
+)
+
+# Conteo de control del universo COMPLETO (1 fila → el cap de 1000 del gateway NO
+# lo afecta). Barrera: si las filas paginadas no suman EXACTO este total, se descarta
+# (nunca se publica un universo incompleto). max_id sirve de verificación adicional.
+PROVISIONES_COUNT_SQL = (
+    "SELECT COUNT(*) AS n, COALESCE(MAX(ID),0) AS max_id "
+    "FROM VT_Provisiones WHERE estado<>4 AND origen>0 AND fecha>='2024-06-01'"
 )
 
 
@@ -160,18 +169,46 @@ async def consultar_provisiones_gateway() -> dict:
     return res
 
 
-async def consultar_provisiones_detalle_gateway() -> list[dict]:
+async def consultar_provisiones_detalle_gateway() -> dict:
     """
     Devuelve la LISTA COMPLETA de Provisiones de Ingreso desde ROMA vía el gateway,
     con marca/concepto/área/glosa/por-facturar-a resueltos (JOINs) y el saldo ya
-    calculado (fórmula validada 2832/2832). Las filas se POSTean tal cual a
-    /api/snapshots/provisiones-roma, que las adapta a ParsedProvisiones (mismo
-    shape que el Excel) y persiste el snapshot PROVISIONES activo.
+    calculado. Las filas se POSTean a /api/snapshots/provisiones-roma.
 
-    Levanta excepción si el universo viene vacío → el endpoint conserva el Excel
-    vigente (fallback). NUNCA inventa datos.
+    PAGINADO POR ID (keyset): el gateway/MCP corta en 1000 filas, así que se piden
+    lotes avanzando por ID (ID > last_id, ORDER BY ID, LIMIT) hasta agotar el
+    universo. Antes se persistía solo el primer lote (1000 filas viejas, corte
+    feb-2025) — bug de truncamiento.
+
+    BARRERA: valida lo extraído contra un COUNT(*) de control. Si NO suman exacto,
+    LEVANTA excepción → el endpoint conserva la fuente vigente (nunca publica un
+    universo incompleto). Devuelve {"rows": [...], "control": int, "max_id": int}.
     """
-    rows = await _query_gateway(PROVISIONES_DETALLE_SQL)
-    if not rows:
-        raise RuntimeError("Gateway ROMA: Provisiones detalle vacío — descartado")
-    return rows
+    ctrl = (await _query_gateway(PROVISIONES_COUNT_SQL))[0]
+    control = int(ctrl["n"])
+    control_max_id = int(ctrl["max_id"])
+    if control <= 0:
+        raise RuntimeError("Gateway ROMA: Provisiones universo vacío — descartado")
+
+    rows: list[dict] = []
+    last_id = 0
+    BATCH = 1000  # tope del gateway; cada lote pide a lo sumo esto
+    while True:
+        lote = await _query_gateway(
+            PROVISIONES_DETALLE_SQL.format(last_id=last_id, batch=BATCH)
+        )
+        rows.extend(lote)
+        last_id = int(lote[-1]["id"])
+        # Cortar al alcanzar el control o ante un lote corto — así NUNCA pedimos un
+        # lote vacío (que el gateway trataría como error).
+        if len(rows) >= control or len(lote) < BATCH:
+            break
+        if len(rows) > control + BATCH:  # cinturón anti-loop
+            raise RuntimeError("Gateway ROMA: paginación inconsistente — descartado")
+
+    # Barrera dura: el universo extraído debe coincidir EXACTO con el control.
+    if len(rows) != control:
+        raise RuntimeError(
+            f"Gateway ROMA: detalle incompleto {len(rows)} != control {control} — descartado"
+        )
+    return {"rows": rows, "control": control, "max_id": control_max_id}
