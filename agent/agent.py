@@ -311,7 +311,9 @@ async def get_agent():
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
     pool = AsyncConnectionPool(
-        conninfo=settings.database_url,
+        # URL limpia (misma que asyncpg): psycopg también rechaza los params
+        # Prisma (connection_limit, schema, …). Sin esto el checkpointer no abre.
+        conninfo=settings.asyncpg_url,
         max_size=5,
         kwargs={"autocommit": True, "prepare_threshold": 0},
         open=False,

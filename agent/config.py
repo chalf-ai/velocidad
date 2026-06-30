@@ -65,7 +65,19 @@ class Settings(BaseSettings):
     @property
     def asyncpg_url(self) -> str:
         # asyncpg no acepta 'postgres://', solo 'postgresql://'
-        return self.database_url.replace("postgres://", "postgresql://", 1)
+        url = self.database_url.replace("postgres://", "postgresql://", 1)
+        # Prisma/Next.js agregan params (connection_limit, schema, pgbouncer, …)
+        # que asyncpg pasa como settings de PG y rompen el arranque. Conservar
+        # solo los que asyncpg entiende. URL sin query (Railway) queda idéntica.
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+        p = urlsplit(url)
+        keep = [
+            (k, v)
+            for k, v in parse_qsl(p.query)
+            if k in ("sslmode", "ssl", "application_name")
+        ]
+        return urlunsplit((p.scheme, p.netloc, p.path, urlencode(keep), p.fragment))
 
 
 settings = Settings()
