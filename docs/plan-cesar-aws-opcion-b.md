@@ -15,9 +15,14 @@
   en el sitio AWS quedan en la DB de AWS; el poller de Railway lee otra DB → nunca las ve →
   no envía. (`agent/database.py` asume "el mismo PostgreSQL de Velocidad" — esa suposición es
   la que se rompió.)
-- **Gap pendiente:** el host literal de `velocidad/db-Xpuuon` no se pudo leer (permisos AWS
-  `rds:Describe*` y `secretsmanager:Get/Describe` denegados a `david-cabrini-dev`). Confirmar
-  con un usuario con permisos. La evidencia circunstancial del split es fuerte y convergente.
+- **Gap pendiente (verificación documental OPCIONAL, no bloqueante):** el host literal de
+  `velocidad/db-Xpuuon` no se pudo leer (permisos AWS `rds:Describe*` y `secretsmanager:Get/Describe`
+  denegados a `david-cabrini-dev`). **No bloquea Etapa 0:** el agente reusa el **mismo secret que el
+  web app prod**, así que apunta a la **misma DB** aunque no leamos el host literal. La evidencia del
+  split es fuerte y convergente; confirmar el host es verificación de respaldo, no condición de arranque.
+
+> **Único prerequisito BLOQUEANTE de Etapa 0:** `OPENAI_API_KEY` disponible como secret AWS — campo
+> requerido sin default en `agent/config.py`; sin él el contenedor no arranca.
 
 ## 0. Hecho que condiciona el diseño
 
