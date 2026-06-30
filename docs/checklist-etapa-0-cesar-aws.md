@@ -20,16 +20,27 @@
 - ⛔ **Sin** marcar alertas (`enviado`/`waStatus` intactos).
 - ⛔ **Sin** cambiar variables productivas (Railway / web app AWS).
 
-## Pre-requisitos (one-time, antes de Etapa 0)
+## Prerequisito BLOQUEANTE (único condicionante de arranque)
 
-- [ ] Confirmar host de `velocidad/db-Xpuuon` (cerrar el gap del diagnóstico) — usuario con permisos.
+- [ ] **`OPENAI_API_KEY` disponible como secret AWS.** Es campo **requerido sin default** en
+      `agent/config.py` → **el contenedor no arranca sin él**. Es el **único bloqueante real** de
+      Etapa 0. (Etapa 0 NO usa WhatsApp token; los demás secrets se agregan en etapas posteriores.)
+
+## Setup de infra para levantar el servicio (one-time, no bloqueante per se)
+
 - [ ] ECR `velocidad-cesar-agent` creado e imagen `agent/` pusheada (build sin secretos en capas).
-- [ ] Secret AWS para el agente con **solo** `OPENAI_API_KEY` (Etapa 0 no usa WhatsApp token).
 - [ ] Descubrir subnets/SG de `velocidad-svc`:
       `aws ecs describe-services --cluster velocidad-ecs --services velocidad-svc --query 'services[0].networkConfiguration'`
 - [ ] Task def `velocidad-cesar-agent` con: `DATABASE_URL`←`velocidad/db-Xpuuon`, `OPENAI_API_KEY`←secret,
       `APP_PUBLIC_URL`/`APP_BASE_URL=https://velocidad.pompeyo.cl`, flags de la tabla de arriba,
       `enableExecuteCommand=true`, logs → `/ecs/velocidad-cesar-agent`, **mismo SG** que `velocidad-svc`.
+
+## Verificación documental OPCIONAL (no bloqueante)
+
+- [ ] Confirmar host sanitizado de `velocidad/db-Xpuuon` (cierra el gap del diagnóstico) — usuario con
+      permisos AWS. **No bloquea Etapa 0:** el agente reusa **el mismo secret que el web app prod**, así
+      que apunta a la **misma DB** aunque no leamos el host literal. Es verificación de respaldo, no
+      condición de arranque.
 
 ## Pasos de validación (read-only, cero efectos)
 
