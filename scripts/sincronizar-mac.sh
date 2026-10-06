@@ -9,7 +9,10 @@
 #
 # Reglas de seguridad:
 #   - Nunca hace commit por ti: los cambios sin commit solo se listan.
-#   - Nunca usa --force ni toca ramas ajenas; solo `git push -u origin <rama>`.
+#   - Nunca usa --force; solo `git push -u origin <rama>`.
+#   - La rama principal (main/master o la por defecto del remoto) NO se sube
+#     directo, porque eso puede disparar deploys a producción: se sube como
+#     `respaldo-mac/<rama>` para revisarla y fusionarla con un PR.
 #   - Ramas sin remoto "origin" se reportan y se saltan.
 # Compatible con el bash 3.2 que trae macOS.
 
@@ -20,7 +23,7 @@ ROOTS=()
 for arg in "$@"; do
   case "$arg" in
     --push) PUSH=1 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) ROOTS+=("$arg") ;;
   esac
 done
@@ -32,6 +35,13 @@ repos_total=0
 repos_pendientes=0
 ramas_subidas=0
 ramas_fallidas=0
+
+es_principal() {
+  local repo="$1" rama="$2" defecto
+  case "$rama" in main|master) return 0 ;; esac
+  defecto=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  [ "$defecto" = "origin/$rama" ]
+}
 
 revisar_repo() {
   local repo="$1"
@@ -54,7 +64,7 @@ revisar_repo() {
     salida+="$(git -C "$repo" status --short 2>/dev/null | head -15 | sed 's/^/      /')\n"
   fi
 
-  local rama upstream ahead nota
+  local rama upstream ahead nota destino opciones
   while IFS= read -r rama; do
     [ -z "$rama" ] && continue
     nota=""
@@ -75,8 +85,16 @@ revisar_repo() {
     pendiente=1
     salida+="  * rama $rama: $ahead commit(s) sin subir$nota\n"
     if [ "$PUSH" = "1" ]; then
-      if git -C "$repo" push --quiet -u origin "$rama" 2>/dev/null; then
-        salida+="      -> subida OK\n"
+      if es_principal "$repo" "$rama"; then
+        destino="respaldo-mac/$rama"
+        opciones=""
+      else
+        destino="$rama"
+        opciones="-u"
+      fi
+      # shellcheck disable=SC2086
+      if git -C "$repo" push --quiet $opciones origin "$rama:refs/heads/$destino" 2>/dev/null; then
+        salida+="      -> subida OK a origin/$destino\n"
         ramas_subidas=$((ramas_subidas + 1))
       else
         salida+="      -> FALLÓ el push (¿rama divergida? hacer pull y resolver a mano)\n"
